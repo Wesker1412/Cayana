@@ -1,6 +1,7 @@
 package com.cayana.core.di
 
 import com.cayana.ui.home.HomeViewModel
+import com.cayana.ui.onboarding.OnboardingViewModel
 import com.cayana.ui.settings.SettingsViewModel
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
@@ -14,7 +15,17 @@ val viewModelModule = module {
 
     viewModel {
         SettingsViewModel(
-            settingsRepository = get()
+            settingsRepository = get(),
+            permissionChecker = get(),
+            calendarProviderHelper = get()
+        )
+    }
+
+    viewModel {
+        OnboardingViewModel(
+            settingsRepository = get(),
+            permissionChecker = get(),
+            calendarProviderHelper = get()
         )
     }
 }

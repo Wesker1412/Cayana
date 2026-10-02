@@ -1,12 +1,12 @@
-package com.cayana.ui.settings
+package com.cayana.ui.onboarding
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cayana.calendar.CalendarProviderHelper
 import com.cayana.calendar.CalendarTarget
 import com.cayana.core.permission.PermissionChecker
+import com.cayana.core.permission.SourceStatus
 import com.cayana.source.SourceType
-import com.cayana.ui.onboarding.SourceItemUiState
 import com.cayana.ui.settings.repository.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,15 +14,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class SettingsViewModel(
+class OnboardingViewModel(
     private val settingsRepository: SettingsRepository,
     private val permissionChecker: PermissionChecker,
     private val calendarProviderHelper: CalendarProviderHelper
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(SettingsUiState())
-    val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+    private val _uiState = MutableStateFlow(OnboardingUiState())
+    val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
 
+    // Tracks which sources had permissions explicitly denied during onboarding
     private val deniedSources = mutableSetOf<SourceType>()
 
     init {
@@ -57,8 +58,10 @@ class SettingsViewModel(
 
                 _uiState.update { current ->
                     current.copy(
-                        settings = userSettings,
-                        sourceItems = sourceItems
+                        sources = sourceItems,
+                        selectedCalendarId = userSettings.selectedCalendarId,
+                        selectedCalendarName = userSettings.selectedCalendarName,
+                        isOnboardingCompleted = userSettings.onboardingCompleted
                     )
                 }
             }
@@ -81,6 +84,31 @@ class SettingsViewModel(
             isEnabled = isEnabled,
             status = status
         )
+    }
+
+    fun nextStep() {
+        val next = when (_uiState.value.currentStep) {
+            OnboardingStep.WELCOME -> OnboardingStep.SOURCES
+            OnboardingStep.SOURCES -> {
+                checkCalendarPermission()
+                OnboardingStep.CALENDAR
+            }
+            OnboardingStep.CALENDAR -> OnboardingStep.BACKUP
+            OnboardingStep.BACKUP -> OnboardingStep.FINISH
+            OnboardingStep.FINISH -> OnboardingStep.FINISH
+        }
+        _uiState.update { it.copy(currentStep = next) }
+    }
+
+    fun previousStep() {
+        val prev = when (_uiState.value.currentStep) {
+            OnboardingStep.WELCOME -> OnboardingStep.WELCOME
+            OnboardingStep.SOURCES -> OnboardingStep.WELCOME
+            OnboardingStep.CALENDAR -> OnboardingStep.SOURCES
+            OnboardingStep.BACKUP -> OnboardingStep.CALENDAR
+            OnboardingStep.FINISH -> OnboardingStep.BACKUP
+        }
+        _uiState.update { it.copy(currentStep = prev) }
     }
 
     fun toggleSource(sourceType: SourceType, enabled: Boolean) {
@@ -108,12 +136,12 @@ class SettingsViewModel(
 
     private fun refreshSources() {
         _uiState.update { current ->
-            val updatedSources = current.sourceItems.map { item ->
+            val updatedSources = current.sources.map { item ->
                 val isDenied = deniedSources.contains(item.type)
                 val status = permissionChecker.getSourceStatus(item.type, item.isEnabled, isDenied)
                 item.copy(status = status)
             }
-            current.copy(sourceItems = updatedSources)
+            current.copy(sources = updatedSources)
         }
     }
 
@@ -131,28 +159,47 @@ class SettingsViewModel(
             val calendars = calendarProviderHelper.getWritableCalendars()
             _uiState.update {
                 it.copy(
-                    availableCalendars = calendars,
+                    calendars = calendars,
                     isLoadingCalendars = false
                 )
+            }
+            // Auto-select primary or first if none selected
+            if (_uiState.value.selectedCalendarId == null && calendars.isNotEmpty()) {
+                val defaultTarget = calendars.find { it.isPrimary } ?: calendars.first()
+                selectCalendar(defaultTarget)
             }
         }
     }
 
     fun selectCalendar(target: CalendarTarget) {
+        _uiState.update {
+            it.copy(
+                selectedCalendarId = target.id,
+                selectedCalendarName = target.displayName
+            )
+        }
         viewModelScope.launch {
             settingsRepository.updateSelectedCalendar(target.id, target.displayName)
         }
     }
 
-    fun clearCalendar() {
+    fun skipCalendar() {
+        _uiState.update {
+            it.copy(
+                selectedCalendarId = null,
+                selectedCalendarName = null
+            )
+        }
         viewModelScope.launch {
             settingsRepository.updateSelectedCalendar(null, null)
         }
+        nextStep()
     }
 
-    fun toggleAutoCalendar(enabled: Boolean) {
+    fun completeOnboarding() {
         viewModelScope.launch {
-            settingsRepository.updateAutoCalendar(enabled)
+            settingsRepository.setOnboardingCompleted(true)
+            _uiState.update { it.copy(isOnboardingCompleted = true) }
         }
     }
 }

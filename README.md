@@ -106,15 +106,16 @@ com.cayana/
 
 ---
 
-## 分階段開發進度
+## 分階段開發進度 (對齊 Canonical Roadmap v0.2)
 
-- [x] **Stage 0 — 專案基礎與架構骨架** (當前完成)
-- [ ] **Stage 1 — Onboarding、權限與來源設定** (下一階段)
-- [ ] **Stage 2 — Source Watcher 基礎設施**
-- [ ] **Stage 3 — Local OCR 整合**
-- [ ] **Stage 4 — Killer Feature: Screenshot → Calendar 引擎**
-- [ ] **Stage 5 — Local STT (語音轉文字) 整合**
-- [ ] **Stage 6 — Android Share Sheet 整合**
-- [ ] **Stage 7 — 本機搜尋引擎**
-- [ ] **Stage 8 — Google Drive 加密備份**
-- [ ] **Stage 9 — Cayana Cloud 與 RAG Ask 整合**
+- [x] **Stage 0 — 專案基礎與架構骨架** (已通過二次驗收)
+- [x] **Stage 1 — Onboarding、權限與來源設定** (當前進行)
+- [ ] **Stage 2 — Screenshot → OCR → Memory**
+- [ ] **Stage 3 — Screenshot → Calendar**
+- [ ] **Stage 4 — Photos、Recordings 與背景處理**
+- [ ] **Stage 5 — Share Sheet、統一搜尋與 Recent Activity**
+- [ ] **Stage 6 — Google Drive 加密備份與還原**
+- [ ] **Stage 7 — Cayana Cloud 基礎同步與濫用限制**
+- [ ] **Stage 8 — GPT 類 LLM RAG Ask**
+- [ ] **Stage 9 — AI 額度、訂閱與點數**
+- [ ] **Stage 10 — Reliability、Security、Battery 與 MVP Release**

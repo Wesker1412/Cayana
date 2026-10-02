@@ -4,7 +4,7 @@ import com.cayana.memory.repository.MemoryRepository
 import com.cayana.memory.repository.RoomMemoryRepository
 import com.cayana.search.DefaultMemorySearchEngine
 import com.cayana.search.MemorySearchEngine
-import com.cayana.ui.settings.repository.LocalSettingsRepository
+import com.cayana.ui.settings.repository.DataStoreSettingsRepository
 import com.cayana.ui.settings.repository.SettingsRepository
 import org.koin.dsl.module
 
@@ -17,7 +17,7 @@ val repositoryModule = module {
     }
 
     single<SettingsRepository> {
-        LocalSettingsRepository()
+        DataStoreSettingsRepository(dataStore = get())
     }
 
     single<MemorySearchEngine> {
