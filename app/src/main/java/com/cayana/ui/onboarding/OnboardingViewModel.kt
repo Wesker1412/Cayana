@@ -128,6 +128,9 @@ class OnboardingViewModel(
         }
         viewModelScope.launch {
             settingsRepository.updateSourceEnabled(sourceType, enabled)
+            if (sourceType == SourceType.SCREENSHOT && !enabled) {
+                settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.ScreenshotWatcherStatus.DISABLED)
+            }
         }
     }
 

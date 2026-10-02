@@ -5,5 +5,7 @@ enum class ProcessingState {
     PROCESSING,
     COMPLETED,
     COMPLETED_WITHOUT_TEXT,
-    FAILED
+    FAILED,
+    FAILED_RETRYABLE,
+    FAILED_PERMANENT
 }

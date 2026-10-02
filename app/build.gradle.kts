@@ -58,6 +58,19 @@ android {
     }
 }
 
+tasks.withType<Test>().configureEach {
+    doFirst {
+        val variant = if (name.contains("Release", ignoreCase = true)) "release" else "debug"
+        val variantCapitalized = variant.replaceFirstChar { it.uppercase() }
+        val targetDir = layout.buildDirectory.dir("intermediates/assets/$variant/merge${variantCapitalized}Assets").get().asFile
+        targetDir.mkdirs()
+        copy {
+            from("$projectDir/schemas")
+            into(targetDir)
+        }
+    }
+}
+
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }

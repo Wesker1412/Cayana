@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material3.Button
@@ -51,6 +52,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -706,6 +708,16 @@ private fun BackupStep(onSkip: () -> Unit) {
 // ---------------------------------------------------------------------------
 @Composable
 private fun FinishStep(onFinish: () -> Unit) {
+    val context = LocalContext.current
+    var hasNotifPerm by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(com.cayana.core.notification.NotificationHelper.hasNotificationPermission(context))
+    }
+    val notifLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasNotifPerm = granted
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -738,6 +750,51 @@ private fun FinishStep(onFinish: () -> Unit) {
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onBackground
             )
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPerm) {
+                Spacer(modifier = Modifier.height(32.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "記憶通知（選填）",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Cayana 可以在記住內容後通知你。",
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("開啟通知", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
         }
 
         Button(

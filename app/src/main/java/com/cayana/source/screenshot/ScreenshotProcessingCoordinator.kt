@@ -60,9 +60,27 @@ class ScreenshotProcessingCoordinator(
                 return@withLock emptyList()
             }
 
+            val currentVersion = getMediaStoreVersion(context)
+            val savedVersion = settings.mediaStoreVersion
+
+            // 2. MediaStore Version Reset Boundary Check (Item E)
+            if (savedVersion != null && currentVersion != null && savedVersion != currentVersion) {
+                CayanaLogger.w("ScreenshotCoordinator", "MediaStore version changed ($savedVersion -> $currentVersion). Re-establishing baseline.")
+                establishBaseline(forceNew = true)
+                return@withLock emptyList()
+            }
+
+            // 3. Lifecycle Baseline Check (Item A)
+            if (settings.screenshotWatcherStatus == com.cayana.ui.settings.repository.ScreenshotWatcherStatus.UNINITIALIZED ||
+                settings.screenshotWatcherStatus == com.cayana.ui.settings.repository.ScreenshotWatcherStatus.DISABLED) {
+                CayanaLogger.i("ScreenshotCoordinator", "Screenshot watcher status is ${settings.screenshotWatcherStatus}. Establishing initial baseline.")
+                establishBaseline(forceNew = true)
+                return@withLock emptyList()
+            }
+
             val lastProcessedId = settings.lastScreenshotMediaId
             val newMemories = mutableListOf<MemoryItem>()
-            var maxEncounteredId = lastProcessedId
+            var committedCursorId = lastProcessedId
 
             val projection = buildList {
                 add(MediaStore.Images.Media._ID)
@@ -109,10 +127,6 @@ class ScreenshotProcessingCoordinator(
 
                     while (cursor.moveToNext()) {
                         val mediaId = cursor.getLong(idCol)
-                        if (mediaId > maxEncounteredId) {
-                            maxEncounteredId = mediaId
-                        }
-
                         val displayName = cursor.getString(nameCol)
                         val relativePath = cursor.getString(pathCol)
                         val bucketName = cursor.getString(bucketCol)
@@ -120,6 +134,28 @@ class ScreenshotProcessingCoordinator(
                         val dateAddedSec = cursor.getLong(dateAddedCol)
                         val dateTakenMs = cursor.getLong(dateTakenCol)
                         val size = cursor.getLong(sizeCol)
+
+                        // 4. Screenshot Classification
+                        if (!ScreenshotClassifier.isScreenshot(relativePath, displayName, bucketName, mimeType)) {
+                            // Non-screenshot: safe to advance cursor past this item
+                            committedCursorId = maxOf(committedCursorId, mediaId)
+                            continue
+                        }
+
+                        val contentUri = ContentUris.withAppendedId(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            mediaId
+                        )
+                        val sourceUriString = contentUri.toString()
+
+                        // 5. Deduplication Check
+                        val existing = memoryRepository.getMemoryBySourceUri(sourceUriString)
+                        if (existing != null) {
+                            CayanaLogger.d("ScreenshotCoordinator", "Item already ingested for uri: ${PrivacySanitizer.sanitizeUri(sourceUriString)}")
+                            // Already in DB: safe to advance cursor past this item
+                            committedCursorId = maxOf(committedCursorId, mediaId)
+                            continue
+                        }
 
                         // Calculate capturedAt timestamp
                         val capturedAt = if (dateTakenMs > 0) {
@@ -130,43 +166,33 @@ class ScreenshotProcessingCoordinator(
                             System.currentTimeMillis()
                         }
 
-                        // 2. Screenshot Classification
-                        if (!ScreenshotClassifier.isScreenshot(relativePath, displayName, bucketName, mimeType)) {
-                            continue
-                        }
-
-                        val contentUri = ContentUris.withAppendedId(
-                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                            mediaId
-                        )
-                        val sourceUriString = contentUri.toString()
-
-                        // 3. Deduplication Check
-                        val existing = memoryRepository.getMemoryBySourceUri(sourceUriString)
-                        if (existing != null) {
-                            CayanaLogger.d("ScreenshotCoordinator", "Item already ingested for uri: ${PrivacySanitizer.sanitizeUri(sourceUriString)}")
-                            continue
-                        }
-
-                        // 4. Local OCR Processing
-                        val ocrResult = ocrEngine.processImage(sourceUriString)
-                        val (rawText, processingState) = when (ocrResult) {
-                            is Result.Success -> {
-                                val text = ocrResult.data.fullText.trim()
-                                if (text.isNotBlank()) {
-                                    Pair(text, ProcessingState.COMPLETED)
-                                } else {
-                                    Pair(null, ProcessingState.COMPLETED_WITHOUT_TEXT)
+                        // 6. Local OCR Processing (Item C: Distinguish empty text vs OCR error)
+                        val (rawText, processingState) = try {
+                            when (val ocrResult = ocrEngine.processImage(sourceUriString)) {
+                                is Result.Success -> {
+                                    val text = ocrResult.data.fullText.trim()
+                                    if (text.isNotBlank()) {
+                                        Pair(text, ProcessingState.COMPLETED)
+                                    } else {
+                                        Pair(null, ProcessingState.COMPLETED_WITHOUT_TEXT)
+                                    }
+                                }
+                                is Result.Error -> {
+                                    CayanaLogger.w("ScreenshotCoordinator", "OCR failed for $sourceUriString: ${ocrResult.exception.message}")
+                                    Pair(null, ProcessingState.FAILED_RETRYABLE)
+                                }
+                                Result.Loading -> {
+                                    Pair(null, ProcessingState.FAILED_RETRYABLE)
                                 }
                             }
-                            is Result.Error, Result.Loading -> {
-                                Pair(null, ProcessingState.COMPLETED_WITHOUT_TEXT)
-                            }
+                        } catch (e: Exception) {
+                            CayanaLogger.w("ScreenshotCoordinator", "OCR threw exception for $sourceUriString: ${e.message}")
+                            Pair(null, ProcessingState.FAILED_RETRYABLE)
                         }
 
                         val title = deriveTitle(rawText, displayName)
 
-                        // 5. Build Unified MemoryItem with deterministic UUID
+                        // 7. Build Unified MemoryItem with deterministic UUID
                         val deterministicId = UUID.nameUUIDFromBytes(sourceUriString.toByteArray()).toString()
                         val metadata = mutableMapOf<String, String>().apply {
                             put("mediaStoreId", mediaId.toString())
@@ -191,12 +217,19 @@ class ScreenshotProcessingCoordinator(
                             processingState = processingState
                         )
 
-                        // 6. Persist to Room
-                        memoryRepository.saveMemory(memoryItem)
-                        newMemories.add(memoryItem)
-                        CayanaLogger.i("ScreenshotCoordinator", "Successfully ingested screenshot memory: $deterministicId")
+                        // 8. Persist to Room (Item B: Commit cursor ONLY after successful persist)
+                        try {
+                            memoryRepository.saveMemory(memoryItem)
+                            newMemories.add(memoryItem)
+                            committedCursorId = maxOf(committedCursorId, mediaId)
+                            CayanaLogger.i("ScreenshotCoordinator", "Successfully ingested screenshot memory: $deterministicId")
+                        } catch (e: Exception) {
+                            CayanaLogger.e("ScreenshotCoordinator", "Failed to persist memory to Room for mediaId $mediaId: ${e.message}")
+                            // Do NOT advance cursor past this mediaId. Break the batch so subsequent run will retry!
+                            break
+                        }
 
-                        // 7. Notification
+                        // 9. Notification
                         NotificationHelper.showMemoryIngestedNotification(context, memoryItem)
                     }
                 }
@@ -206,9 +239,13 @@ class ScreenshotProcessingCoordinator(
                 cursor?.close()
             }
 
-            // 8. Advance High-Water Mark Cursor
-            if (maxEncounteredId > lastProcessedId) {
-                settingsRepository.updateLastScreenshotMediaId(maxEncounteredId)
+            // 10. Advance High-Water Mark Cursor to durable committed point
+            if (committedCursorId > lastProcessedId) {
+                settingsRepository.updateLastScreenshotMediaId(committedCursorId)
+            }
+
+            if (savedVersion == null && currentVersion != null) {
+                settingsRepository.updateMediaStoreVersion(currentVersion)
             }
 
             newMemories
@@ -216,11 +253,12 @@ class ScreenshotProcessingCoordinator(
     }
 
     /**
-     * Initializes high-water mark cursor to current latest MediaStore item if not already set.
+     * Establishes high-water mark cursor to current latest MediaStore item and updates watcher status to ACTIVE.
      */
-    suspend fun initializeCursorToLatest(): Long = withContext(dispatchers.io) {
+    suspend fun establishBaseline(forceNew: Boolean = false): Long = withContext(dispatchers.io) {
         val currentSettings = settingsRepository.getSettings().first()
-        if (currentSettings.lastScreenshotMediaId > 0L) {
+        val currentVersion = getMediaStoreVersion(context)
+        if (!forceNew && currentSettings.lastScreenshotMediaId > 0L && currentSettings.mediaStoreVersion == currentVersion) {
             return@withContext currentSettings.lastScreenshotMediaId
         }
 
@@ -242,10 +280,62 @@ class ScreenshotProcessingCoordinator(
             }
         } catch (_: Exception) {}
 
-        if (maxId > 0L) {
-            settingsRepository.updateLastScreenshotMediaId(maxId)
-        }
+        settingsRepository.updateLastScreenshotMediaId(maxId)
+        settingsRepository.updateMediaStoreVersion(currentVersion)
+        settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE)
         maxId
+    }
+
+    /**
+     * Initializes high-water mark cursor to current latest MediaStore item.
+     */
+    suspend fun initializeCursorToLatest(): Long = establishBaseline(forceNew = true)
+
+    /**
+     * Retries OCR processing for memories that experienced transient failures.
+     */
+    suspend fun retryPendingOcr(): Int = withContext(dispatchers.io) {
+        processingMutex.withLock {
+            val allMemories = memoryRepository.getAllMemories().first()
+            val retryableItems = allMemories.filter { it.processingState == ProcessingState.FAILED_RETRYABLE }
+            var retriedCount = 0
+
+            for (item in retryableItems) {
+                val uri = item.sourceUri ?: continue
+                try {
+                    when (val ocrResult = ocrEngine.processImage(uri)) {
+                        is Result.Success -> {
+                            val text = ocrResult.data.fullText.trim()
+                            val (newText, newState) = if (text.isNotBlank()) {
+                                Pair(text, ProcessingState.COMPLETED)
+                            } else {
+                                Pair(null, ProcessingState.COMPLETED_WITHOUT_TEXT)
+                            }
+                            val newTitle = if (item.title == "螢幕截圖" || item.title == item.metadata["displayName"]) {
+                                deriveTitle(newText, item.metadata["displayName"])
+                            } else {
+                                item.title
+                            }
+                            val updated = item.copy(
+                                rawText = newText,
+                                normalizedText = newText,
+                                title = newTitle,
+                                processingState = newState
+                            )
+                            memoryRepository.saveMemory(updated)
+                            retriedCount++
+                        }
+                        is Result.Error -> {
+                            CayanaLogger.d("ScreenshotCoordinator", "Retry OCR still failed for ${item.id}")
+                        }
+                        Result.Loading -> {}
+                    }
+                } catch (e: Exception) {
+                    CayanaLogger.d("ScreenshotCoordinator", "Retry OCR threw exception for ${item.id}: ${e.message}")
+                }
+            }
+            retriedCount
+        }
     }
 
     private fun deriveTitle(rawText: String?, displayName: String?): String {
@@ -260,5 +350,19 @@ class ScreenshotProcessingCoordinator(
             }
         }
         return displayName?.substringBeforeLast(".") ?: "螢幕截圖"
+    }
+
+    companion object {
+        fun getMediaStoreVersion(context: Context): String? {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    MediaStore.getVersion(context)
+                } catch (_: Exception) {
+                    "unknown_version"
+                }
+            } else {
+                "pre_q"
+            }
+        }
     }
 }

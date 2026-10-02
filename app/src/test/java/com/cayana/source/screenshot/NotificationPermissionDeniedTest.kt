@@ -39,7 +39,11 @@ class NotificationPermissionDeniedTest {
         context = ApplicationProvider.getApplicationContext()
         com.cayana.test.FakeMediaContentProvider.register(context)
         memoryRepository = FakeMemoryRepository()
-        settingsRepository = InMemorySettingsRepository()
+        settingsRepository = InMemorySettingsRepository(
+            initialSettings = com.cayana.ui.settings.repository.UserSettings(
+                screenshotWatcherStatus = com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE
+            )
+        )
         permissionChecker = FakePermissionChecker().apply {
             setPermissionGranted("android.permission.READ_MEDIA_IMAGES", true)
         }

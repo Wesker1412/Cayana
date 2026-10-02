@@ -6,6 +6,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+enum class ScreenshotWatcherStatus {
+    UNINITIALIZED,
+    ACTIVE,
+    DISABLED
+}
+
 /**
  * Model holding persisted user preferences.
  */
@@ -19,7 +25,9 @@ data class UserSettings(
     val privateLoggingEnforced: Boolean = true,
     val isLocalFirstOnly: Boolean = true,
     val downloadsDirectoryUri: String? = null,
-    val lastScreenshotMediaId: Long = 0L
+    val lastScreenshotMediaId: Long = 0L,
+    val mediaStoreVersion: String? = null,
+    val screenshotWatcherStatus: ScreenshotWatcherStatus = ScreenshotWatcherStatus.UNINITIALIZED
 )
 
 interface SettingsRepository {
@@ -31,6 +39,8 @@ interface SettingsRepository {
     suspend fun updateNotificationsEnabled(enabled: Boolean)
     suspend fun updateDownloadsDirectoryUri(uriString: String?)
     suspend fun updateLastScreenshotMediaId(id: Long)
+    suspend fun updateScreenshotWatcherStatus(status: ScreenshotWatcherStatus)
+    suspend fun updateMediaStoreVersion(version: String?)
 }
 
 /**
@@ -78,5 +88,13 @@ class InMemorySettingsRepository(
 
     override suspend fun updateLastScreenshotMediaId(id: Long) {
         _settings.update { it.copy(lastScreenshotMediaId = id) }
+    }
+
+    override suspend fun updateScreenshotWatcherStatus(status: ScreenshotWatcherStatus) {
+        _settings.update { it.copy(screenshotWatcherStatus = status) }
+    }
+
+    override suspend fun updateMediaStoreVersion(version: String?) {
+        _settings.update { it.copy(mediaStoreVersion = version) }
     }
 }

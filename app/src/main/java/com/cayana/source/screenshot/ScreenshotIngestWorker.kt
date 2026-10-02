@@ -30,8 +30,8 @@ class ScreenshotIngestWorker(
         } catch (e: Exception) {
             CayanaLogger.w("ScreenshotWorker", "Error during background screenshot ingestion: ${e.javaClass.simpleName}")
         } finally {
-            // Re-register content trigger for subsequent screenshots
-            scheduleNextTrigger(applicationContext)
+            // Re-register content trigger for subsequent screenshots using APPEND_OR_REPLACE
+            scheduleNextTrigger(applicationContext, ExistingWorkPolicy.APPEND_OR_REPLACE)
         }
         return Result.success()
     }
@@ -39,7 +39,7 @@ class ScreenshotIngestWorker(
     companion object {
         const val WORK_NAME = "cayana_screenshot_content_trigger"
 
-        fun scheduleNextTrigger(context: Context) {
+        fun scheduleNextTrigger(context: Context, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
             try {
                 val constraints = Constraints.Builder()
                     .addContentUriTrigger(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true)
@@ -51,7 +51,7 @@ class ScreenshotIngestWorker(
 
                 WorkManager.getInstance(context).enqueueUniqueWork(
                     WORK_NAME,
-                    ExistingWorkPolicy.REPLACE,
+                    policy,
                     workRequest
                 )
             } catch (e: Exception) {

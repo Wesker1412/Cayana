@@ -37,7 +37,11 @@ class ScreenshotDedupTest {
     fun setup() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         memoryRepository = FakeMemoryRepository()
-        settingsRepository = InMemorySettingsRepository()
+        settingsRepository = InMemorySettingsRepository(
+            initialSettings = com.cayana.ui.settings.repository.UserSettings(
+                screenshotWatcherStatus = com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE
+            )
+        )
         permissionChecker = FakePermissionChecker().apply {
             setPermissionGranted("android.permission.READ_MEDIA_IMAGES", true)
         }

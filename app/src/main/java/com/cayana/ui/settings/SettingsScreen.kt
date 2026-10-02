@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material3.AlertDialog
@@ -163,6 +164,13 @@ fun SettingsScreen(
         }
     }
 
+    // Notification permission launcher
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        viewModel.refreshPermissions()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -227,7 +235,88 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ---------------------------------------------------------------
-            // Section 2: Calendar Target
+            // Section 2: Notifications
+            // ---------------------------------------------------------------
+            Text(
+                text = "Notifications",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "記憶通知",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Cayana 可以在記住內容後通知你。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val hasNotificationPerm = com.cayana.core.notification.NotificationHelper.hasNotificationPermission(context)
+                        val statusText = if (hasNotificationPerm) "✓ 已開啟" else "尚未開啟（選填）"
+                        val statusColor = if (hasNotificationPerm) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+
+                        Text(
+                            text = statusText,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = statusColor
+                        )
+
+                        if (!hasNotificationPerm) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                Button(
+                                    onClick = {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("開啟通知", style = MaterialTheme.typography.labelMedium)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { openAppSettings(context) },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("系統設定", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ---------------------------------------------------------------
+            // Section 3: Calendar Target
             // ---------------------------------------------------------------
             Text(
                 text = "Calendar",

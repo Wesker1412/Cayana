@@ -102,6 +102,9 @@ class SettingsViewModel(
         viewModelScope.launch {
             settingsRepository.updateSourceEnabled(sourceType, enabled)
             if (sourceType == SourceType.SCREENSHOT) {
+                if (!enabled) {
+                    settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.ScreenshotWatcherStatus.DISABLED)
+                }
                 syncScreenshotWatcher()
             }
         }

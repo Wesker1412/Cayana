@@ -33,6 +33,8 @@ class DataStoreSettingsRepository(
         val KEY_LOCAL_FIRST = booleanPreferencesKey("is_local_first_only")
         val KEY_DOWNLOADS_DIRECTORY_URI = stringPreferencesKey("downloads_directory_uri")
         val KEY_LAST_SCREENSHOT_MEDIA_ID = longPreferencesKey("last_screenshot_media_id")
+        val KEY_SCREENSHOT_WATCHER_STATUS = stringPreferencesKey("screenshot_watcher_status")
+        val KEY_MEDIA_STORE_VERSION = stringPreferencesKey("media_store_version")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -68,6 +70,17 @@ class DataStoreSettingsRepository(
                 val localFirst = preferences[KEY_LOCAL_FIRST] ?: true
                 val downloadsUri = preferences[KEY_DOWNLOADS_DIRECTORY_URI]
                 val lastMediaId = preferences[KEY_LAST_SCREENSHOT_MEDIA_ID] ?: 0L
+                val mediaVersion = preferences[KEY_MEDIA_STORE_VERSION]
+                val rawWatcherStatus = preferences[KEY_SCREENSHOT_WATCHER_STATUS]
+                val watcherStatus = if (rawWatcherStatus != null) {
+                    try {
+                        ScreenshotWatcherStatus.valueOf(rawWatcherStatus)
+                    } catch (_: Exception) {
+                        ScreenshotWatcherStatus.UNINITIALIZED
+                    }
+                } else {
+                    ScreenshotWatcherStatus.UNINITIALIZED
+                }
 
                 UserSettings(
                     onboardingCompleted = onboardingCompleted,
@@ -79,7 +92,9 @@ class DataStoreSettingsRepository(
                     privateLoggingEnforced = privateLogging,
                     isLocalFirstOnly = localFirst,
                     downloadsDirectoryUri = downloadsUri,
-                    lastScreenshotMediaId = lastMediaId
+                    lastScreenshotMediaId = lastMediaId,
+                    mediaStoreVersion = mediaVersion,
+                    screenshotWatcherStatus = watcherStatus
                 )
             }
     }
@@ -145,6 +160,22 @@ class DataStoreSettingsRepository(
     override suspend fun updateLastScreenshotMediaId(id: Long) {
         dataStore.edit { preferences ->
             preferences[KEY_LAST_SCREENSHOT_MEDIA_ID] = id
+        }
+    }
+
+    override suspend fun updateScreenshotWatcherStatus(status: ScreenshotWatcherStatus) {
+        dataStore.edit { preferences ->
+            preferences[KEY_SCREENSHOT_WATCHER_STATUS] = status.name
+        }
+    }
+
+    override suspend fun updateMediaStoreVersion(version: String?) {
+        dataStore.edit { preferences ->
+            if (version != null) {
+                preferences[KEY_MEDIA_STORE_VERSION] = version
+            } else {
+                preferences.remove(KEY_MEDIA_STORE_VERSION)
+            }
         }
     }
 }

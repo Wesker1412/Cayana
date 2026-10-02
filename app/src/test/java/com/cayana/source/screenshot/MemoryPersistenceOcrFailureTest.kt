@@ -39,7 +39,11 @@ class MemoryPersistenceOcrFailureTest {
         context = ApplicationProvider.getApplicationContext()
         com.cayana.test.FakeMediaContentProvider.register(context)
         memoryRepository = FakeMemoryRepository()
-        settingsRepository = InMemorySettingsRepository()
+        settingsRepository = InMemorySettingsRepository(
+            initialSettings = com.cayana.ui.settings.repository.UserSettings(
+                screenshotWatcherStatus = com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE
+            )
+        )
         permissionChecker = FakePermissionChecker().apply {
             setPermissionGranted("android.permission.READ_MEDIA_IMAGES", true)
         }
@@ -76,7 +80,7 @@ class MemoryPersistenceOcrFailureTest {
 
         val saved = memoryRepository.getMemoryBySourceUri(uri)
         assertNotNull(saved)
-        assertEquals(ProcessingState.COMPLETED_WITHOUT_TEXT, saved?.processingState)
+        assertEquals("OCR failure must result in FAILED_RETRYABLE state", ProcessingState.FAILED_RETRYABLE, saved?.processingState)
         assertNull("Raw text should be null on OCR failure", saved?.rawText)
         assertEquals("Screenshot_no_text", saved?.title)
     }
