@@ -26,6 +26,10 @@ class RoomMemoryRepository(
             .flowOn(dispatchers.io)
     }
 
+    override suspend fun getMemoryBySourceUri(sourceUri: String): MemoryItem? = withContext(dispatchers.io) {
+        memoryDao.getMemoryBySourceUri(sourceUri)?.toDomain()
+    }
+
     override suspend fun saveMemory(item: MemoryItem) = withContext(dispatchers.io) {
         val entity = MemoryEntity.fromDomain(item)
         memoryDao.insertOrUpdate(entity)

@@ -40,4 +40,37 @@ val appModule = module {
             logger = get()
         )
     }
+
+    single<com.cayana.processing.OcrEngine> {
+        com.cayana.processing.ocr.MlKitOcrEngine(
+            context = androidContext(),
+            dispatchers = get()
+        )
+    }
+
+    single {
+        com.cayana.source.screenshot.ScreenshotProcessingCoordinator(
+            context = androidContext(),
+            memoryRepository = get(),
+            settingsRepository = get(),
+            permissionChecker = get(),
+            ocrEngine = get(),
+            dispatchers = get()
+        )
+    }
+
+    single {
+        com.cayana.source.screenshot.ScreenshotSourceWatcher(
+            context = androidContext(),
+            permissionChecker = get(),
+            coordinator = get(),
+            dispatchers = get()
+        )
+    }
+
+    single {
+        com.cayana.source.SourceExistenceValidator(
+            context = androidContext()
+        )
+    }
 }

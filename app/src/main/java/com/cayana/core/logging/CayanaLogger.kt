@@ -24,6 +24,22 @@ interface CayanaLogger {
      * actual private memory contents.
      */
     fun logMemoryEvent(tag: String, eventName: String, memoryId: String, rawContent: String?)
+
+    companion object : CayanaLogger {
+        @Volatile
+        private var delegate: CayanaLogger = DefaultCayanaLogger()
+
+        fun setDelegate(logger: CayanaLogger) {
+            delegate = logger
+        }
+
+        override fun d(tag: String, message: String) = delegate.d(tag, message)
+        override fun i(tag: String, message: String) = delegate.i(tag, message)
+        override fun w(tag: String, message: String, throwable: Throwable?) = delegate.w(tag, message, throwable)
+        override fun e(tag: String, message: String, throwable: Throwable?) = delegate.e(tag, message, throwable)
+        override fun logMemoryEvent(tag: String, eventName: String, memoryId: String, rawContent: String?) =
+            delegate.logMemoryEvent(tag, eventName, memoryId, rawContent)
+    }
 }
 
 class DefaultCayanaLogger(

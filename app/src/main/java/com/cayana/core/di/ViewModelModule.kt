@@ -9,7 +9,8 @@ import org.koin.dsl.module
 val viewModelModule = module {
     viewModel {
         HomeViewModel(
-            memoryRepository = get()
+            memoryRepository = get(),
+            sourceValidator = getOrNull()
         )
     }
 
@@ -17,7 +18,8 @@ val viewModelModule = module {
         SettingsViewModel(
             settingsRepository = get(),
             permissionChecker = get(),
-            calendarProviderHelper = get()
+            calendarProviderHelper = get(),
+            screenshotWatcher = getOrNull()
         )
     }
 
@@ -25,7 +27,8 @@ val viewModelModule = module {
         OnboardingViewModel(
             settingsRepository = get(),
             permissionChecker = get(),
-            calendarProviderHelper = get()
+            calendarProviderHelper = get(),
+            screenshotWatcher = getOrNull()
         )
     }
 }

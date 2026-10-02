@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.cayana.calendar.CalendarProviderHelper
 import com.cayana.calendar.CalendarTarget
 import com.cayana.core.permission.PermissionChecker
+import com.cayana.core.permission.SourceStatus
 import com.cayana.source.SourceType
+import com.cayana.source.screenshot.ScreenshotSourceWatcher
 import com.cayana.ui.onboarding.SourceItemUiState
 import com.cayana.ui.settings.repository.SettingsRepository
 import com.cayana.ui.settings.repository.UserSettings
@@ -19,7 +21,8 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val permissionChecker: PermissionChecker,
-    private val calendarProviderHelper: CalendarProviderHelper
+    private val calendarProviderHelper: CalendarProviderHelper,
+    private val screenshotWatcher: ScreenshotSourceWatcher? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -98,6 +101,9 @@ class SettingsViewModel(
         }
         viewModelScope.launch {
             settingsRepository.updateSourceEnabled(sourceType, enabled)
+            if (sourceType == SourceType.SCREENSHOT) {
+                syncScreenshotWatcher()
+            }
         }
     }
 
@@ -108,6 +114,9 @@ class SettingsViewModel(
             deniedSources.add(sourceType)
         }
         refreshSources(lastUserSettings)
+        if (sourceType == SourceType.SCREENSHOT) {
+            syncScreenshotWatcher()
+        }
     }
 
     fun onDownloadsUriSelected(uriString: String?) {
@@ -134,6 +143,18 @@ class SettingsViewModel(
             }
             refreshSources(userSettings)
             checkCalendarPermission()
+            syncScreenshotWatcher(userSettings)
+        }
+    }
+
+    private fun syncScreenshotWatcher(userSettings: UserSettings = lastUserSettings) {
+        val isEnabled = userSettings.enabledSources.contains(SourceType.SCREENSHOT)
+        val isDenied = deniedSources.contains(SourceType.SCREENSHOT)
+        val status = permissionChecker.getSourceStatus(SourceType.SCREENSHOT, isEnabled, isDenied, null)
+        if (status == SourceStatus.ENABLED_AND_AUTHORIZED) {
+            screenshotWatcher?.startWatching()
+        } else {
+            screenshotWatcher?.stopWatching()
         }
     }
 

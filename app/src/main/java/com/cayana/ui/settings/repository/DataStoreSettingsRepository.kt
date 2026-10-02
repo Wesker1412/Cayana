@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.cayana.source.SourceType
@@ -31,6 +32,7 @@ class DataStoreSettingsRepository(
         val KEY_PRIVATE_LOGGING = booleanPreferencesKey("private_logging_enforced")
         val KEY_LOCAL_FIRST = booleanPreferencesKey("is_local_first_only")
         val KEY_DOWNLOADS_DIRECTORY_URI = stringPreferencesKey("downloads_directory_uri")
+        val KEY_LAST_SCREENSHOT_MEDIA_ID = longPreferencesKey("last_screenshot_media_id")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -65,6 +67,7 @@ class DataStoreSettingsRepository(
                 val privateLogging = preferences[KEY_PRIVATE_LOGGING] ?: true
                 val localFirst = preferences[KEY_LOCAL_FIRST] ?: true
                 val downloadsUri = preferences[KEY_DOWNLOADS_DIRECTORY_URI]
+                val lastMediaId = preferences[KEY_LAST_SCREENSHOT_MEDIA_ID] ?: 0L
 
                 UserSettings(
                     onboardingCompleted = onboardingCompleted,
@@ -75,7 +78,8 @@ class DataStoreSettingsRepository(
                     notificationsEnabled = notifications,
                     privateLoggingEnforced = privateLogging,
                     isLocalFirstOnly = localFirst,
-                    downloadsDirectoryUri = downloadsUri
+                    downloadsDirectoryUri = downloadsUri,
+                    lastScreenshotMediaId = lastMediaId
                 )
             }
     }
@@ -135,6 +139,12 @@ class DataStoreSettingsRepository(
             } else {
                 preferences.remove(KEY_DOWNLOADS_DIRECTORY_URI)
             }
+        }
+    }
+
+    override suspend fun updateLastScreenshotMediaId(id: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_SCREENSHOT_MEDIA_ID] = id
         }
     }
 }

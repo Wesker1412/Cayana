@@ -18,6 +18,10 @@ class FakeMemoryRepository : MemoryRepository {
         return memoriesMap.map { it[id] }
     }
 
+    override suspend fun getMemoryBySourceUri(sourceUri: String): MemoryItem? {
+        return memoriesMap.value.values.firstOrNull { it.sourceUri == sourceUri }
+    }
+
     override suspend fun saveMemory(item: MemoryItem) {
         memoriesMap.update { it + (item.id to item) }
     }

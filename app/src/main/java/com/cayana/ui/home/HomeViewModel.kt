@@ -13,9 +13,13 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import com.cayana.source.SourceExistenceValidator
+import kotlinx.coroutines.flow.onEach
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
-    private val memoryRepository: MemoryRepository
+    private val memoryRepository: MemoryRepository,
+    private val sourceValidator: SourceExistenceValidator? = null
 ) : ViewModel() {
 
     private val searchQuery = MutableStateFlow("")
@@ -25,6 +29,21 @@ class HomeViewModel(
             memoryRepository.getAllMemories()
         } else {
             memoryRepository.searchMemories(query)
+        }
+    }.onEach { memories ->
+        checkAndReconcileSources(memories)
+    }
+
+    private fun checkAndReconcileSources(memories: List<MemoryItem>) {
+        val validator = sourceValidator ?: return
+        viewModelScope.launch {
+            memories.forEach { item ->
+                if (item.sourceExists && item.sourceUri != null) {
+                    if (!validator.doesSourceExist(item.sourceUri)) {
+                        memoryRepository.markSourceExists(item.id, false)
+                    }
+                }
+            }
         }
     }
 

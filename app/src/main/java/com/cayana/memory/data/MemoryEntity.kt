@@ -1,13 +1,19 @@
 package com.cayana.memory.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.cayana.memory.model.EventCandidate
 import com.cayana.memory.model.MemoryItem
 import com.cayana.processing.ProcessingState
 import com.cayana.source.SourceType
 
-@Entity(tableName = "memories")
+@Entity(
+    tableName = "memories",
+    indices = [
+        Index(value = ["sourceUri"])
+    ]
+)
 data class MemoryEntity(
     @PrimaryKey
     val id: String,

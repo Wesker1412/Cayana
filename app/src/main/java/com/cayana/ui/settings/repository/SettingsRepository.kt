@@ -18,7 +18,8 @@ data class UserSettings(
     val notificationsEnabled: Boolean = true,
     val privateLoggingEnforced: Boolean = true,
     val isLocalFirstOnly: Boolean = true,
-    val downloadsDirectoryUri: String? = null
+    val downloadsDirectoryUri: String? = null,
+    val lastScreenshotMediaId: Long = 0L
 )
 
 interface SettingsRepository {
@@ -29,6 +30,7 @@ interface SettingsRepository {
     suspend fun updateAutoCalendar(enabled: Boolean)
     suspend fun updateNotificationsEnabled(enabled: Boolean)
     suspend fun updateDownloadsDirectoryUri(uriString: String?)
+    suspend fun updateLastScreenshotMediaId(id: Long)
 }
 
 /**
@@ -72,5 +74,9 @@ class InMemorySettingsRepository(
 
     override suspend fun updateDownloadsDirectoryUri(uriString: String?) {
         _settings.update { it.copy(downloadsDirectoryUri = uriString) }
+    }
+
+    override suspend fun updateLastScreenshotMediaId(id: Long) {
+        _settings.update { it.copy(lastScreenshotMediaId = id) }
     }
 }

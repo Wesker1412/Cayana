@@ -11,7 +11,9 @@ val databaseModule = module {
             androidContext(),
             CayanaDatabase::class.java,
             CayanaDatabase.DATABASE_NAME
-        ).build()
+        )
+            .addMigrations(CayanaDatabase.MIGRATION_1_2)
+            .build()
     }
 
     single { get<CayanaDatabase>().memoryDao() }

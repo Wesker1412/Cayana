@@ -7,6 +7,7 @@ import com.cayana.calendar.CalendarTarget
 import com.cayana.core.permission.PermissionChecker
 import com.cayana.core.permission.SourceStatus
 import com.cayana.source.SourceType
+import com.cayana.source.screenshot.ScreenshotSourceWatcher
 import com.cayana.ui.settings.repository.SettingsRepository
 import com.cayana.ui.settings.repository.UserSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +20,8 @@ import kotlinx.coroutines.launch
 class OnboardingViewModel(
     private val settingsRepository: SettingsRepository,
     private val permissionChecker: PermissionChecker,
-    private val calendarProviderHelper: CalendarProviderHelper
+    private val calendarProviderHelper: CalendarProviderHelper,
+    private val screenshotWatcher: ScreenshotSourceWatcher? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -136,6 +138,9 @@ class OnboardingViewModel(
             deniedSources.add(sourceType)
         }
         refreshSources(lastUserSettings)
+        if (sourceType == SourceType.SCREENSHOT) {
+            syncScreenshotWatcher()
+        }
     }
 
     fun onDownloadsUriSelected(uriString: String?) {
@@ -162,6 +167,7 @@ class OnboardingViewModel(
             }
             refreshSources(userSettings)
             checkCalendarPermission()
+            syncScreenshotWatcher(userSettings)
         }
     }
 
@@ -232,6 +238,18 @@ class OnboardingViewModel(
         viewModelScope.launch {
             settingsRepository.setOnboardingCompleted(true)
             _uiState.update { it.copy(isOnboardingCompleted = true) }
+            syncScreenshotWatcher()
+        }
+    }
+
+    private fun syncScreenshotWatcher(userSettings: UserSettings = lastUserSettings) {
+        val isEnabled = userSettings.enabledSources.contains(SourceType.SCREENSHOT)
+        val isDenied = deniedSources.contains(SourceType.SCREENSHOT)
+        val status = permissionChecker.getSourceStatus(SourceType.SCREENSHOT, isEnabled, isDenied, null)
+        if (status == SourceStatus.ENABLED_AND_AUTHORIZED) {
+            screenshotWatcher?.startWatching()
+        } else {
+            screenshotWatcher?.stopWatching()
         }
     }
 }

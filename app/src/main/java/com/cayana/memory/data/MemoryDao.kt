@@ -21,6 +21,9 @@ interface MemoryDao {
     @Query("SELECT * FROM memories WHERE id = :id LIMIT 1")
     suspend fun getMemoryById(id: String): MemoryEntity?
 
+    @Query("SELECT * FROM memories WHERE sourceUri = :sourceUri LIMIT 1")
+    suspend fun getMemoryBySourceUri(sourceUri: String): MemoryEntity?
+
     @Query("SELECT * FROM memories WHERE id = :id LIMIT 1")
     fun getMemoryByIdFlow(id: String): Flow<MemoryEntity?>
 

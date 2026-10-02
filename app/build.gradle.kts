@@ -52,6 +52,10 @@ android {
             isReturnDefaultValues = true
         }
     }
+    sourceSets {
+        getByName("test").assets.srcDirs("$projectDir/schemas")
+        getByName("debug").assets.srcDirs("$projectDir/schemas")
+    }
 }
 
 ksp {
@@ -87,6 +91,13 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 
+    // WorkManager
+    implementation(libs.androidx.work.runtime)
+
+    // ML Kit OCR
+    implementation(libs.mlkit.text.recognition.chinese)
+    implementation(libs.kotlinx.coroutines.play.services)
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
@@ -95,6 +106,8 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.androidx.work.testing)
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)

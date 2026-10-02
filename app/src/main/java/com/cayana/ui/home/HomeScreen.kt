@@ -254,6 +254,27 @@ private fun MemoryItemCard(
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = "已記住",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    if (!item.sourceExists) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "(原圖已刪除)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,14 +299,18 @@ private fun MemoryItemCard(
                 }
             }
 
-            if (!item.title.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+            val displayTitle = if (!item.title.isNullOrBlank()) {
+                item.title
+            } else {
+                item.sourceType.displayName
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = displayTitle,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
 
             if (!item.rawText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
