@@ -25,4 +25,19 @@ object PrivacySanitizer {
         val lastSegment = uri.substringAfterLast('/').substringAfterLast('\\')
         return ".../$lastSegment"
     }
+
+    /**
+     * Safety net: detects accidental logging of memory objects (e.g. MemoryItem toString()
+     * containing rawText, transcript, or normalizedText fields) and redacts the private payload.
+     */
+    fun guardAgainstMemoryLeakage(message: String): String {
+        return if (message.contains("rawText=", ignoreCase = true) ||
+            message.contains("transcript=", ignoreCase = true) ||
+            message.contains("normalizedText=", ignoreCase = true)
+        ) {
+            message.replace(Regex("(rawText|transcript|normalizedText)=[^,)\\]]+"), "$1=[REDACTED_BY_PRIVACY_GUARD]")
+        } else {
+            message
+        }
+    }
 }

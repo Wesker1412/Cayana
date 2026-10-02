@@ -11,7 +11,7 @@ val databaseModule = module {
             androidContext(),
             CayanaDatabase::class.java,
             CayanaDatabase.DATABASE_NAME
-        ).fallbackToDestructiveMigration().build()
+        ).build()
     }
 
     single { get<CayanaDatabase>().memoryDao() }

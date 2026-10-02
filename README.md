@@ -10,14 +10,22 @@ Cayana 是一個原生 Android Personal Memory Layer（個人記憶層）。它�
 
 1. **隱私優先（Privacy First）**：
    - 絕不將使用者的私人 OCR、Transcript 或 Memory 原文記錄至一般 Log。
+   - `CayanaLogger` 內建自動過濾防護（Privacy Guard），防範意外將含 `rawText` / `transcript` 的記憶物件直接印出。
    - Crash Report 與 Analytics 嚴禁夾帶 Memory 原文。
    - 原始媒體檔案預設不上傳伺服器。
-2. **Index, don't duplicate**：
+2. **禁止 Android 自動備份私人 Memory DB**：
+   - 正式客戶端加密備份於 Stage 6 實作前，App 設定 `android:allowBackup="false"`。
+   - `data_extraction_rules.xml` 與 `backup_rules.xml` 明確排除 `database`、`sharedpref`、`file`、`root`，防止未加密私人記憶進入 Android 雲端備份。
+3. **資料庫遷移政策（Database Migration Policy）**：
+   - 嚴格禁止使用 `fallbackToDestructiveMigration()`。
+   - Cayana 是 Personal Memory Layer，任何 App 升級絕不能因 migration 缺失而靜默刪除使用者記憶。
+   - 啟用 Room Schema Export（路徑：`app/schemas/`），所有未來的資料庫結構更動皆必須提供嚴格測試的 Versioned `Migration`。
+4. **Index, don't duplicate**：
    - Cayana 儲存的是結構化資訊（OCR 文字、Metadata、時間地點實體、搜尋索引），而非重複儲存大型原始多媒體。
    - **原始檔刪除後，已建立的 Memory 絕不跟著消失**（標記 `sourceExists = false`）。
-3. **Local-first**：
+5. **Local-first**：
    - OCR、語音轉文字、搜尋與資料庫儲存優先在本機完成。
-4. **Agent 與 LLM 邊界**：
+6. **Agent 與 LLM 邊界**：
    - LLM 不直接存取資料庫，未來若加入 Agent 也僅允許 **Read-only Memory access**。
    - LLM 不持有日曆（Calendar）憑證。
 

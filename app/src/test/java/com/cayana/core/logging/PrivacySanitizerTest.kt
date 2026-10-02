@@ -2,6 +2,7 @@ package com.cayana.core.logging
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PrivacySanitizerTest {
@@ -29,5 +30,14 @@ class PrivacySanitizerTest {
 
         assertEquals(".../Screenshot_20261002_080000.png", sanitized)
         assertFalse(sanitized.contains("storage/emulated"))
+    }
+
+    @Test
+    fun `guardAgainstMemoryLeakage redacts accidental memory text in log messages`() {
+        val message = "Processing item MemoryItem(id=1, rawText=Confidential user note, title=Note)"
+        val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(message)
+
+        assertFalse("Raw private memory text must be redacted", guarded.contains("Confidential user note"))
+        assertTrue("Redacted marker must be present", guarded.contains("[REDACTED_BY_PRIVACY_GUARD]"))
     }
 }

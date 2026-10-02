@@ -6,7 +6,7 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [MemoryEntity::class],
     version = 1,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
     abstract fun memoryDao(): MemoryDao
