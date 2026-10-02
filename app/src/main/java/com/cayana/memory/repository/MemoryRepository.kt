@@ -1,0 +1,20 @@
+package com.cayana.memory.repository
+
+import com.cayana.memory.model.MemoryItem
+import kotlinx.coroutines.flow.Flow
+
+/**
+ * Core interface for Memory Layer storage.
+ * Can be cleanly substituted with alternative implementations (e.g. in-memory fake for tests,
+ * encrypted local storage, or mock repository).
+ */
+interface MemoryRepository {
+    fun getAllMemories(): Flow<List<MemoryItem>>
+    fun getMemoryById(id: String): Flow<MemoryItem?>
+    suspend fun saveMemory(item: MemoryItem)
+    suspend fun deleteMemory(id: String)
+    fun searchMemories(query: String): Flow<List<MemoryItem>>
+    fun getMemoryCount(): Flow<Int>
+    suspend fun markSourceExists(id: String, exists: Boolean)
+    suspend fun clearAll()
+}

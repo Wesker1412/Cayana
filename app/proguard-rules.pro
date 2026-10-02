@@ -1,0 +1,1 @@
+# Cayana Proguard Rules

@@ -1,0 +1,28 @@
+package com.cayana.core.di
+
+import com.cayana.memory.repository.MemoryRepository
+import com.cayana.memory.repository.RoomMemoryRepository
+import com.cayana.search.DefaultMemorySearchEngine
+import com.cayana.search.MemorySearchEngine
+import com.cayana.ui.settings.repository.LocalSettingsRepository
+import com.cayana.ui.settings.repository.SettingsRepository
+import org.koin.dsl.module
+
+val repositoryModule = module {
+    single<MemoryRepository> {
+        RoomMemoryRepository(
+            memoryDao = get(),
+            dispatchers = get()
+        )
+    }
+
+    single<SettingsRepository> {
+        LocalSettingsRepository()
+    }
+
+    single<MemorySearchEngine> {
+        DefaultMemorySearchEngine(
+            memoryRepository = get()
+        )
+    }
+}
