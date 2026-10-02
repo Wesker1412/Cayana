@@ -17,7 +17,8 @@ data class UserSettings(
     val autoCalendarEnabled: Boolean = false,
     val notificationsEnabled: Boolean = true,
     val privateLoggingEnforced: Boolean = true,
-    val isLocalFirstOnly: Boolean = true
+    val isLocalFirstOnly: Boolean = true,
+    val downloadsDirectoryUri: String? = null
 )
 
 interface SettingsRepository {
@@ -27,6 +28,7 @@ interface SettingsRepository {
     suspend fun updateSelectedCalendar(calendarId: String?, calendarName: String?)
     suspend fun updateAutoCalendar(enabled: Boolean)
     suspend fun updateNotificationsEnabled(enabled: Boolean)
+    suspend fun updateDownloadsDirectoryUri(uriString: String?)
 }
 
 /**
@@ -66,5 +68,9 @@ class InMemorySettingsRepository(
 
     override suspend fun updateNotificationsEnabled(enabled: Boolean) {
         _settings.update { it.copy(notificationsEnabled = enabled) }
+    }
+
+    override suspend fun updateDownloadsDirectoryUri(uriString: String?) {
+        _settings.update { it.copy(downloadsDirectoryUri = uriString) }
     }
 }

@@ -3,16 +3,19 @@ package com.cayana.core.permission
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.cayana.source.SourceType
 
 /**
  * Android implementation of PermissionChecker adhering to Android version-specific
- * permission models (API 34+ Selected Media Access, API 33 Granular Media Permissions, API <=32 External Storage).
+ * permission models (API 34+ Selected Media Access, API 33 Granular Media Permissions,
+ * API <=32 External Storage, Media Audio for Recordings, SAF for Downloads).
  */
 class AndroidPermissionChecker(
-    private val context: Context
+    private val context: Context,
+    private val sdkInt: Int = Build.VERSION.SDK_INT
 ) : PermissionChecker {
 
     override fun hasPermission(permission: String): Boolean {
@@ -23,14 +26,13 @@ class AndroidPermissionChecker(
         return when (sourceType) {
             SourceType.SCREENSHOT, SourceType.PHOTO -> {
                 when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
-                        // Android 14+ supports partial/selected access
+                    sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
                         listOf(
                             Manifest.permission.READ_MEDIA_IMAGES,
                             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
                         )
                     }
-                    Build.VERSION.SDK_INT == Build.VERSION_CODES.TIRAMISU -> {
+                    sdkInt == Build.VERSION_CODES.TIRAMISU -> {
                         listOf(Manifest.permission.READ_MEDIA_IMAGES)
                     }
                     else -> {
@@ -39,15 +41,16 @@ class AndroidPermissionChecker(
                 }
             }
             SourceType.RECORDING -> {
-                listOf(Manifest.permission.RECORD_AUDIO)
+                // Cayana reads existing audio recordings; does not record via microphone
+                if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+                    listOf(Manifest.permission.READ_MEDIA_AUDIO)
+                } else {
+                    listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
             }
             SourceType.DOWNLOAD -> {
-                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
-                    listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-                } else {
-                    // API 33+ uses app-specific storage or SAF for downloads without external storage permission
-                    emptyList()
-                }
+                // Downloads uses Storage Access Framework (SAF) folder picker rather than runtime permissions
+                emptyList()
             }
             SourceType.SHARED_URL, SourceType.SHARED_TEXT, SourceType.SHARED_FILE -> {
                 emptyList()
@@ -55,30 +58,59 @@ class AndroidPermissionChecker(
         }
     }
 
-    override fun isSourceAuthorized(sourceType: SourceType): Boolean {
-        val permissions = getRequiredPermissions(sourceType)
-        if (permissions.isEmpty()) return true
+    override fun hasLimitedAccess(sourceType: SourceType): Boolean {
+        return if (sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            (sourceType == SourceType.SCREENSHOT || sourceType == SourceType.PHOTO) &&
+                !hasPermission(Manifest.permission.READ_MEDIA_IMAGES) &&
+                hasPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        } else {
+            false
+        }
+    }
 
+    override fun isSourceAuthorized(sourceType: SourceType, customUri: String?): Boolean {
         return when (sourceType) {
             SourceType.SCREENSHOT, SourceType.PHOTO -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    // On Android 14+, either full access OR user-selected partial access counts as authorized
-                    hasPermission(Manifest.permission.READ_MEDIA_IMAGES) ||
-                        hasPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+                if (sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    // Full authorization requires READ_MEDIA_IMAGES
+                    hasPermission(Manifest.permission.READ_MEDIA_IMAGES)
+                } else if (sdkInt == Build.VERSION_CODES.TIRAMISU) {
+                    hasPermission(Manifest.permission.READ_MEDIA_IMAGES)
                 } else {
-                    permissions.all { hasPermission(it) }
+                    hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
                 }
             }
-            else -> {
-                permissions.all { hasPermission(it) }
+            SourceType.RECORDING -> {
+                if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+                    hasPermission(Manifest.permission.READ_MEDIA_AUDIO)
+                } else {
+                    hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
             }
+            SourceType.DOWNLOAD -> {
+                isDownloadsAuthorized(customUri)
+            }
+            SourceType.SHARED_URL, SourceType.SHARED_TEXT, SourceType.SHARED_FILE -> true
+        }
+    }
+
+    private fun isDownloadsAuthorized(customUri: String?): Boolean {
+        if (customUri.isNullOrBlank()) return false
+        return try {
+            val targetUri = Uri.parse(customUri)
+            context.contentResolver.persistedUriPermissions.any {
+                it.uri == targetUri && it.isReadPermission
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 
     override fun getSourceStatus(
         sourceType: SourceType,
         isEnabled: Boolean,
-        isDenied: Boolean
+        isDenied: Boolean,
+        customUri: String?
     ): SourceStatus {
         if (!isEnabled) {
             return SourceStatus.DISABLED
@@ -88,7 +120,11 @@ class AndroidPermissionChecker(
             return SourceStatus.PERMISSION_DENIED
         }
 
-        val authorized = isSourceAuthorized(sourceType)
+        if (hasLimitedAccess(sourceType)) {
+            return SourceStatus.LIMITED_ACCESS
+        }
+
+        val authorized = isSourceAuthorized(sourceType, customUri)
         return if (authorized) {
             SourceStatus.ENABLED_AND_AUTHORIZED
         } else {

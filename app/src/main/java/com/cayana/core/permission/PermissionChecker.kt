@@ -19,16 +19,22 @@ interface PermissionChecker {
     fun getRequiredPermissions(sourceType: SourceType): List<String>
 
     /**
-     * Checks if the required OS permissions for a given SourceType are satisfied.
+     * Checks if the required OS permissions for a given SourceType are fully satisfied.
      */
-    fun isSourceAuthorized(sourceType: SourceType): Boolean
+    fun isSourceAuthorized(sourceType: SourceType, customUri: String? = null): Boolean
 
     /**
-     * Computes the combined SourceStatus from the user preference and OS permission state.
+     * Checks if a source has partial/limited access (e.g. Android 14+ Selected Photos).
+     */
+    fun hasLimitedAccess(sourceType: SourceType): Boolean
+
+    /**
+     * Computes the combined SourceStatus from the user preference, OS permission state, and optional SAF URI.
      */
     fun getSourceStatus(
         sourceType: SourceType,
         isEnabled: Boolean,
-        isDenied: Boolean = false
+        isDenied: Boolean = false,
+        customUri: String? = null
     ): SourceStatus
 }

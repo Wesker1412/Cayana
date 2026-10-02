@@ -8,9 +8,11 @@ import com.cayana.core.permission.PermissionChecker
 import com.cayana.core.permission.SourceStatus
 import com.cayana.source.SourceType
 import com.cayana.ui.settings.repository.SettingsRepository
+import com.cayana.ui.settings.repository.UserSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -25,34 +27,40 @@ class OnboardingViewModel(
 
     // Tracks which sources had permissions explicitly denied during onboarding
     private val deniedSources = mutableSetOf<SourceType>()
+    private var lastUserSettings: UserSettings = UserSettings()
 
     init {
         viewModelScope.launch {
             settingsRepository.getSettings().collect { userSettings ->
+                lastUserSettings = userSettings
                 val sourceItems = listOf(
                     createSourceItem(
                         SourceType.SCREENSHOT,
                         "Screenshots",
                         "Automatically index captured screenshots",
-                        userSettings.enabledSources.contains(SourceType.SCREENSHOT)
+                        userSettings.enabledSources.contains(SourceType.SCREENSHOT),
+                        null
                     ),
                     createSourceItem(
                         SourceType.PHOTO,
                         "Camera & Photos",
                         "Index photos with readable text or places",
-                        userSettings.enabledSources.contains(SourceType.PHOTO)
+                        userSettings.enabledSources.contains(SourceType.PHOTO),
+                        null
                     ),
                     createSourceItem(
                         SourceType.RECORDING,
                         "Voice Recordings",
                         "Transcribe and index audio notes locally",
-                        userSettings.enabledSources.contains(SourceType.RECORDING)
+                        userSettings.enabledSources.contains(SourceType.RECORDING),
+                        null
                     ),
                     createSourceItem(
                         SourceType.DOWNLOAD,
                         "Downloads",
                         "Index documents and receipts from downloads",
-                        userSettings.enabledSources.contains(SourceType.DOWNLOAD)
+                        userSettings.enabledSources.contains(SourceType.DOWNLOAD),
+                        userSettings.downloadsDirectoryUri
                     )
                 )
 
@@ -73,10 +81,11 @@ class OnboardingViewModel(
         type: SourceType,
         title: String,
         description: String,
-        isEnabled: Boolean
+        isEnabled: Boolean,
+        customUri: String? = null
     ): SourceItemUiState {
         val isDenied = deniedSources.contains(type)
-        val status = permissionChecker.getSourceStatus(type, isEnabled, isDenied)
+        val status = permissionChecker.getSourceStatus(type, isEnabled, isDenied, customUri)
         return SourceItemUiState(
             type = type,
             title = title,
@@ -126,19 +135,42 @@ class OnboardingViewModel(
         } else {
             deniedSources.add(sourceType)
         }
-        refreshSources()
+        refreshSources(lastUserSettings)
+    }
+
+    fun onDownloadsUriSelected(uriString: String?) {
+        if (uriString != null) {
+            deniedSources.remove(SourceType.DOWNLOAD)
+            viewModelScope.launch {
+                settingsRepository.updateDownloadsDirectoryUri(uriString)
+                settingsRepository.updateSourceEnabled(SourceType.DOWNLOAD, true)
+            }
+        } else {
+            deniedSources.add(SourceType.DOWNLOAD)
+            refreshSources(lastUserSettings)
+        }
     }
 
     fun refreshPermissions() {
-        refreshSources()
-        checkCalendarPermission()
+        viewModelScope.launch {
+            val userSettings = settingsRepository.getSettings().first()
+            lastUserSettings = userSettings
+            // Clear denied status if now granted externally (e.g. from Android Settings)
+            deniedSources.removeAll { type ->
+                val uri = if (type == SourceType.DOWNLOAD) userSettings.downloadsDirectoryUri else null
+                permissionChecker.isSourceAuthorized(type, uri) || permissionChecker.hasLimitedAccess(type)
+            }
+            refreshSources(userSettings)
+            checkCalendarPermission()
+        }
     }
 
-    private fun refreshSources() {
+    private fun refreshSources(userSettings: UserSettings = lastUserSettings) {
         _uiState.update { current ->
             val updatedSources = current.sources.map { item ->
                 val isDenied = deniedSources.contains(item.type)
-                val status = permissionChecker.getSourceStatus(item.type, item.isEnabled, isDenied)
+                val uri = if (item.type == SourceType.DOWNLOAD) userSettings.downloadsDirectoryUri else null
+                val status = permissionChecker.getSourceStatus(item.type, item.isEnabled, isDenied, uri)
                 item.copy(status = status)
             }
             current.copy(sources = updatedSources)

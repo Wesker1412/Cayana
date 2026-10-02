@@ -47,9 +47,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,6 +73,19 @@ fun OnboardingScreen(
     onComplete: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshPermissions()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     LaunchedEffect(uiState.isOnboardingCompleted) {
         if (uiState.isOnboardingCompleted) {
@@ -86,6 +103,7 @@ fun OnboardingScreen(
                 uiState = uiState,
                 onToggleSource = { type, enabled -> viewModel.toggleSource(type, enabled) },
                 onPermissionResult = { type, granted -> viewModel.onPermissionResult(type, granted) },
+                onDownloadsUriSelected = { uri -> viewModel.onDownloadsUriSelected(uri) },
                 onNext = { viewModel.nextStep() }
             )
             OnboardingStep.CALENDAR -> CalendarStep(
@@ -168,6 +186,7 @@ private fun SourcesStep(
     uiState: OnboardingUiState,
     onToggleSource: (SourceType, Boolean) -> Unit,
     onPermissionResult: (SourceType, Boolean) -> Unit,
+    onDownloadsUriSelected: (String?) -> Unit,
     onNext: () -> Unit
 ) {
     val context = LocalContext.current
@@ -176,7 +195,10 @@ private fun SourcesStep(
     val mediaPermissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        val granted = results.values.any { it }
+        val hasFull = results[Manifest.permission.READ_MEDIA_IMAGES] == true ||
+            results[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        val hasSelected = results[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true
+        val granted = hasFull || hasSelected
         onPermissionResult(SourceType.SCREENSHOT, granted)
         onPermissionResult(SourceType.PHOTO, granted)
     }
@@ -186,6 +208,50 @@ private fun SourcesStep(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         onPermissionResult(SourceType.RECORDING, granted)
+    }
+
+    // Downloads SAF directory picker launcher
+    val openDocumentTreeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            } catch (_: Exception) {}
+            onDownloadsUriSelected(uri.toString())
+        } else {
+            onDownloadsUriSelected(null)
+        }
+    }
+
+    val launchPermissionForSource: (SourceType) -> Unit = { type ->
+        when (type) {
+            SourceType.SCREENSHOT, SourceType.PHOTO -> {
+                val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    arrayOf(
+                        Manifest.permission.READ_MEDIA_IMAGES,
+                        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                    )
+                } else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.TIRAMISU) {
+                    arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+                } else {
+                    arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+                mediaPermissionsLauncher.launch(perms)
+            }
+            SourceType.RECORDING -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    audioPermissionLauncher.launch(Manifest.permission.READ_MEDIA_AUDIO)
+                } else {
+                    audioPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+            }
+            SourceType.DOWNLOAD -> {
+                openDocumentTreeLauncher.launch(null)
+            }
+            else -> {}
+        }
     }
 
     Column(
@@ -225,31 +291,11 @@ private fun SourcesStep(
                     onCheckedChange = { checked ->
                         onToggleSource(item.type, checked)
                         if (checked && item.status != SourceStatus.ENABLED_AND_AUTHORIZED) {
-                            when (item.type) {
-                                SourceType.SCREENSHOT, SourceType.PHOTO -> {
-                                    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                                        arrayOf(
-                                            Manifest.permission.READ_MEDIA_IMAGES,
-                                            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-                                        )
-                                    } else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.TIRAMISU) {
-                                        arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-                                    } else {
-                                        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-                                    }
-                                    mediaPermissionsLauncher.launch(perms)
-                                }
-                                SourceType.RECORDING -> {
-                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
-                                SourceType.DOWNLOAD -> {
-                                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
-                                        mediaPermissionsLauncher.launch(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE))
-                                    }
-                                }
-                                else -> {}
-                            }
+                            launchPermissionForSource(item.type)
                         }
+                    },
+                    onRequestPermission = {
+                        launchPermissionForSource(item.type)
                     },
                     onRequestSettings = {
                         openAppSettings(context)
@@ -275,6 +321,7 @@ private fun SourcesStep(
 private fun SourceCard(
     item: SourceItemUiState,
     onCheckedChange: (Boolean) -> Unit,
+    onRequestPermission: () -> Unit,
     onRequestSettings: () -> Unit
 ) {
     Card(
@@ -316,7 +363,7 @@ private fun SourceCard(
                 )
             }
 
-            // Display permission status when enabled
+            // Display permission status and action button when enabled
             if (item.isEnabled) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
@@ -326,12 +373,14 @@ private fun SourceCard(
                 ) {
                     val statusText = when (item.status) {
                         SourceStatus.ENABLED_AND_AUTHORIZED -> "✓ 已授權"
+                        SourceStatus.LIMITED_ACCESS -> "⚠ 部分存取"
                         SourceStatus.ENABLED_PERMISSION_REQUIRED -> "⚠ 需要系統權限"
                         SourceStatus.PERMISSION_DENIED -> "✕ 權限已被拒絕"
                         SourceStatus.DISABLED -> ""
                     }
                     val statusColor = when (item.status) {
                         SourceStatus.ENABLED_AND_AUTHORIZED -> MaterialTheme.colorScheme.primary
+                        SourceStatus.LIMITED_ACCESS -> MaterialTheme.colorScheme.tertiary
                         SourceStatus.ENABLED_PERMISSION_REQUIRED -> MaterialTheme.colorScheme.tertiary
                         SourceStatus.PERMISSION_DENIED -> MaterialTheme.colorScheme.error
                         SourceStatus.DISABLED -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -343,10 +392,29 @@ private fun SourceCard(
                         color = statusColor
                     )
 
-                    if (item.status == SourceStatus.PERMISSION_DENIED) {
-                        TextButton(onClick = onRequestSettings) {
-                            Text("前往設定", style = MaterialTheme.typography.labelMedium)
+                    when (item.status) {
+                        SourceStatus.ENABLED_PERMISSION_REQUIRED -> {
+                            Button(
+                                onClick = onRequestPermission,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("授權", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
+                        SourceStatus.LIMITED_ACCESS -> {
+                            OutlinedButton(
+                                onClick = onRequestPermission,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("升級授權", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        SourceStatus.PERMISSION_DENIED -> {
+                            TextButton(onClick = onRequestSettings) {
+                                Text("前往設定", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        else -> {}
                     }
                 }
             }

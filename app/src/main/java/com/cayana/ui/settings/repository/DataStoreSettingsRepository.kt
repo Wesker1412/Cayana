@@ -30,6 +30,7 @@ class DataStoreSettingsRepository(
         val KEY_NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         val KEY_PRIVATE_LOGGING = booleanPreferencesKey("private_logging_enforced")
         val KEY_LOCAL_FIRST = booleanPreferencesKey("is_local_first_only")
+        val KEY_DOWNLOADS_DIRECTORY_URI = stringPreferencesKey("downloads_directory_uri")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -63,6 +64,7 @@ class DataStoreSettingsRepository(
                 val notifications = preferences[KEY_NOTIFICATIONS_ENABLED] ?: true
                 val privateLogging = preferences[KEY_PRIVATE_LOGGING] ?: true
                 val localFirst = preferences[KEY_LOCAL_FIRST] ?: true
+                val downloadsUri = preferences[KEY_DOWNLOADS_DIRECTORY_URI]
 
                 UserSettings(
                     onboardingCompleted = onboardingCompleted,
@@ -72,7 +74,8 @@ class DataStoreSettingsRepository(
                     autoCalendarEnabled = autoCalendar,
                     notificationsEnabled = notifications,
                     privateLoggingEnforced = privateLogging,
-                    isLocalFirstOnly = localFirst
+                    isLocalFirstOnly = localFirst,
+                    downloadsDirectoryUri = downloadsUri
                 )
             }
     }
@@ -122,6 +125,16 @@ class DataStoreSettingsRepository(
     override suspend fun updateNotificationsEnabled(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[KEY_NOTIFICATIONS_ENABLED] = enabled
+        }
+    }
+
+    override suspend fun updateDownloadsDirectoryUri(uriString: String?) {
+        dataStore.edit { preferences ->
+            if (uriString != null) {
+                preferences[KEY_DOWNLOADS_DIRECTORY_URI] = uriString
+            } else {
+                preferences.remove(KEY_DOWNLOADS_DIRECTORY_URI)
+            }
         }
     }
 }

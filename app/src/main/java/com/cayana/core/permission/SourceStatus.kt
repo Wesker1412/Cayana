@@ -9,8 +9,11 @@ enum class SourceStatus {
     /** The user explicitly turned this source OFF in UI preferences. */
     DISABLED,
 
-    /** The user turned this source ON and the necessary OS permission is GRANTED. */
+    /** The user turned this source ON and the necessary OS permission is fully GRANTED. */
     ENABLED_AND_AUTHORIZED,
+
+    /** The user turned this source ON, but only partial/limited access was granted (e.g. Android 14+ selected photos). */
+    LIMITED_ACCESS,
 
     /** The user turned this source ON, but required OS permission has not yet been granted. */
     ENABLED_PERMISSION_REQUIRED,

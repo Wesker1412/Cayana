@@ -119,4 +119,47 @@ class SettingsViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    @Test
+    fun `onDownloadsUriSelected updates downloads uri and source status`() = runTest {
+        viewModel.uiState.test {
+            testDispatcher.scheduler.advanceUntilIdle()
+            awaitItem()
+
+            val uri = "content://com.android.externalstorage.documents/tree/primary%3ADownload"
+            permissionChecker.setPersistedUri(uri, true)
+            viewModel.onDownloadsUriSelected(uri)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            val updated = awaitItem()
+            assertTrue(updated.settings.enabledSources.contains(SourceType.DOWNLOAD))
+            assertEquals(uri, updated.settings.downloadsDirectoryUri)
+            val downloadItem = updated.sourceItems.first { it.type == SourceType.DOWNLOAD }
+            assertEquals(SourceStatus.ENABLED_AND_AUTHORIZED, downloadItem.status)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `refreshPermissions updates denied source after external grant in settings`() = runTest {
+        viewModel.uiState.test {
+            testDispatcher.scheduler.advanceUntilIdle()
+            awaitItem()
+
+            // Deny screenshot
+            viewModel.onPermissionResult(SourceType.SCREENSHOT, isGranted = false)
+            testDispatcher.scheduler.advanceUntilIdle()
+            val deniedItem = awaitItem().sourceItems.first { it.type == SourceType.SCREENSHOT }
+            assertEquals(SourceStatus.PERMISSION_DENIED, deniedItem.status)
+
+            // External grant in settings
+            permissionChecker.setPermissionGranted("android.permission.READ_MEDIA_IMAGES", true)
+            viewModel.refreshPermissions()
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            val refreshedItem = awaitItem().sourceItems.first { it.type == SourceType.SCREENSHOT }
+            assertEquals(SourceStatus.ENABLED_AND_AUTHORIZED, refreshedItem.status)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }
