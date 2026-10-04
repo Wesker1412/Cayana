@@ -38,6 +38,7 @@ class ScreenshotProcessingCoordinator(
     private val dispatchers: CoroutineDispatchers = AppDispatchers()
 ) {
     private val processingMutex = Mutex()
+    var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
 
     /**
      * Inspects MediaStore for any new screenshots beyond the saved high-water mark,
@@ -60,10 +61,10 @@ class ScreenshotProcessingCoordinator(
                 return@withLock emptyList()
             }
 
-            val currentVersion = getMediaStoreVersion(context)
+            val currentVersion = mediaStoreVersionProvider(context)
             val savedVersion = settings.mediaStoreVersion
 
-            // 2. MediaStore Version Reset Boundary Check (Item E)
+            // 2. MediaStore Version Reset Boundary Check (Item E & Item 6)
             if (savedVersion != null && currentVersion != null && savedVersion != currentVersion) {
                 CayanaLogger.w("ScreenshotCoordinator", "MediaStore version changed ($savedVersion -> $currentVersion). Re-establishing baseline.")
                 establishBaseline(forceNew = true)
@@ -248,6 +249,13 @@ class ScreenshotProcessingCoordinator(
                 settingsRepository.updateMediaStoreVersion(currentVersion)
             }
 
+            // 11. Production Path: Retry any pending retryable OCR memories
+            try {
+                retryPendingOcrInternal()
+            } catch (e: Exception) {
+                CayanaLogger.w("ScreenshotCoordinator", "Failed retrying pending OCR: ${e.message}")
+            }
+
             newMemories
         }
     }
@@ -257,8 +265,8 @@ class ScreenshotProcessingCoordinator(
      */
     suspend fun establishBaseline(forceNew: Boolean = false): Long = withContext(dispatchers.io) {
         val currentSettings = settingsRepository.getSettings().first()
-        val currentVersion = getMediaStoreVersion(context)
-        if (!forceNew && currentSettings.lastScreenshotMediaId > 0L && currentSettings.mediaStoreVersion == currentVersion) {
+        val currentVersion = mediaStoreVersionProvider(context)
+        if (!forceNew && currentSettings.lastScreenshotMediaId > 0L && currentVersion != null && currentSettings.mediaStoreVersion == currentVersion) {
             return@withContext currentSettings.lastScreenshotMediaId
         }
 
@@ -281,7 +289,9 @@ class ScreenshotProcessingCoordinator(
         } catch (_: Exception) {}
 
         settingsRepository.updateLastScreenshotMediaId(maxId)
-        settingsRepository.updateMediaStoreVersion(currentVersion)
+        if (currentVersion != null) {
+            settingsRepository.updateMediaStoreVersion(currentVersion)
+        }
         settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE)
         maxId
     }
@@ -296,46 +306,114 @@ class ScreenshotProcessingCoordinator(
      */
     suspend fun retryPendingOcr(): Int = withContext(dispatchers.io) {
         processingMutex.withLock {
-            val allMemories = memoryRepository.getAllMemories().first()
-            val retryableItems = allMemories.filter { it.processingState == ProcessingState.FAILED_RETRYABLE }
-            var retriedCount = 0
-
-            for (item in retryableItems) {
-                val uri = item.sourceUri ?: continue
-                try {
-                    when (val ocrResult = ocrEngine.processImage(uri)) {
-                        is Result.Success -> {
-                            val text = ocrResult.data.fullText.trim()
-                            val (newText, newState) = if (text.isNotBlank()) {
-                                Pair(text, ProcessingState.COMPLETED)
-                            } else {
-                                Pair(null, ProcessingState.COMPLETED_WITHOUT_TEXT)
-                            }
-                            val newTitle = if (item.title == "螢幕截圖" || item.title == item.metadata["displayName"]) {
-                                deriveTitle(newText, item.metadata["displayName"])
-                            } else {
-                                item.title
-                            }
-                            val updated = item.copy(
-                                rawText = newText,
-                                normalizedText = newText,
-                                title = newTitle,
-                                processingState = newState
-                            )
-                            memoryRepository.saveMemory(updated)
-                            retriedCount++
-                        }
-                        is Result.Error -> {
-                            CayanaLogger.d("ScreenshotCoordinator", "Retry OCR still failed for ${item.id}")
-                        }
-                        Result.Loading -> {}
-                    }
-                } catch (e: Exception) {
-                    CayanaLogger.d("ScreenshotCoordinator", "Retry OCR threw exception for ${item.id}: ${e.message}")
-                }
-            }
-            retriedCount
+            retryPendingOcrInternal()
         }
+    }
+
+    private suspend fun retryPendingOcrInternal(): Int {
+        val allMemories = memoryRepository.getAllMemories().first()
+        val retryableItems = allMemories.filter { it.processingState == ProcessingState.FAILED_RETRYABLE }
+        var retriedCount = 0
+
+        for (item in retryableItems) {
+            val uriString = item.sourceUri
+            if (uriString.isNullOrBlank()) {
+                val updated = item.copy(
+                    processingState = ProcessingState.FAILED_PERMANENT,
+                    sourceExists = false
+                )
+                memoryRepository.saveMemory(updated)
+                continue
+            }
+
+            // 1. Check if source file still exists
+            val exists = try {
+                val uri = android.net.Uri.parse(uriString)
+                context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
+            } catch (_: Exception) {
+                false
+            }
+
+            if (!exists) {
+                CayanaLogger.i("ScreenshotCoordinator", "Source file no longer exists for ${item.id}, marking FAILED_PERMANENT")
+                val updated = item.copy(
+                    processingState = ProcessingState.FAILED_PERMANENT,
+                    sourceExists = false
+                )
+                memoryRepository.saveMemory(updated)
+                continue
+            }
+
+            // 2. Check retry count (max 5)
+            val currentRetryCount = item.metadata["ocrRetryCount"]?.toIntOrNull() ?: 0
+            val nextRetryCount = currentRetryCount + 1
+
+            if (nextRetryCount > 5) {
+                CayanaLogger.w("ScreenshotCoordinator", "Max OCR retry count exceeded for ${item.id}, marking FAILED_PERMANENT")
+                val updatedMetadata = item.metadata.toMutableMap().apply {
+                    put("ocrRetryCount", nextRetryCount.toString())
+                }
+                val updated = item.copy(
+                    processingState = ProcessingState.FAILED_PERMANENT,
+                    metadata = updatedMetadata
+                )
+                memoryRepository.saveMemory(updated)
+                continue
+            }
+
+            // 3. Attempt OCR
+            try {
+                when (val ocrResult = ocrEngine.processImage(uriString)) {
+                    is Result.Success -> {
+                        val text = ocrResult.data.fullText.trim()
+                        val (newText, newState) = if (text.isNotBlank()) {
+                            Pair(text, ProcessingState.COMPLETED)
+                        } else {
+                            Pair(null, ProcessingState.COMPLETED_WITHOUT_TEXT)
+                        }
+                        val newTitle = if (item.title == "螢幕截圖" || item.title == item.metadata["displayName"]) {
+                            deriveTitle(newText, item.metadata["displayName"])
+                        } else {
+                            item.title
+                        }
+                        val updatedMetadata = item.metadata.toMutableMap().apply {
+                            put("ocrRetryCount", nextRetryCount.toString())
+                        }
+                        val updated = item.copy(
+                            rawText = newText,
+                            normalizedText = newText,
+                            title = newTitle,
+                            metadata = updatedMetadata,
+                            processingState = newState
+                        )
+                        memoryRepository.saveMemory(updated)
+                        retriedCount++
+                    }
+                    is Result.Error, Result.Loading -> {
+                        val updatedState = if (nextRetryCount >= 5) ProcessingState.FAILED_PERMANENT else ProcessingState.FAILED_RETRYABLE
+                        val updatedMetadata = item.metadata.toMutableMap().apply {
+                            put("ocrRetryCount", nextRetryCount.toString())
+                        }
+                        val updated = item.copy(
+                            metadata = updatedMetadata,
+                            processingState = updatedState
+                        )
+                        memoryRepository.saveMemory(updated)
+                    }
+                }
+            } catch (e: Exception) {
+                val updatedState = if (nextRetryCount >= 5) ProcessingState.FAILED_PERMANENT else ProcessingState.FAILED_RETRYABLE
+                val updatedMetadata = item.metadata.toMutableMap().apply {
+                    put("ocrRetryCount", nextRetryCount.toString())
+                }
+                val updated = item.copy(
+                    metadata = updatedMetadata,
+                    processingState = updatedState
+                )
+                memoryRepository.saveMemory(updated)
+            }
+        }
+        return retriedCount
     }
 
     private fun deriveTitle(rawText: String?, displayName: String?): String {
@@ -356,9 +434,11 @@ class ScreenshotProcessingCoordinator(
         fun getMediaStoreVersion(context: Context): String? {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
-                    MediaStore.getVersion(context)
-                } catch (_: Exception) {
-                    "unknown_version"
+                    val version = MediaStore.getVersion(context)
+                    if (version.isNullOrBlank()) null else version
+                } catch (e: Exception) {
+                    CayanaLogger.w("ScreenshotCoordinator", "Failed to get MediaStore version: ${e.message}")
+                    null
                 }
             } else {
                 "pre_q"

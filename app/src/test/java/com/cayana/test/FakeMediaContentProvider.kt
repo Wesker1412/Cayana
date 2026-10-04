@@ -74,9 +74,30 @@ class FakeMediaContentProvider : ContentProvider() {
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
-        val count = items.size
-        items.clear()
-        return count
+        return try {
+            val id = ContentUris.parseId(uri)
+            val removed = items.removeAll { (it.getAsLong(MediaStore.Images.Media._ID) ?: 0L) == id }
+            if (removed) 1 else 0
+        } catch (_: Exception) {
+            val count = items.size
+            items.clear()
+            count
+        }
+    }
+
+    override fun openFile(uri: Uri, mode: String): android.os.ParcelFileDescriptor? {
+        val id = try {
+            ContentUris.parseId(uri)
+        } catch (_: Exception) {
+            throw java.io.FileNotFoundException("Invalid URI: $uri")
+        }
+        val exists = items.any { (it.getAsLong(MediaStore.Images.Media._ID) ?: 0L) == id }
+        if (!exists) {
+            throw java.io.FileNotFoundException("Item $id not found in FakeMediaContentProvider")
+        }
+        val tempFile = java.io.File.createTempFile("fake_media_$id", ".tmp")
+        tempFile.deleteOnExit()
+        return android.os.ParcelFileDescriptor.open(tempFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0

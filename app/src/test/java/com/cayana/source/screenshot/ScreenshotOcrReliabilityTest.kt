@@ -113,6 +113,75 @@ class ScreenshotOcrReliabilityTest {
         assertEquals("Recovered Receipt Text 2026/10/02", memoryAfterRetry?.rawText)
     }
 
+    @Test
+    fun `pipeline automatically retries FAILED_RETRYABLE during next processing cycle`() = runTest {
+        val id1 = insertMockScreenshot("FailFirst.png")
+        val uri1 = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id1).toString()
+        testOcrEngine.setResultForUri(uri1, Result.Error(IOException("Transient OCR failure")))
+
+        // First pipeline cycle: fails and marked FAILED_RETRYABLE
+        val firstCycle = coordinator.processPendingScreenshots()
+        assertEquals(1, firstCycle.size)
+        assertEquals(ProcessingState.FAILED_RETRYABLE, memoryRepository.getMemoryBySourceUri(uri1)?.processingState)
+
+        // OCR engine recovers, and a new screenshot arrives
+        testOcrEngine.setResultForUri(uri1, Result.Success(OcrResult(fullText = "Recovered Content On Next Cycle")))
+        val id2 = insertMockScreenshot("SecondScreenshot.png")
+        val uri2 = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id2).toString()
+        testOcrEngine.setResultForUri(uri2, Result.Success(OcrResult(fullText = "Second Screenshot Text")))
+
+        // Second pipeline cycle: processes id2 AND automatically retries id1
+        val secondCycle = coordinator.processPendingScreenshots()
+        assertEquals(1, secondCycle.size)
+
+        val memory1 = memoryRepository.getMemoryBySourceUri(uri1)
+        assertNotNull(memory1)
+        assertEquals("Previous retryable item must now be COMPLETED", ProcessingState.COMPLETED, memory1?.processingState)
+        assertEquals("Recovered Content On Next Cycle", memory1?.rawText)
+    }
+
+    @Test
+    fun `deleted screenshot file during retry is marked FAILED_PERMANENT with sourceExists false`() = runTest {
+        val id = insertMockScreenshot("DeletedLater.png")
+        val contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+        val uriString = contentUri.toString()
+        testOcrEngine.setResultForUri(uriString, Result.Error(IOException("Temporary failure")))
+
+        coordinator.processPendingScreenshots()
+        val initialMemory = memoryRepository.getMemoryBySourceUri(uriString)
+        assertEquals(ProcessingState.FAILED_RETRYABLE, initialMemory?.processingState)
+
+        // File is deleted from device/MediaStore
+        context.contentResolver.delete(contentUri, null, null)
+
+        // Run retry
+        coordinator.retryPendingOcr()
+
+        val updatedMemory = memoryRepository.getMemoryBySourceUri(uriString)
+        assertNotNull(updatedMemory)
+        assertEquals(ProcessingState.FAILED_PERMANENT, updatedMemory?.processingState)
+        assertEquals(false, updatedMemory?.sourceExists)
+    }
+
+    @Test
+    fun `max retry limit transitions item to FAILED_PERMANENT`() = runTest {
+        val id = insertMockScreenshot("PersistentFlake.png")
+        val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString()
+        testOcrEngine.setResultForUri(uri, Result.Error(IOException("Permanent flake")))
+
+        coordinator.processPendingScreenshots()
+
+        // Retry 5 times
+        repeat(5) {
+            coordinator.retryPendingOcr()
+        }
+
+        val finalMemory = memoryRepository.getMemoryBySourceUri(uri)
+        assertNotNull(finalMemory)
+        assertEquals(ProcessingState.FAILED_PERMANENT, finalMemory?.processingState)
+        assertEquals("5", finalMemory?.metadata?.get("ocrRetryCount"))
+    }
+
     private class ConfigurableTestOcrEngine : OcrEngine {
         override val isReady: Boolean = true
         private val uriResults = mutableMapOf<String, Result<OcrResult>>()

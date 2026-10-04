@@ -54,20 +54,9 @@ android {
     }
     sourceSets {
         getByName("test").assets.srcDirs("$projectDir/schemas")
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
         getByName("debug").assets.srcDirs("$projectDir/schemas")
-    }
-}
-
-tasks.withType<Test>().configureEach {
-    doFirst {
-        val variant = if (name.contains("Release", ignoreCase = true)) "release" else "debug"
-        val variantCapitalized = variant.replaceFirstChar { it.uppercase() }
-        val targetDir = layout.buildDirectory.dir("intermediates/assets/$variant/merge${variantCapitalized}Assets").get().asFile
-        targetDir.mkdirs()
-        copy {
-            from("$projectDir/schemas")
-            into(targetDir)
-        }
+        getByName("release").assets.srcDirs("$projectDir/schemas")
     }
 }
 

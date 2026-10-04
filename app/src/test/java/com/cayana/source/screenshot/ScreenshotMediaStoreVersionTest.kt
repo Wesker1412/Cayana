@@ -74,6 +74,8 @@ class ScreenshotMediaStoreVersionTest {
             permissionChecker = permissionChecker,
             ocrEngine = ocrEngine
         )
+        val newSysVersion = "new_version_after_wipe"
+        coordinator.mediaStoreVersionProvider = { newSysVersion }
 
         // Insert new items into current MediaStore (which has small IDs like 1, 2)
         val id1 = insertMockScreenshot("Screenshot_after_wipe_1.png")
@@ -84,8 +86,7 @@ class ScreenshotMediaStoreVersionTest {
         assertEquals("Version mismatch must trigger baseline re-establishment and skip existing items", 0, firstRunMemories.size)
 
         val updatedSettings = settingsRepository.getSettings().first()
-        val currentSysVersion = ScreenshotProcessingCoordinator.getMediaStoreVersion(context)
-        assertEquals("Saved version must update to current MediaStore version", currentSysVersion, updatedSettings.mediaStoreVersion)
+        assertEquals("Saved version must update to current MediaStore version", newSysVersion, updatedSettings.mediaStoreVersion)
         assertEquals("Cursor must reset to current latest ID (id2)", id2, updatedSettings.lastScreenshotMediaId)
 
         // Subsequent item taken in this new MediaStore version is correctly ingested
@@ -94,5 +95,35 @@ class ScreenshotMediaStoreVersionTest {
         assertEquals("Items created after baseline in new version must be ingested", 1, secondRunMemories.size)
         assertEquals(1, memoryRepository.getMemoryCount().first())
         assertEquals(id3, settingsRepository.getSettings().first().lastScreenshotMediaId)
+    }
+
+    @Test
+    fun `mediaStore getVersion exception does not reset baseline and preserves cursor`() = runTest {
+        val initialCursor = 50L
+        val savedVersion = "valid_version_1"
+        settingsRepository = InMemorySettingsRepository(
+            initialSettings = UserSettings(
+                screenshotWatcherStatus = ScreenshotWatcherStatus.ACTIVE,
+                lastScreenshotMediaId = initialCursor,
+                mediaStoreVersion = savedVersion
+            )
+        )
+        coordinator = ScreenshotProcessingCoordinator(
+            context = context,
+            memoryRepository = memoryRepository,
+            settingsRepository = settingsRepository,
+            permissionChecker = permissionChecker,
+            ocrEngine = ocrEngine
+        )
+
+        // Simulate MediaStore.getVersion throwing an exception / returning null
+        coordinator.mediaStoreVersionProvider = { null }
+
+        // An exception in getMediaStoreVersion should NOT reset baseline or cursor
+        coordinator.processPendingScreenshots()
+        val currentSettings = settingsRepository.getSettings().first()
+
+        assertEquals("Cursor must remain unchanged when version check fails", initialCursor, currentSettings.lastScreenshotMediaId)
+        assertEquals("Saved version must remain unchanged when version check fails", savedVersion, currentSettings.mediaStoreVersion)
     }
 }

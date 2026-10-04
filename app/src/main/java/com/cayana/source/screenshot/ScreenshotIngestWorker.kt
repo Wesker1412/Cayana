@@ -9,6 +9,12 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cayana.core.logging.CayanaLogger
+import com.cayana.core.permission.PermissionChecker
+import com.cayana.core.permission.SourceStatus
+import com.cayana.source.SourceType
+import com.cayana.ui.settings.repository.ScreenshotWatcherStatus
+import com.cayana.ui.settings.repository.SettingsRepository
+import kotlinx.coroutines.flow.first
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -22,18 +28,47 @@ class ScreenshotIngestWorker(
 ) : CoroutineWorker(appContext, workerParams), KoinComponent {
 
     private val coordinator: ScreenshotProcessingCoordinator by inject()
+    private val settingsRepository: SettingsRepository by inject()
+    private val permissionChecker: PermissionChecker by inject()
 
     override suspend fun doWork(): Result {
         CayanaLogger.d("ScreenshotWorker", "ScreenshotIngestWorker woke up from MediaStore content trigger")
+        if (!shouldReArm()) {
+            CayanaLogger.i("ScreenshotWorker", "Watcher condition not met on wake; cancelling trigger and aborting.")
+            cancelTrigger(applicationContext)
+            return Result.success()
+        }
         try {
             coordinator.processPendingScreenshots()
         } catch (e: Exception) {
             CayanaLogger.w("ScreenshotWorker", "Error during background screenshot ingestion: ${e.javaClass.simpleName}")
         } finally {
-            // Re-register content trigger for subsequent screenshots using APPEND_OR_REPLACE
-            scheduleNextTrigger(applicationContext, ExistingWorkPolicy.APPEND_OR_REPLACE)
+            if (shouldReArm()) {
+                scheduleNextTrigger(applicationContext, ExistingWorkPolicy.APPEND_OR_REPLACE)
+            } else {
+                CayanaLogger.i("ScreenshotWorker", "Watcher condition not met; cancelling and not re-arming trigger.")
+                cancelTrigger(applicationContext)
+            }
         }
         return Result.success()
+    }
+
+    private suspend fun shouldReArm(): Boolean {
+        return try {
+            val settings = settingsRepository.getSettings().first()
+            val isEnabled = settings.enabledSources.contains(SourceType.SCREENSHOT)
+            val status = settings.screenshotWatcherStatus
+            val permissionStatus = permissionChecker.getSourceStatus(
+                sourceType = SourceType.SCREENSHOT,
+                isEnabled = isEnabled,
+                isDenied = false,
+                customUri = null
+            )
+            isEnabled && status == ScreenshotWatcherStatus.ACTIVE && permissionStatus == SourceStatus.ENABLED_AND_AUTHORIZED
+        } catch (e: Exception) {
+            CayanaLogger.w("ScreenshotWorker", "Error checking shouldReArm: ${e.message}")
+            false
+        }
     }
 
     companion object {

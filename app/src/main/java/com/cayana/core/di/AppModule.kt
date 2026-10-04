@@ -64,6 +64,7 @@ val appModule = module {
             context = androidContext(),
             permissionChecker = get(),
             coordinator = get(),
+            settingsRepository = get(),
             dispatchers = get()
         )
     }
