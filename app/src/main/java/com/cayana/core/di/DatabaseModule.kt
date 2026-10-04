@@ -12,9 +12,10 @@ val databaseModule = module {
             CayanaDatabase::class.java,
             CayanaDatabase.DATABASE_NAME
         )
-            .addMigrations(CayanaDatabase.MIGRATION_1_2)
+            .addMigrations(CayanaDatabase.MIGRATION_1_2, CayanaDatabase.MIGRATION_2_3)
             .build()
     }
 
     single { get<CayanaDatabase>().memoryDao() }
+    single { get<CayanaDatabase>().calendarActionDao() }
 }

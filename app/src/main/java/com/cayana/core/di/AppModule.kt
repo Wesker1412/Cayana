@@ -6,13 +6,18 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import com.cayana.calendar.AndroidCalendarProviderHelper
+import com.cayana.calendar.CalendarProcessingCoordinator
 import com.cayana.calendar.CalendarProviderHelper
+import com.cayana.calendar.writer.AndroidCalendarWriter
+import com.cayana.calendar.writer.CalendarWriter
 import com.cayana.core.common.AppDispatchers
 import com.cayana.core.common.CoroutineDispatchers
 import com.cayana.core.logging.CayanaLogger
 import com.cayana.core.logging.DefaultCayanaLogger
 import com.cayana.core.permission.AndroidPermissionChecker
 import com.cayana.core.permission.PermissionChecker
+import com.cayana.event.extractor.DeterministicEventExtractor
+import com.cayana.event.extractor.EventExtractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +46,30 @@ val appModule = module {
         )
     }
 
+    single<EventExtractor> {
+        DeterministicEventExtractor()
+    }
+
+    single<CalendarWriter> {
+        AndroidCalendarWriter(
+            context = androidContext(),
+            calendarProviderHelper = get(),
+            logger = get()
+        )
+    }
+
+    single {
+        CalendarProcessingCoordinator(
+            context = androidContext(),
+            eventExtractor = get(),
+            calendarWriter = get(),
+            calendarProviderHelper = get(),
+            calendarActionDao = get(),
+            settingsRepository = get(),
+            logger = get()
+        )
+    }
+
     single<com.cayana.processing.OcrEngine> {
         com.cayana.processing.ocr.MlKitOcrEngine(
             context = androidContext(),
@@ -55,7 +84,8 @@ val appModule = module {
             settingsRepository = get(),
             permissionChecker = get(),
             ocrEngine = get(),
-            dispatchers = get()
+            dispatchers = get(),
+            calendarProcessingCoordinator = get()
         )
     }
 

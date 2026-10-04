@@ -30,6 +30,45 @@ class AndroidCalendarProviderHelper(
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    override fun hasWriteCalendarPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.WRITE_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    override suspend fun isCalendarValidAndWritable(calendarId: Long): Boolean = withContext(Dispatchers.IO) {
+        if (!hasCalendarPermission()) {
+            return@withContext false
+        }
+
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL
+        )
+        val selection = "${CalendarContract.Calendars._ID} = ? AND ${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?"
+        val selectionArgs = arrayOf(
+            calendarId.toString(),
+            CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString()
+        )
+
+        try {
+            val cursor: Cursor? = context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                null
+            )
+            cursor?.use {
+                return@withContext it.moveToFirst()
+            }
+        } catch (e: Exception) {
+            logger.w(TAG, "Failed to validate calendar $calendarId: ${e.message}")
+        }
+        false
+    }
+
     override suspend fun getWritableCalendars(): List<CalendarTarget> = withContext(Dispatchers.IO) {
         if (!hasCalendarPermission()) {
             logger.d(TAG, "Calendar permission not granted; returning empty calendar list")

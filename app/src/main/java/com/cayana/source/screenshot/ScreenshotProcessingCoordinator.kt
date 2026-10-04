@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.os.Build
 import android.provider.MediaStore
+import com.cayana.calendar.CalendarProcessingCoordinator
 import com.cayana.core.common.AppDispatchers
 import com.cayana.core.common.CoroutineDispatchers
 import com.cayana.core.common.Result
@@ -35,7 +36,8 @@ class ScreenshotProcessingCoordinator(
     private val settingsRepository: SettingsRepository,
     private val permissionChecker: PermissionChecker,
     private val ocrEngine: OcrEngine,
-    private val dispatchers: CoroutineDispatchers = AppDispatchers()
+    private val dispatchers: CoroutineDispatchers = AppDispatchers(),
+    private val calendarProcessingCoordinator: CalendarProcessingCoordinator? = null
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
@@ -230,8 +232,17 @@ class ScreenshotProcessingCoordinator(
                             break
                         }
 
-                        // 9. Notification
-                        NotificationHelper.showMemoryIngestedNotification(context, memoryItem)
+                        // 9. Calendar Extraction & Notification
+                        val handledByCalendar = try {
+                            calendarProcessingCoordinator?.process(memoryItem, rawText) ?: false
+                        } catch (e: Exception) {
+                            CayanaLogger.w("ScreenshotCoordinator", "Calendar processing error: ${e.message}")
+                            false
+                        }
+
+                        if (!handledByCalendar) {
+                            NotificationHelper.showMemoryIngestedNotification(context, memoryItem)
+                        }
                     }
                 }
             } catch (e: Exception) {

@@ -53,4 +53,45 @@ class MigrationTest {
         cursor.close()
         assertTrue("index_memories_sourceUri must exist after migration 1 -> 2", hasSourceUriIndex)
     }
+
+    @Test
+    fun migrate2To3() {
+        var db = helper.createDatabase(TEST_DB, 2).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('item-1', 'SCREENSHOT', 1000, 1000, 'Test', 'Sample', 'Sample', 'content://test', NULL, 1, '{}', '[]', '[]', 'COMPLETED')"
+            )
+            close()
+        }
+
+        // Re-open database with version 3 and run migration 2 -> 3
+        db = helper.runMigrationsAndValidate(TEST_DB, 3, true, CayanaDatabase.MIGRATION_2_3)
+
+        // Verify calendar_actions table exists
+        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='calendar_actions'")
+        assertTrue("calendar_actions table must exist after migration 2 -> 3", cursor.moveToFirst())
+        cursor.close()
+
+        // Verify index_calendar_actions_memoryId_actionType exists
+        val indexCursor = db.query("PRAGMA index_list('calendar_actions')")
+        var hasUniqueIndex = false
+        var hasMemoryIndex = false
+        while (indexCursor.moveToNext()) {
+            val nameCol = indexCursor.getColumnIndex("name")
+            if (nameCol >= 0) {
+                val name = indexCursor.getString(nameCol)
+                if (name == "index_calendar_actions_memoryId_actionType") hasUniqueIndex = true
+                if (name == "index_calendar_actions_memoryId") hasMemoryIndex = true
+            }
+        }
+        indexCursor.close()
+        assertTrue("index_calendar_actions_memoryId_actionType must exist", hasUniqueIndex)
+        assertTrue("index_calendar_actions_memoryId must exist", hasMemoryIndex)
+
+        // Verify we can insert into calendar_actions
+        db.execSQL(
+            "INSERT INTO calendar_actions (id, memoryId, calendarId, calendarEventId, actionType, createdAt, status, title, startAt, endAt) " +
+            "VALUES ('act-1', 'item-1', 1, 100, 'AUTO_CREATED', 2000, 'CREATED', 'Test Event', 3000, 4000)"
+        )
+    }
 }
