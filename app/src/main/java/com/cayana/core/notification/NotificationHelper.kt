@@ -88,7 +88,7 @@ object NotificationHelper {
 
         try {
             NotificationManagerCompat.from(context).notify(item.id.hashCode(), notification)
-            CayanaLogger.i("NotificationHelper", "Posted notification for memory ${item.id}: $preview")
+            CayanaLogger.i("NotificationHelper", "Posted memory notification id=${item.id}")
         } catch (e: SecurityException) {
             CayanaLogger.w("NotificationHelper", "SecurityException posting notification: ${e.message}")
         }

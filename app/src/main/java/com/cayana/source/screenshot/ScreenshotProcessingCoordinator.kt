@@ -179,7 +179,7 @@ class ScreenshotProcessingCoordinator(
                                     }
                                 }
                                 is Result.Error -> {
-                                    CayanaLogger.w("ScreenshotCoordinator", "OCR failed for $sourceUriString: ${ocrResult.exception.message}")
+                                    CayanaLogger.w("ScreenshotCoordinator", "OCR failed for ${PrivacySanitizer.sanitizeUri(sourceUriString)}: ${ocrResult.exception.message}")
                                     Pair(null, ProcessingState.FAILED_RETRYABLE)
                                 }
                                 Result.Loading -> {
@@ -187,7 +187,7 @@ class ScreenshotProcessingCoordinator(
                                 }
                             }
                         } catch (e: Exception) {
-                            CayanaLogger.w("ScreenshotCoordinator", "OCR threw exception for $sourceUriString: ${e.message}")
+                            CayanaLogger.w("ScreenshotCoordinator", "OCR threw exception for ${PrivacySanitizer.sanitizeUri(sourceUriString)}: ${e.message}")
                             Pair(null, ProcessingState.FAILED_RETRYABLE)
                         }
 
@@ -312,7 +312,9 @@ class ScreenshotProcessingCoordinator(
 
     private suspend fun retryPendingOcrInternal(): Int {
         val allMemories = memoryRepository.getAllMemories().first()
-        val retryableItems = allMemories.filter { it.processingState == ProcessingState.FAILED_RETRYABLE }
+        val retryableItems = allMemories
+            .filter { it.processingState == ProcessingState.FAILED_RETRYABLE }
+            .take(MAX_OCR_RETRIES_PER_CYCLE)
         var retriedCount = 0
 
         for (item in retryableItems) {
@@ -348,7 +350,7 @@ class ScreenshotProcessingCoordinator(
             val currentRetryCount = item.metadata["ocrRetryCount"]?.toIntOrNull() ?: 0
             val nextRetryCount = currentRetryCount + 1
 
-            if (nextRetryCount > 5) {
+            if (nextRetryCount > MAX_OCR_RETRIES_PER_ITEM) {
                 CayanaLogger.w("ScreenshotCoordinator", "Max OCR retry count exceeded for ${item.id}, marking FAILED_PERMANENT")
                 val updatedMetadata = item.metadata.toMutableMap().apply {
                     put("ocrRetryCount", nextRetryCount.toString())
@@ -431,6 +433,9 @@ class ScreenshotProcessingCoordinator(
     }
 
     companion object {
+        const val MAX_OCR_RETRIES_PER_CYCLE = 5
+        const val MAX_OCR_RETRIES_PER_ITEM = 5
+
         fun getMediaStoreVersion(context: Context): String? {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {

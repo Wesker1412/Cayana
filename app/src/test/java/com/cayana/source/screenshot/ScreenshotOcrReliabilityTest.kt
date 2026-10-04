@@ -182,9 +182,49 @@ class ScreenshotOcrReliabilityTest {
         assertEquals("5", finalMemory?.metadata?.get("ocrRetryCount"))
     }
 
+    @Test
+    fun `one retry processing cycle handles at most 5 FAILED_RETRYABLE memories`() = runTest {
+        val uris = (1..10).map { i ->
+            val id = insertMockScreenshot("BatchRetry_$i.png")
+            val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString()
+            testOcrEngine.setResultForUri(uri, Result.Error(IOException("Flake $i")))
+            uri
+        }
+
+        // Initial ingest cycle creates 10 memories in FAILED_RETRYABLE state
+        coordinator.processPendingScreenshots()
+
+        val initialAll = memoryRepository.getAllMemories().first()
+        val retryableCount = initialAll.count { it.processingState == ProcessingState.FAILED_RETRYABLE }
+        assertEquals(10, retryableCount)
+
+        // Make OCR succeed for all items on next attempt
+        testOcrEngine.callCount = 0
+        uris.forEach { testOcrEngine.setResultForUri(it, Result.Success(OcrResult("Recovered $it"))) }
+
+        // First retry cycle: should process at most 5 items
+        val retriedFirstCycle = coordinator.retryPendingOcr()
+        assertEquals(5, retriedFirstCycle)
+        assertEquals(5, testOcrEngine.callCount)
+
+        val afterFirstCycle = memoryRepository.getAllMemories().first()
+        assertEquals(5, afterFirstCycle.count { it.processingState == ProcessingState.COMPLETED })
+        assertEquals(5, afterFirstCycle.count { it.processingState == ProcessingState.FAILED_RETRYABLE })
+
+        // Second retry cycle: should process the remaining 5 items
+        val retriedSecondCycle = coordinator.retryPendingOcr()
+        assertEquals(5, retriedSecondCycle)
+        assertEquals(10, testOcrEngine.callCount)
+
+        val afterSecondCycle = memoryRepository.getAllMemories().first()
+        assertEquals(10, afterSecondCycle.count { it.processingState == ProcessingState.COMPLETED })
+        assertEquals(0, afterSecondCycle.count { it.processingState == ProcessingState.FAILED_RETRYABLE })
+    }
+
     private class ConfigurableTestOcrEngine : OcrEngine {
         override val isReady: Boolean = true
         private val uriResults = mutableMapOf<String, Result<OcrResult>>()
+        var callCount: Int = 0
 
         fun setResultForUri(uri: String, result: Result<OcrResult>) {
             uriResults[uri] = result
@@ -199,6 +239,7 @@ class ScreenshotOcrReliabilityTest {
         }
 
         override suspend fun processImage(uri: String): Result<OcrResult> {
+            callCount++
             return uriResults[uri] ?: Result.Success(OcrResult(fullText = "Default Text"))
         }
     }

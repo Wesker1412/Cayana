@@ -15,12 +15,18 @@ import com.cayana.test.FakePermissionChecker
 import com.cayana.ui.settings.repository.InMemorySettingsRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import android.app.Application
+import com.cayana.core.logging.CayanaLogger
+import com.cayana.core.logging.DefaultCayanaLogger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -85,5 +91,51 @@ class NotificationPermissionDeniedTest {
         assertEquals(1, processed.size)
         assertEquals(1, memoryRepository.getMemoryCount().first())
         assertEquals("Test Title or derived line", "Notification Test Raw Text", processed.first().rawText)
+    }
+
+    @Test
+    fun `notification logging never includes OCR memory text`() {
+        val shadowApp = shadowOf(context.applicationContext as Application)
+        shadowApp.grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val recordingLogger = RecordingLogger()
+        CayanaLogger.setDelegate(recordingLogger)
+
+        try {
+            val secretText = "SECRET_PRIVATE_OCR_TEXT_123"
+            val item = MemoryItem(
+                sourceType = SourceType.SCREENSHOT,
+                title = "Secret Screenshot",
+                rawText = secretText,
+                sourceUri = "content://media/external/images/media/777"
+            )
+
+            NotificationHelper.showMemoryIngestedNotification(context, item)
+
+            // Confirm notification operational log occurred
+            val hasNotificationLog = recordingLogger.messages.any { it.contains("Posted memory notification id=${item.id}") }
+            assertTrue("Expected operational notification log for memory", hasNotificationLog)
+
+            // Confirm raw OCR text is never present in any log message
+            val hasSecretText = recordingLogger.messages.any { it.contains(secretText) }
+            assertFalse("CayanaLogger leaked raw OCR text in log messages!", hasSecretText)
+
+            // Confirm notification preview snippet is never present in any log message
+            val hasPreviewSnippet = recordingLogger.messages.any { it.contains("SECRET_PRIVATE") }
+            assertFalse("CayanaLogger leaked notification preview in log messages!", hasPreviewSnippet)
+        } finally {
+            CayanaLogger.setDelegate(DefaultCayanaLogger())
+        }
+    }
+
+    private class RecordingLogger : CayanaLogger {
+        val messages = mutableListOf<String>()
+        override fun d(tag: String, message: String) { messages.add(message) }
+        override fun i(tag: String, message: String) { messages.add(message) }
+        override fun w(tag: String, message: String, throwable: Throwable?) { messages.add(message) }
+        override fun e(tag: String, message: String, throwable: Throwable?) { messages.add(message) }
+        override fun logMemoryEvent(tag: String, eventName: String, memoryId: String, rawContent: String?) {
+            messages.add("$eventName: $memoryId")
+        }
     }
 }
