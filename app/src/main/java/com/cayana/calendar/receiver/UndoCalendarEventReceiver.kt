@@ -32,19 +32,26 @@ class UndoCalendarEventReceiver(
         val actionId = intent.getStringExtra(EXTRA_ACTION_ID) ?: return
         val eventId = intent.getLongExtra(EXTRA_EVENT_ID, -1L)
         val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
-
-        if (notificationId != -1) {
-            NotificationManagerCompat.from(context).cancel(notificationId)
-        }
-
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                if (eventId != -1L) {
+                val deleteResult = if (eventId != -1L) {
                     writer.deleteEvent(eventId)
+                } else {
+                    Result.success(Unit)
                 }
-                dao.updateStatus(actionId, "UNDONE")
-                CayanaLogger.i(TAG, "Undo event successful: actionId=$actionId, eventId=$eventId")
+
+                if (deleteResult.isSuccess) {
+                    if (notificationId != -1) {
+                        NotificationManagerCompat.from(context).cancel(notificationId)
+                    }
+                    dao.updateStatus(actionId, "UNDONE")
+                    CayanaLogger.i(TAG, "Undo event successful: actionId=$actionId, eventId=$eventId")
+                } else {
+                    val exMsg = deleteResult.exceptionOrNull()?.message
+                    CayanaLogger.w(TAG, "Undo event deletion failed: $exMsg")
+                    dao.updateStatus(actionId, "UNDO_FAILED")
+                }
             } catch (e: Exception) {
                 CayanaLogger.w(TAG, "Exception during undo: ${e.message}")
             } finally {

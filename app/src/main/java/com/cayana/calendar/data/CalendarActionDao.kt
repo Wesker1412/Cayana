@@ -21,8 +21,20 @@ interface CalendarActionDao {
     suspend fun getActionsForMemory(memoryId: String): List<CalendarActionEntity>
 
     @Query("UPDATE calendar_actions SET status = :status WHERE id = :id")
-    suspend fun updateStatus(id: String, status: String)
+    suspend fun updateStatus(id: String, status: String): Int
+
+    @Query("UPDATE calendar_actions SET status = :status, calendarEventId = :calendarEventId WHERE id = :id")
+    suspend fun updateStatusAndEventId(id: String, status: String, calendarEventId: Long?): Int
+
+    @Query("UPDATE calendar_actions SET status = 'PROCESSING' WHERE id = :id AND status = 'PENDING'")
+    suspend fun claimPendingAction(id: String): Int
+
+    @Query("UPDATE calendar_actions SET status = 'IGNORED' WHERE id = :id AND status = 'PENDING'")
+    suspend fun ignorePendingAction(id: String): Int
+
+    @Query("UPDATE calendar_actions SET status = 'CREATING' WHERE id = :id AND (status = 'FAILED' OR status = 'CREATING_ERROR' OR status = 'CREATING')")
+    suspend fun claimRetryAction(id: String): Int
 
     @Update
-    suspend fun update(action: CalendarActionEntity)
+    suspend fun update(action: CalendarActionEntity): Int
 }

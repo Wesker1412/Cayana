@@ -114,9 +114,9 @@ object NotificationHelper {
         calendarEventId: Long,
         title: String,
         formattedDateTime: String
-    ) {
+    ): Boolean {
         if (!hasNotificationPermission(context)) {
-            return
+            return false
         }
 
         ensureChannel(context)
@@ -148,11 +148,13 @@ object NotificationHelper {
             .addAction(0, "復原", undoPendingIntent)
             .build()
 
-        try {
+        return try {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
             CayanaLogger.i("NotificationHelper", "Posted calendar added notification id=$notificationId")
-        } catch (e: SecurityException) {
-            CayanaLogger.w("NotificationHelper", "SecurityException posting notification: ${e.message}")
+            true
+        } catch (e: Exception) {
+            CayanaLogger.w("NotificationHelper", "Exception posting notification: ${e.message}")
+            false
         }
     }
 
@@ -168,9 +170,9 @@ object NotificationHelper {
         location: String?,
         isAllDay: Boolean,
         formattedDateTime: String
-    ) {
+    ): Boolean {
         if (!hasNotificationPermission(context)) {
-            return
+            return false
         }
 
         ensureChannel(context)
@@ -224,11 +226,13 @@ object NotificationHelper {
             .addAction(0, "忽略", ignorePendingIntent)
             .build()
 
-        try {
+        return try {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
             CayanaLogger.i("NotificationHelper", "Posted calendar confirm notification id=$notificationId")
-        } catch (e: SecurityException) {
-            CayanaLogger.w("NotificationHelper", "SecurityException posting notification: ${e.message}")
+            true
+        } catch (e: Exception) {
+            CayanaLogger.w("NotificationHelper", "Exception posting notification: ${e.message}")
+            false
         }
     }
 }

@@ -45,7 +45,12 @@ class FakeCalendarContentProvider : ContentProvider() {
         return ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, id)
     }
 
+    var shouldThrowOnDelete = false
+
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+        if (shouldThrowOnDelete) {
+            throw RuntimeException("Simulated provider failure during delete")
+        }
         val eventId = uri.lastPathSegment?.toLongOrNull()
         return if (eventId != null && events.containsKey(eventId)) {
             events.remove(eventId)

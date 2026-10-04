@@ -178,4 +178,43 @@ class DateTimeParserTest {
         val policy = EventActionPolicy.evaluate(event, oct20Ref)
         assertEquals(ConfidenceLevel.LOW, policy)
     }
+
+    @Test
+    fun previousMonthRecentPastInference() {
+        // Reference date is 2026-10-05; date 9/30 is 5 days ago in the same year 2026 (not 2027)
+        val candidates = extractor.extract("秋季分享會 9/30 19:30 台北小巨蛋", fixedRefTime, zoneId)
+        assertEquals(1, candidates.size)
+        val event = candidates.first()
+
+        val expectedStart = ZonedDateTime.of(2026, 9, 30, 19, 30, 0, 0, zoneId).toInstant()
+        assertEquals(expectedStart, event.startAt)
+        // Since it is in the past, policy must be LOW
+        assertEquals(ConfidenceLevel.LOW, EventActionPolicy.evaluate(event, fixedRefTime))
+    }
+
+    @Test
+    fun decemberToJanuaryRolloverInference() {
+        val dec30Ref = ZonedDateTime.of(2026, 12, 30, 10, 0, 0, 0, zoneId).toInstant()
+        val candidates = extractor.extract("新年音樂會 1/5 14:00 國家兩廳院", dec30Ref, zoneId)
+        assertEquals(1, candidates.size)
+        val event = candidates.first()
+
+        val expectedStart = ZonedDateTime.of(2027, 1, 5, 14, 0, 0, 0, zoneId).toInstant()
+        assertEquals(expectedStart, event.startAt)
+        assertEquals(ConfidenceLevel.HIGH, EventActionPolicy.evaluate(event, dec30Ref))
+    }
+
+    @Test
+    fun januaryToDecemberRecentPastInference() {
+        // Reference date is 2027-01-03; 12/31 is 3 days ago in 2026 (not 2027)
+        val jan03Ref = ZonedDateTime.of(2027, 1, 3, 10, 0, 0, 0, zoneId).toInstant()
+        val candidates = extractor.extract("跨年音樂派對 12/31 22:00 台北101", jan03Ref, zoneId)
+        assertEquals(1, candidates.size)
+        val event = candidates.first()
+
+        val expectedStart = ZonedDateTime.of(2026, 12, 31, 22, 0, 0, 0, zoneId).toInstant()
+        assertEquals(expectedStart, event.startAt)
+        // In the past -> LOW
+        assertEquals(ConfidenceLevel.LOW, EventActionPolicy.evaluate(event, jan03Ref))
+    }
 }

@@ -7,7 +7,10 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
+import kotlin.math.abs
 
 /**
  * Deterministic, rule-based EventExtractor for Traditional Chinese and standard numeric formats.
@@ -64,9 +67,9 @@ class DeterministicEventExtractor : EventExtractor {
             return emptyList()
         }
 
-        // 3. Classify roles (EVENT_TIME, DEADLINE, SALE_PERIOD, etc.)
+        // 3. Classify roles prioritizing current line and preventing adjacent line pollution
         val classified = parsedMatches.map { match ->
-            val role = classifyDateRole(match.contextSnippet)
+            val role = resolveRoleForLine(lines, match.lineIndex)
             match.copy(role = role)
         }
 
@@ -81,21 +84,27 @@ class DeterministicEventExtractor : EventExtractor {
         val candidates = mutableListOf<EventCandidate>()
 
         for (match in classified) {
-            val startZdt = if (match.startTime != null) {
-                ZonedDateTime.of(match.startDate, match.startTime, zoneId)
+            val isAllDay = match.startTime == null
+            val startInstant = if (isAllDay) {
+                match.startDate.atStartOfDay(ZoneOffset.UTC).toInstant()
             } else {
-                ZonedDateTime.of(match.startDate, LocalTime.of(9, 0), zoneId)
+                ZonedDateTime.of(match.startDate, match.startTime, zoneId).toInstant()
             }
-            val startInstant = startZdt.toInstant()
 
-            val (endInstant, endTimeInferred) = if (match.endTime != null) {
+            val (endInstant, endTimeInferred) = if (isAllDay) {
+                Pair(match.startDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant(), true)
+            } else if (match.endTime != null) {
                 val endZdt = ZonedDateTime.of(match.startDate, match.endTime, zoneId)
                 Pair(endZdt.toInstant(), false)
             } else {
                 Pair(startInstant.plusSeconds(3600), true) // Default 1 hour duration
             }
 
-            val isPast = startInstant.isBefore(referenceTime)
+            val isPast = if (isAllDay) {
+                match.startDate.isBefore(refDate)
+            } else {
+                startInstant.isBefore(referenceTime)
+            }
 
             // Calculate confidence
             val confidence = when {
@@ -103,8 +112,8 @@ class DeterministicEventExtractor : EventExtractor {
                 match.role == DateRole.DEADLINE || match.role == DateRole.REGISTRATION_DEADLINE || match.role == DateRole.SALE_PERIOD -> 0.40f
                 isPast -> 0.20f // Past event -> low confidence, no auto calendar write
                 isMultiEvent -> 0.60f // Multiple events -> capped at MEDIUM, never auto-add arbitrary first
-                match.role == DateRole.EVENT_TIME && match.startTime != null && title != null -> 0.90f // HIGH!
-                match.role == DateRole.EVENT_TIME && match.startTime == null -> 0.60f // MEDIUM
+                isAllDay -> 0.60f // Date without time: isAllDay = true, capped at MEDIUM (no auto-add without time)
+                match.role == DateRole.EVENT_TIME && title != null -> 0.90f // HIGH!
                 else -> 0.50f
             }
 
@@ -114,7 +123,7 @@ class DeterministicEventExtractor : EventExtractor {
                     startAt = startInstant,
                     endAt = endInstant,
                     location = location,
-                    isAllDay = match.startTime == null,
+                    isAllDay = isAllDay,
                     confidence = confidence,
                     evidence = listOf(
                         EventEvidence(
@@ -175,6 +184,7 @@ class DeterministicEventExtractor : EventExtractor {
             val (t1, t2) = parseTimeFromLine(line)
             if (t1 != null) return Pair(t1, t2)
             val nextLine = lines.getOrNull(lineIndex + 1) ?: return Pair(null, null)
+            if (lineHasDate(nextLine)) return Pair(null, null)
             return parseTimeFromLine(nextLine)
         }
 
@@ -349,19 +359,25 @@ class DeterministicEventExtractor : EventExtractor {
     }
 
     /**
-     * Year inference with rollover support:
-     * - If candidate date is within 7 days in the past: treat as recent past in refYear.
-     * - If month < refDate.monthValue: rolls over to refYear + 1 (e.g. ref=Dec 30, date=Jan 5 -> next year).
-     * - Otherwise: refYear.
+     * Nearest-date year inference for M/D:
+     * Evaluates [refYear - 1, refYear, refYear + 1] and picks candidate with minimal abs days difference.
+     * Ties pick earlier date.
      */
-    private fun inferYear(month: Int, day: Int, refDate: LocalDate): Int {
+    fun inferYear(month: Int, day: Int, refDate: LocalDate): Int {
         val refYear = refDate.year
-        return if (month < refDate.monthValue) {
-            // Month is earlier in calendar year (e.g., ref is Oct/Dec, parsed is Jan) -> Next Year rollover
-            refYear + 1
-        } else {
-            refYear
+        val candidateYears = listOf(refYear - 1, refYear, refYear + 1)
+        val validCandidates = candidateYears.mapNotNull { y ->
+            try {
+                LocalDate.of(y, month, day)
+            } catch (_: Exception) {
+                null
+            }
         }
+        if (validCandidates.isEmpty()) return refYear
+        return validCandidates.minWith(
+            compareBy<LocalDate> { abs(ChronoUnit.DAYS.between(refDate, it)) }
+                .thenBy { it }
+        ).year
     }
 
     private fun isValidDate(year: Int, month: Int, day: Int): Boolean {
@@ -373,21 +389,63 @@ class DeterministicEventExtractor : EventExtractor {
         }
     }
 
-    private fun classifyDateRole(contextSnippet: String): DateRole {
-        return when {
-            contextSnippet.contains("營業時間") || contextSnippet.contains("門市時間") -> DateRole.BUSINESS_HOURS
-            contextSnippet.contains("報名") || contextSnippet.contains("截止") || contextSnippet.contains("載止") ||
-                    contextSnippet.contains("期限") || contextSnippet.contains("截止時間") ||
-                    contextSnippet.contains("截止：") || contextSnippet.contains("截止:") ||
-                    contextSnippet.contains("載止：") || contextSnippet.contains("載止:") -> DateRole.REGISTRATION_DEADLINE
-            contextSnippet.contains("早鳥截止") || contextSnippet.contains("早鳥優惠到") || contextSnippet.contains("早鳥至") ||
-                    contextSnippet.contains("優惠到") || contextSnippet.contains("販售至") || contextSnippet.contains("折扣至") ||
-                    contextSnippet.contains("早鳥") || contextSnippet.contains("開賣") -> DateRole.SALE_PERIOD
-            contextSnippet.contains("活動日期") || contextSnippet.contains("活動時間") || contextSnippet.contains("開演") ||
-                    contextSnippet.contains("演出時間") || contextSnippet.contains("演出日期") || contextSnippet.contains("時間：") ||
-                    contextSnippet.contains("時間:") -> DateRole.EVENT_TIME
-            else -> DateRole.EVENT_TIME
+    fun resolveRoleForLine(lines: List<String>, lineIndex: Int): DateRole {
+        val currentLine = lines[lineIndex]
+        val currentRole = findExplicitRole(currentLine)
+        if (currentRole != null) {
+            return currentRole
         }
+        // Adjacent lines only inspected if current line has NO keyword
+        // Adjacent line containing another independent date MUST NEVER provide role context
+        val prevLine = lines.getOrNull(lineIndex - 1)
+        if (prevLine != null && !lineHasDate(prevLine)) {
+            val prevRole = findExplicitRole(prevLine)
+            if (prevRole != null) return prevRole
+        }
+        val nextLine = lines.getOrNull(lineIndex + 1)
+        if (nextLine != null && !lineHasDate(nextLine)) {
+            val nextRole = findExplicitRole(nextLine)
+            if (nextRole != null) return nextRole
+        }
+        return DateRole.EVENT_TIME
+    }
+
+    fun findExplicitRole(text: String): DateRole? {
+        if (text.contains("營業時間") || text.contains("門市時間") || text.contains("營業:") || text.contains("營業：")) {
+            return DateRole.BUSINESS_HOURS
+        }
+        if (text.contains("報名截止") || text.contains("截止時間") || text.contains("報名期限") ||
+            text.contains("截止：") || text.contains("截止:") || text.contains("載止：") || text.contains("載止:") ||
+            text.contains("截止") || text.contains("載止") || text.contains("期限") || text.contains("報名")
+        ) {
+            return DateRole.REGISTRATION_DEADLINE
+        }
+        if (text.contains("早鳥截止") || text.contains("早鳥優惠到") || text.contains("早鳥至") ||
+            text.contains("優惠到") || text.contains("販售至") || text.contains("折扣至") ||
+            text.contains("早鳥") || text.contains("開賣")
+        ) {
+            return DateRole.SALE_PERIOD
+        }
+        if (text.contains("活動日期") || text.contains("活動時間") || text.contains("開演") ||
+            text.contains("演出時間") || text.contains("演出日期") || text.contains("時間：") ||
+            text.contains("時間:") || text.contains("日期：") || text.contains("日期:")
+        ) {
+            return DateRole.EVENT_TIME
+        }
+        return null
+    }
+
+    fun lineHasDate(text: String): Boolean {
+        if (FULL_DATE_REGEX.containsMatchIn(text)) return true
+        if (MONTH_DAY_REGEX.containsMatchIn(text)) return true
+        for (pattern in RELATIVE_DATE_PATTERNS) {
+            if (pattern.containsMatchIn(text)) return true
+        }
+        return false
+    }
+
+    fun classifyDateRole(contextSnippet: String): DateRole {
+        return findExplicitRole(contextSnippet) ?: DateRole.EVENT_TIME
     }
 
     /**

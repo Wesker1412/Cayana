@@ -67,4 +67,31 @@ class DateRoleClassificationTest {
         assertEquals(DateRole.BUSINESS_HOURS, event.dateRole)
         assertEquals(ConfidenceLevel.LOW, EventActionPolicy.evaluate(event, fixedRefTime))
     }
+
+    @Test
+    fun adjacentDeadlineAndEventRoleClassification() {
+        val text = """
+            跨年搖滾
+            報名截止：10/15 23:59
+            活動時間：10/25 19:30
+            台北小巨蛋
+        """.trimIndent()
+
+        val candidates = extractor.extract(text, fixedRefTime, zoneId)
+        assertEquals(2, candidates.size)
+
+        // First candidate MUST be EVENT_TIME with HIGH confidence, not polluted by line 1 deadline
+        val eventCandidate = candidates[0]
+        assertEquals(DateRole.EVENT_TIME, eventCandidate.dateRole)
+        val expectedStart = ZonedDateTime.of(2026, 10, 25, 19, 30, 0, 0, zoneId).toInstant()
+        assertEquals(expectedStart, eventCandidate.startAt)
+        assertEquals(ConfidenceLevel.HIGH, EventActionPolicy.evaluate(eventCandidate, fixedRefTime))
+
+        // Second candidate is REGISTRATION_DEADLINE with LOW confidence
+        val deadlineCandidate = candidates[1]
+        assertEquals(DateRole.REGISTRATION_DEADLINE, deadlineCandidate.dateRole)
+        val expectedDeadline = ZonedDateTime.of(2026, 10, 15, 23, 59, 0, 0, zoneId).toInstant()
+        assertEquals(expectedDeadline, deadlineCandidate.startAt)
+        assertEquals(ConfidenceLevel.LOW, EventActionPolicy.evaluate(deadlineCandidate, fixedRefTime))
+    }
 }

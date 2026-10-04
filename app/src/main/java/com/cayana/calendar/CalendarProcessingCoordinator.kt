@@ -81,21 +81,17 @@ class CalendarProcessingCoordinator(
             return false
         }
 
+        // Notification is safety prerequisite for auto-create and confirm
+        if (!NotificationHelper.hasNotificationPermission(context)) {
+            logger.i(TAG, "Notification permission unavailable; skipping calendar actions as safety prerequisite")
+            return false
+        }
+
         // Deduplication check: check if any calendar action already recorded for this memory
         val existingActions = try {
             calendarActionDao.getActionsForMemory(memoryItem.id)
         } catch (e: Exception) {
             emptyList()
-        }
-
-        if (existingActions.isNotEmpty()) {
-            val hasCreatedOrPending = existingActions.any {
-                it.status == "CREATED" || it.status == "PENDING" || it.status == "IGNORED" || it.status == "UNDONE"
-            }
-            if (hasCreatedOrPending) {
-                logger.i(TAG, "Calendar action already exists for memory ${memoryItem.id}; skipping duplicate processing")
-                return true
-            }
         }
 
         // Extract candidates deterministically
@@ -113,6 +109,41 @@ class CalendarProcessingCoordinator(
                 val endAt = primaryCandidate.endAt ?: startAt.plusSeconds(3600)
                 val title = primaryCandidate.title ?: return false
 
+                val existingAutoAction = existingActions.find { it.actionType == ACTION_TYPE_AUTO_CREATED }
+                val actionId: String
+                if (existingAutoAction != null) {
+                    if (existingAutoAction.status == "CREATED" || existingAutoAction.status == "UNDONE") {
+                        logger.i(TAG, "Auto-created action already terminal (${existingAutoAction.status}) for memory ${memoryItem.id}")
+                        return true
+                    }
+                    val claimed = calendarActionDao.claimRetryAction(existingAutoAction.id)
+                    if (claimed != 1) {
+                        logger.i(TAG, "Another execution claimed retry for action ${existingAutoAction.id}")
+                        return true
+                    }
+                    actionId = existingAutoAction.id
+                } else {
+                    actionId = UUID.randomUUID().toString()
+                    val reservation = CalendarActionEntity(
+                        id = actionId,
+                        memoryId = memoryItem.id,
+                        calendarId = calendarId,
+                        calendarEventId = null,
+                        actionType = ACTION_TYPE_AUTO_CREATED,
+                        createdAt = System.currentTimeMillis(),
+                        status = "CREATING",
+                        title = title,
+                        startAt = startAt.toEpochMilli(),
+                        endAt = endAt.toEpochMilli()
+                    )
+                    try {
+                        calendarActionDao.insert(reservation)
+                    } catch (e: Exception) {
+                        logger.w(TAG, "Reservation insert failed due to unique conflict: ${e.message}")
+                        return true
+                    }
+                }
+
                 val validatedEvent = ValidatedEvent(
                     memoryId = memoryItem.id,
                     calendarId = calendarId,
@@ -126,23 +157,18 @@ class CalendarProcessingCoordinator(
 
                 when (val result = calendarWriter.createEvent(validatedEvent)) {
                     is CalendarWriteResult.Success -> {
-                        val actionId = UUID.randomUUID().toString()
-                        val actionEntity = CalendarActionEntity(
-                            id = actionId,
-                            memoryId = memoryItem.id,
-                            calendarId = calendarId,
-                            calendarEventId = result.calendarEventId,
-                            actionType = ACTION_TYPE_AUTO_CREATED,
-                            createdAt = System.currentTimeMillis(),
-                            status = "CREATED",
-                            title = title,
-                            startAt = startAt.toEpochMilli(),
-                            endAt = endAt.toEpochMilli()
-                        )
                         try {
-                            calendarActionDao.insert(actionEntity)
+                            val updated = calendarActionDao.updateStatusAndEventId(actionId, "CREATED", result.calendarEventId)
+                            if (updated != 1) {
+                                throw IllegalStateException("Failed to update status to CREATED for action $actionId")
+                            }
                         } catch (e: Exception) {
-                            logger.w(TAG, "Duplicate calendar action insert prevented: ${e.message}")
+                            logger.w(TAG, "Room final update failed after external event created, compensating: ${e.message}")
+                            calendarWriter.deleteEvent(result.calendarEventId)
+                            try {
+                                calendarActionDao.updateStatus(actionId, "CREATING_ERROR")
+                            } catch (_: Exception) {}
+                            return false
                         }
 
                         val formattedTime = NotificationHelper.formatEventDateTime(
@@ -150,7 +176,7 @@ class CalendarProcessingCoordinator(
                             primaryCandidate.isAllDay,
                             zoneId
                         )
-                        NotificationHelper.showCalendarAddedNotification(
+                        val posted = NotificationHelper.showCalendarAddedNotification(
                             context = context,
                             notificationId = memoryItem.id.hashCode(),
                             actionId = actionId,
@@ -158,29 +184,24 @@ class CalendarProcessingCoordinator(
                             title = title,
                             formattedDateTime = formattedTime
                         )
+                        if (!posted) {
+                            logger.w(TAG, "Failed to post Undo notification, compensating external event ${result.calendarEventId}")
+                            calendarWriter.deleteEvent(result.calendarEventId)
+                            try {
+                                calendarActionDao.updateStatusAndEventId(actionId, "FAILED", null)
+                            } catch (_: Exception) {}
+                            return false
+                        }
                         logger.i(TAG, "Auto-created calendar event ${result.calendarEventId} for memory ${memoryItem.id}")
                         true
                     }
                     is CalendarWriteResult.Failure -> {
-                        val actionId = UUID.randomUUID().toString()
-                        val actionEntity = CalendarActionEntity(
-                            id = actionId,
-                            memoryId = memoryItem.id,
-                            calendarId = calendarId,
-                            calendarEventId = null,
-                            actionType = ACTION_TYPE_AUTO_CREATED,
-                            createdAt = System.currentTimeMillis(),
-                            status = "FAILED",
-                            title = title,
-                            startAt = startAt.toEpochMilli(),
-                            endAt = endAt.toEpochMilli()
-                        )
                         try {
-                            calendarActionDao.insert(actionEntity)
+                            calendarActionDao.updateStatus(actionId, "FAILED")
                         } catch (_: Exception) {}
 
                         logger.w(TAG, "Failed to create calendar event for memory ${memoryItem.id}: ${result.reason}")
-                        false // Fall back to standard memory notification
+                        false
                     }
                 }
             }
@@ -189,6 +210,15 @@ class CalendarProcessingCoordinator(
                 val startAt = primaryCandidate.startAt ?: return false
                 val endAt = primaryCandidate.endAt ?: startAt.plusSeconds(3600)
                 val title = primaryCandidate.title ?: return false
+
+                val existingPending = existingActions.find {
+                    it.actionType == ACTION_TYPE_CONFIRM_PENDING &&
+                            (it.status == "PENDING" || it.status == "PROCESSING" || it.status == "CREATED" || it.status == "IGNORED" || it.status == "UNDONE")
+                }
+                if (existingPending != null) {
+                    logger.i(TAG, "Confirm action already exists (${existingPending.status}) for memory ${memoryItem.id}")
+                    return true
+                }
 
                 val actionId = UUID.randomUUID().toString()
                 val actionEntity = CalendarActionEntity(
@@ -215,7 +245,7 @@ class CalendarProcessingCoordinator(
                     primaryCandidate.isAllDay,
                     zoneId
                 )
-                NotificationHelper.showCalendarConfirmNotification(
+                val posted = NotificationHelper.showCalendarConfirmNotification(
                     context = context,
                     notificationId = memoryItem.id.hashCode(),
                     actionId = actionId,
@@ -228,6 +258,13 @@ class CalendarProcessingCoordinator(
                     isAllDay = primaryCandidate.isAllDay,
                     formattedDateTime = formattedTime
                 )
+                if (!posted) {
+                    logger.w(TAG, "Failed to post calendar confirm notification, updating status to FAILED")
+                    try {
+                        calendarActionDao.updateStatus(actionId, "FAILED")
+                    } catch (_: Exception) {}
+                    return false
+                }
                 logger.i(TAG, "Posted calendar confirm notification for memory ${memoryItem.id}")
                 true
             }

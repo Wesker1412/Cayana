@@ -35,10 +35,20 @@ class AndroidCalendarWriter(
             val values = ContentValues().apply {
                 put(CalendarContract.Events.CALENDAR_ID, candidate.calendarId)
                 put(CalendarContract.Events.TITLE, candidate.title)
-                put(CalendarContract.Events.DTSTART, candidate.startAt.toEpochMilli())
-                put(CalendarContract.Events.DTEND, candidate.endAt.toEpochMilli())
-                put(CalendarContract.Events.EVENT_TIMEZONE, candidate.zoneId.id)
-                put(CalendarContract.Events.ALL_DAY, if (candidate.isAllDay) 1 else 0)
+                if (candidate.isAllDay) {
+                    val startLocalDate = candidate.startAt.atZone(candidate.zoneId).toLocalDate()
+                    val startUtcMs = startLocalDate.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+                    val endUtcMs = startLocalDate.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+                    put(CalendarContract.Events.DTSTART, startUtcMs)
+                    put(CalendarContract.Events.DTEND, endUtcMs)
+                    put(CalendarContract.Events.EVENT_TIMEZONE, "UTC")
+                    put(CalendarContract.Events.ALL_DAY, 1)
+                } else {
+                    put(CalendarContract.Events.DTSTART, candidate.startAt.toEpochMilli())
+                    put(CalendarContract.Events.DTEND, candidate.endAt.toEpochMilli())
+                    put(CalendarContract.Events.EVENT_TIMEZONE, candidate.zoneId.id)
+                    put(CalendarContract.Events.ALL_DAY, 0)
+                }
                 candidate.location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
                 candidate.description?.let { put(CalendarContract.Events.DESCRIPTION, it) }
             }
@@ -69,10 +79,10 @@ class AndroidCalendarWriter(
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)
             val rowsDeleted = context.contentResolver.delete(uri, null, null)
             logger.i(TAG, "Deleted calendar event $eventId (rows affected: $rowsDeleted)")
-            Result.success(Unit)
+            Result.success(Unit) // rowsDeleted >= 0 is desired state achieved (idempotent)
         } catch (e: Exception) {
             logger.w(TAG, "Exception while deleting calendar event $eventId: ${e.message}")
-            Result.success(Unit) // Idempotent deletion
+            Result.failure(e)
         }
     }
 }
