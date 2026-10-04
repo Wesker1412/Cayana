@@ -45,15 +45,35 @@ object NotificationHelper {
         }
     }
 
-    fun hasNotificationPermission(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
+    fun canPostCalendarActionNotification(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            NotificationManagerCompat.from(context).areNotificationsEnabled()
+            if (!granted) return false
         }
+
+        val managerCompat = NotificationManagerCompat.from(context)
+        if (!managerCompat.areNotificationsEnabled()) {
+            return false
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ensureChannel(context)
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return false
+            val channel = manager.getNotificationChannel(CHANNEL_ID)
+            if (channel == null || channel.importance == NotificationManager.IMPORTANCE_NONE) {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    fun hasNotificationPermission(context: Context): Boolean {
+        return canPostCalendarActionNotification(context)
     }
 
     fun formatEventDateTime(instant: Instant?, isAllDay: Boolean, zoneId: ZoneId): String {
@@ -67,7 +87,7 @@ object NotificationHelper {
     }
 
     fun showMemoryIngestedNotification(context: Context, item: MemoryItem) {
-        if (!hasNotificationPermission(context)) {
+        if (!canPostCalendarActionNotification(context)) {
             return
         }
 
@@ -115,7 +135,7 @@ object NotificationHelper {
         title: String,
         formattedDateTime: String
     ): Boolean {
-        if (!hasNotificationPermission(context)) {
+        if (!canPostCalendarActionNotification(context)) {
             return false
         }
 
@@ -163,15 +183,10 @@ object NotificationHelper {
         notificationId: Int,
         actionId: String,
         memoryId: String,
-        calendarId: Long,
         title: String,
-        startAtMs: Long,
-        endAtMs: Long,
-        location: String?,
-        isAllDay: Boolean,
         formattedDateTime: String
     ): Boolean {
-        if (!hasNotificationPermission(context)) {
+        if (!canPostCalendarActionNotification(context)) {
             return false
         }
 
@@ -187,13 +202,6 @@ object NotificationHelper {
         val confirmIntent = Intent(context, ConfirmCalendarEventReceiver::class.java).apply {
             putExtra(ConfirmCalendarEventReceiver.EXTRA_DECISION, ConfirmCalendarEventReceiver.DECISION_CONFIRM)
             putExtra(ConfirmCalendarEventReceiver.EXTRA_ACTION_ID, actionId)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_MEMORY_ID, memoryId)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_CALENDAR_ID, calendarId)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_TITLE, title)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_START_AT, startAtMs)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_END_AT, endAtMs)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_LOCATION, location)
-            putExtra(ConfirmCalendarEventReceiver.EXTRA_IS_ALL_DAY, isAllDay)
             putExtra(ConfirmCalendarEventReceiver.EXTRA_NOTIFICATION_ID, notificationId)
         }
         val confirmPendingIntent = PendingIntent.getBroadcast(

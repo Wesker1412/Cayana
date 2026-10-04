@@ -72,42 +72,48 @@ class ConfirmCalendarEventReceiver(
                         return@launch
                     }
 
-                    val memoryId = intent.getStringExtra(EXTRA_MEMORY_ID) ?: return@launch
-                    val calendarId = intent.getLongExtra(EXTRA_CALENDAR_ID, -1L)
-                    if (calendarId == -1L) {
-                        dao.updateStatus(actionId, "FAILED")
+                    val action = dao.getById(actionId)
+                    if (action == null) {
+                        CayanaLogger.w(TAG, "Action not found for actionId=$actionId")
                         return@launch
                     }
-                    val title = intent.getStringExtra(EXTRA_TITLE) ?: return@launch
-                    val startAt = intent.getLongExtra(EXTRA_START_AT, 0L)
-                    val endAt = intent.getLongExtra(EXTRA_END_AT, 0L)
-                    val location = intent.getStringExtra(EXTRA_LOCATION)
-                    val isAllDay = intent.getBooleanExtra(EXTRA_IS_ALL_DAY, false)
+
+                    val originalZoneId = action.zoneId?.let {
+                        try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
+                    } ?: ZoneId.systemDefault()
+
+                    val startInstant = action.startAt?.let { Instant.ofEpochMilli(it) } ?: Instant.now()
+                    val endInstant = action.endAt?.let { Instant.ofEpochMilli(it) } ?: startInstant.plusSeconds(3600)
 
                     val validatedEvent = ValidatedEvent(
-                        memoryId = memoryId,
-                        calendarId = calendarId,
-                        title = title,
-                        startAt = Instant.ofEpochMilli(startAt),
-                        endAt = Instant.ofEpochMilli(endAt),
-                        location = location,
-                        isAllDay = isAllDay,
-                        zoneId = ZoneId.systemDefault()
+                        memoryId = action.memoryId,
+                        calendarId = action.calendarId,
+                        title = action.title ?: "Event",
+                        startAt = startInstant,
+                        endAt = endInstant,
+                        location = action.location,
+                        isAllDay = action.isAllDay,
+                        zoneId = originalZoneId,
+                        actionId = action.id
                     )
 
                     when (val result = writer.createEvent(validatedEvent)) {
                         is CalendarWriteResult.Success -> {
+                            val eventId = result.calendarEventId
                             try {
-                                val updated = dao.updateStatusAndEventId(actionId, "CREATED", result.calendarEventId)
+                                val updated = dao.updateStatusAndEventId(actionId, "CREATED", eventId)
                                 if (updated != 1) {
                                     throw IllegalStateException("Failed to update action $actionId to CREATED")
                                 }
                             } catch (e: Exception) {
                                 CayanaLogger.w(TAG, "Room update failed after calendar create, compensating: ${e.message}")
-                                writer.deleteEvent(result.calendarEventId)
-                                try {
-                                    dao.updateStatus(actionId, "FAILED")
-                                } catch (_: Exception) {}
+                                val delResult = writer.deleteEvent(eventId)
+                                if (delResult.isSuccess) {
+                                    try { dao.updateStatus(actionId, "FAILED") } catch (_: Exception) {}
+                                } else {
+                                    CayanaLogger.e(TAG, "Compensation deletion failed after Room failure; persisting COMPENSATION_FAILED with eventId $eventId")
+                                    try { dao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId) } catch (_: Exception) {}
+                                }
                                 return@launch
                             }
 
@@ -118,21 +124,24 @@ class ConfirmCalendarEventReceiver(
                             )
                             val posted = NotificationHelper.showCalendarAddedNotification(
                                 context = context,
-                                notificationId = if (notificationId != -1) notificationId else memoryId.hashCode(),
+                                notificationId = if (notificationId != -1) notificationId else action.memoryId.hashCode(),
                                 actionId = actionId,
-                                calendarEventId = result.calendarEventId,
-                                title = title,
+                                calendarEventId = eventId,
+                                title = validatedEvent.title,
                                 formattedDateTime = formattedTime
                             )
                             if (!posted) {
-                                CayanaLogger.w(TAG, "Failed to post Undo notification after confirm, compensating event ${result.calendarEventId}")
-                                writer.deleteEvent(result.calendarEventId)
-                                try {
+                                CayanaLogger.w(TAG, "Failed to post Undo notification after confirm, compensating event $eventId")
+                                val delResult = writer.deleteEvent(eventId)
+                                if (delResult.isSuccess) {
                                     dao.updateStatusAndEventId(actionId, "FAILED", null)
-                                } catch (_: Exception) {}
+                                } else {
+                                    CayanaLogger.e(TAG, "Compensation deletion failed after notification failure; persisting COMPENSATION_FAILED with eventId $eventId")
+                                    dao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId)
+                                }
                                 return@launch
                             }
-                            CayanaLogger.i(TAG, "Event confirmed & created for actionId=$actionId, eventId=${result.calendarEventId}")
+                            CayanaLogger.i(TAG, "Event confirmed & created for actionId=$actionId, eventId=$eventId")
                         }
                         is CalendarWriteResult.Failure -> {
                             dao.updateStatus(actionId, "FAILED")

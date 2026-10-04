@@ -22,5 +22,8 @@ data class CalendarActionEntity(
     val status: String,
     val title: String?,
     val startAt: Long?,
-    val endAt: Long?
+    val endAt: Long?,
+    val location: String? = null,
+    val isAllDay: Boolean = false,
+    val zoneId: String? = null
 )

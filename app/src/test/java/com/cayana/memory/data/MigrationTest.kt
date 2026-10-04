@@ -3,6 +3,8 @@ package com.cayana.memory.data
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -93,5 +95,44 @@ class MigrationTest {
             "INSERT INTO calendar_actions (id, memoryId, calendarId, calendarEventId, actionType, createdAt, status, title, startAt, endAt) " +
             "VALUES ('act-1', 'item-1', 1, 100, 'AUTO_CREATED', 2000, 'CREATED', 'Test Event', 3000, 4000)"
         )
+    }
+
+    @Test
+    fun migrate3To4() {
+        var db = helper.createDatabase(TEST_DB, 3).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('item-1', 'SCREENSHOT', 1000, 1000, 'Test', 'Sample', 'Sample', 'content://test', NULL, 1, '{}', '[]', '[]', 'COMPLETED')"
+            )
+            execSQL(
+                "INSERT INTO calendar_actions (id, memoryId, calendarId, calendarEventId, actionType, createdAt, status, title, startAt, endAt) " +
+                "VALUES ('act-v3', 'item-1', 1, 100, 'AUTO_CREATED', 2000, 'CREATED', 'Test Event', 3000, 4000)"
+            )
+            close()
+        }
+
+        // Re-open database with version 4 and run migration 3 -> 4
+        db = helper.runMigrationsAndValidate(TEST_DB, 4, true, CayanaDatabase.MIGRATION_3_4)
+
+        // Verify existing row has default values for newly added columns
+        val cursor = db.query("SELECT location, isAllDay, zoneId FROM calendar_actions WHERE id='act-v3'")
+        assertTrue("Migrated row must exist", cursor.moveToFirst())
+        assertNull("location should default to NULL", cursor.getString(0))
+        assertEquals("isAllDay should default to 0", 0, cursor.getInt(1))
+        assertNull("zoneId should default to NULL", cursor.getString(2))
+        cursor.close()
+
+        // Verify we can insert a new row with version 4 columns
+        db.execSQL(
+            "INSERT INTO calendar_actions (id, memoryId, calendarId, calendarEventId, actionType, createdAt, status, title, startAt, endAt, location, isAllDay, zoneId) " +
+            "VALUES ('act-v4', 'item-1', 1, 101, 'CONFIRM_PENDING', 2100, 'PENDING', 'V4 Event', 5000, 6000, 'Taipei 101', 1, 'Asia/Taipei')"
+        )
+
+        val v4Cursor = db.query("SELECT location, isAllDay, zoneId FROM calendar_actions WHERE id='act-v4'")
+        assertTrue(v4Cursor.moveToFirst())
+        assertEquals("Taipei 101", v4Cursor.getString(0))
+        assertEquals(1, v4Cursor.getInt(1))
+        assertEquals("Asia/Taipei", v4Cursor.getString(2))
+        v4Cursor.close()
     }
 }

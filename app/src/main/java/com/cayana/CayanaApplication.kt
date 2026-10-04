@@ -25,11 +25,22 @@ class CayanaApplication : Application() {
     private val screenshotWatcher: ScreenshotSourceWatcher by inject()
     private val settingsRepository: SettingsRepository by inject()
     private val permissionChecker: PermissionChecker by inject()
+    private val calendarCoordinator: com.cayana.calendar.CalendarProcessingCoordinator by inject()
 
     override fun onCreate() {
         super.onCreate()
         initKoin()
         initScreenshotWatcher()
+        reconcileCalendarActions()
+    }
+
+    private fun reconcileCalendarActions() {
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        scope.launch {
+            try {
+                calendarCoordinator.reconcilePendingCreatingActions()
+            } catch (_: Exception) {}
+        }
     }
 
     private fun initScreenshotWatcher() {

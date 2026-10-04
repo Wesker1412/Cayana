@@ -12,7 +12,11 @@ val databaseModule = module {
             CayanaDatabase::class.java,
             CayanaDatabase.DATABASE_NAME
         )
-            .addMigrations(CayanaDatabase.MIGRATION_1_2, CayanaDatabase.MIGRATION_2_3)
+            .addMigrations(
+                CayanaDatabase.MIGRATION_1_2,
+                CayanaDatabase.MIGRATION_2_3,
+                CayanaDatabase.MIGRATION_3_4
+            )
             .build()
     }
 

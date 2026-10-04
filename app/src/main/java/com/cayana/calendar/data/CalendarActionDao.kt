@@ -32,8 +32,11 @@ interface CalendarActionDao {
     @Query("UPDATE calendar_actions SET status = 'IGNORED' WHERE id = :id AND status = 'PENDING'")
     suspend fun ignorePendingAction(id: String): Int
 
-    @Query("UPDATE calendar_actions SET status = 'CREATING' WHERE id = :id AND (status = 'FAILED' OR status = 'CREATING_ERROR' OR status = 'CREATING')")
+    @Query("UPDATE calendar_actions SET status = 'CREATING' WHERE id = :id AND (status = 'FAILED' OR status = 'CREATING_ERROR')")
     suspend fun claimRetryAction(id: String): Int
+
+    @Query("SELECT * FROM calendar_actions WHERE status = 'CREATING' ORDER BY createdAt ASC LIMIT :limit")
+    suspend fun getPendingCreatingActions(limit: Int = 10): List<CalendarActionEntity>
 
     @Update
     suspend fun update(action: CalendarActionEntity): Int

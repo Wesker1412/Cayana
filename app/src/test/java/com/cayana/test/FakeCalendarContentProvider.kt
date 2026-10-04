@@ -107,6 +107,40 @@ class FakeCalendarContentProvider : ContentProvider() {
             return cursor
         }
 
+        if (uri.toString().startsWith(CalendarContract.Events.CONTENT_URI.toString())) {
+            val proj = projection ?: arrayOf(
+                CalendarContract.Events._ID,
+                CalendarContract.Events.CUSTOM_APP_PACKAGE,
+                CalendarContract.Events.CUSTOM_APP_URI,
+                CalendarContract.Events.TITLE
+            )
+            val cursor = MatrixCursor(proj)
+            var list = events.values.toList()
+            if (selection != null && selectionArgs != null) {
+                if (selection.contains(CalendarContract.Events.CUSTOM_APP_PACKAGE) && selection.contains(CalendarContract.Events.CUSTOM_APP_URI)) {
+                    val pkg = selectionArgs[0]
+                    val customUri = selectionArgs[1]
+                    list = list.filter {
+                        it.getAsString(CalendarContract.Events.CUSTOM_APP_PACKAGE) == pkg &&
+                        it.getAsString(CalendarContract.Events.CUSTOM_APP_URI) == customUri
+                    }
+                }
+            }
+            for (cv in list) {
+                val row = cursor.newRow()
+                for (col in proj) {
+                    when (col) {
+                        CalendarContract.Events._ID -> row.add(cv.getAsLong(col))
+                        CalendarContract.Events.CUSTOM_APP_PACKAGE -> row.add(cv.getAsString(col))
+                        CalendarContract.Events.CUSTOM_APP_URI -> row.add(cv.getAsString(col))
+                        CalendarContract.Events.TITLE -> row.add(cv.getAsString(col))
+                        else -> row.add(cv.get(col))
+                    }
+                }
+            }
+            return cursor
+        }
+
         return MatrixCursor(arrayOf("_id"))
     }
 

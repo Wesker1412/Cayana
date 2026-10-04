@@ -51,6 +51,10 @@ class AndroidCalendarWriter(
                 }
                 candidate.location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
                 candidate.description?.let { put(CalendarContract.Events.DESCRIPTION, it) }
+                candidate.actionId?.let { actionId ->
+                    put(CalendarContract.Events.CUSTOM_APP_PACKAGE, "com.cayana")
+                    put(CalendarContract.Events.CUSTOM_APP_URI, "cayana://calendar-action/$actionId")
+                }
             }
 
             val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
@@ -84,5 +88,33 @@ class AndroidCalendarWriter(
             logger.w(TAG, "Exception while deleting calendar event $eventId: ${e.message}")
             Result.failure(e)
         }
+    }
+
+    override suspend fun findEventByActionId(actionId: String): Long? = withContext(Dispatchers.IO) {
+        if (!calendarProviderHelper.hasCalendarPermission() && !calendarProviderHelper.hasWriteCalendarPermission()) {
+            logger.w(TAG, "Missing calendar permission to find event by actionId $actionId")
+            return@withContext null
+        }
+
+        try {
+            val uri = CalendarContract.Events.CONTENT_URI
+            val projection = arrayOf(CalendarContract.Events._ID)
+            val selection = "${CalendarContract.Events.CUSTOM_APP_PACKAGE} = ? AND ${CalendarContract.Events.CUSTOM_APP_URI} = ?"
+            val selectionArgs = arrayOf("com.cayana", "cayana://calendar-action/$actionId")
+
+            context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idCol = cursor.getColumnIndex(CalendarContract.Events._ID)
+                    if (idCol >= 0) {
+                        val eventId = cursor.getLong(idCol)
+                        logger.i(TAG, "Found calendar event $eventId for actionId $actionId")
+                        return@withContext eventId
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            logger.w(TAG, "Exception querying event by actionId $actionId: ${e.message}")
+        }
+        null
     }
 }

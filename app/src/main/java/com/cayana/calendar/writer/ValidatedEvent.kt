@@ -12,5 +12,6 @@ data class ValidatedEvent(
     val location: String? = null,
     val isAllDay: Boolean = false,
     val zoneId: ZoneId = ZoneId.systemDefault(),
-    val description: String? = "Added by Cayana"
+    val description: String? = "Added by Cayana",
+    val actionId: String? = null
 )

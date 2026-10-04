@@ -13,7 +13,9 @@ import com.cayana.event.model.ConfidenceLevel
 import com.cayana.event.model.EventActionPolicy
 import com.cayana.memory.model.MemoryItem
 import com.cayana.ui.settings.repository.SettingsRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -82,9 +84,16 @@ class CalendarProcessingCoordinator(
         }
 
         // Notification is safety prerequisite for auto-create and confirm
-        if (!NotificationHelper.hasNotificationPermission(context)) {
-            logger.i(TAG, "Notification permission unavailable; skipping calendar actions as safety prerequisite")
+        if (!NotificationHelper.canPostCalendarActionNotification(context)) {
+            logger.i(TAG, "Notification permission or channel unavailable; skipping calendar actions as safety prerequisite")
             return false
+        }
+
+        // Bounded reconciliation of any pending CREATING actions
+        try {
+            reconcilePendingCreatingActions()
+        } catch (e: Exception) {
+            logger.w(TAG, "Reconciliation failed during process: ${e.message}")
         }
 
         // Deduplication check: check if any calendar action already recorded for this memory
@@ -134,7 +143,10 @@ class CalendarProcessingCoordinator(
                         status = "CREATING",
                         title = title,
                         startAt = startAt.toEpochMilli(),
-                        endAt = endAt.toEpochMilli()
+                        endAt = endAt.toEpochMilli(),
+                        location = primaryCandidate.location,
+                        isAllDay = primaryCandidate.isAllDay,
+                        zoneId = zoneId.id
                     )
                     try {
                         calendarActionDao.insert(reservation)
@@ -152,22 +164,36 @@ class CalendarProcessingCoordinator(
                     endAt = endAt,
                     location = primaryCandidate.location,
                     isAllDay = primaryCandidate.isAllDay,
-                    zoneId = zoneId
+                    zoneId = zoneId,
+                    actionId = actionId
                 )
 
                 when (val result = calendarWriter.createEvent(validatedEvent)) {
                     is CalendarWriteResult.Success -> {
+                        val eventId = result.calendarEventId
                         try {
-                            val updated = calendarActionDao.updateStatusAndEventId(actionId, "CREATED", result.calendarEventId)
+                            val updated = calendarActionDao.updateStatusAndEventId(actionId, "CREATED", eventId)
                             if (updated != 1) {
                                 throw IllegalStateException("Failed to update status to CREATED for action $actionId")
                             }
                         } catch (e: Exception) {
                             logger.w(TAG, "Room final update failed after external event created, compensating: ${e.message}")
-                            calendarWriter.deleteEvent(result.calendarEventId)
-                            try {
-                                calendarActionDao.updateStatus(actionId, "CREATING_ERROR")
-                            } catch (_: Exception) {}
+                            val delResult = try {
+                                calendarWriter.deleteEvent(eventId)
+                            } catch (compEx: Exception) {
+                                logger.e(TAG, "Compensation event deletion failed: ${compEx.message}")
+                                Result.failure(compEx)
+                            }
+                            if (delResult.isSuccess) {
+                                try {
+                                    calendarActionDao.updateStatus(actionId, "CREATING_ERROR")
+                                } catch (_: Exception) {}
+                            } else {
+                                logger.e(TAG, "Compensation deletion failed after Room failure; persisting COMPENSATION_FAILED with eventId $eventId")
+                                try {
+                                    calendarActionDao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId)
+                                } catch (_: Exception) {}
+                            }
                             return false
                         }
 
@@ -180,19 +206,27 @@ class CalendarProcessingCoordinator(
                             context = context,
                             notificationId = memoryItem.id.hashCode(),
                             actionId = actionId,
-                            calendarEventId = result.calendarEventId,
+                            calendarEventId = eventId,
                             title = title,
                             formattedDateTime = formattedTime
                         )
                         if (!posted) {
-                            logger.w(TAG, "Failed to post Undo notification, compensating external event ${result.calendarEventId}")
-                            calendarWriter.deleteEvent(result.calendarEventId)
-                            try {
+                            logger.w(TAG, "Failed to post Undo notification, compensating external event $eventId")
+                            val delResult = try {
+                                calendarWriter.deleteEvent(eventId)
+                            } catch (compEx: Exception) {
+                                logger.e(TAG, "Compensation event deletion failed after notification failure: ${compEx.message}")
+                                Result.failure(compEx)
+                            }
+                            if (delResult.isSuccess) {
                                 calendarActionDao.updateStatusAndEventId(actionId, "FAILED", null)
-                            } catch (_: Exception) {}
+                            } else {
+                                logger.e(TAG, "Compensation deletion failed after notification failure; persisting COMPENSATION_FAILED with eventId $eventId")
+                                calendarActionDao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId)
+                            }
                             return false
                         }
-                        logger.i(TAG, "Auto-created calendar event ${result.calendarEventId} for memory ${memoryItem.id}")
+                        logger.i(TAG, "Auto-created calendar event $eventId for memory ${memoryItem.id}")
                         true
                     }
                     is CalendarWriteResult.Failure -> {
@@ -231,7 +265,10 @@ class CalendarProcessingCoordinator(
                     status = "PENDING",
                     title = title,
                     startAt = startAt.toEpochMilli(),
-                    endAt = endAt.toEpochMilli()
+                    endAt = endAt.toEpochMilli(),
+                    location = primaryCandidate.location,
+                    isAllDay = primaryCandidate.isAllDay,
+                    zoneId = zoneId.id
                 )
                 try {
                     calendarActionDao.insert(actionEntity)
@@ -250,12 +287,7 @@ class CalendarProcessingCoordinator(
                     notificationId = memoryItem.id.hashCode(),
                     actionId = actionId,
                     memoryId = memoryItem.id,
-                    calendarId = calendarId,
                     title = title,
-                    startAtMs = startAt.toEpochMilli(),
-                    endAtMs = endAt.toEpochMilli(),
-                    location = primaryCandidate.location,
-                    isAllDay = primaryCandidate.isAllDay,
                     formattedDateTime = formattedTime
                 )
                 if (!posted) {
@@ -274,5 +306,58 @@ class CalendarProcessingCoordinator(
                 false
             }
         }
+    }
+
+    suspend fun reconcilePendingCreatingActions(): Int = withContext(Dispatchers.IO) {
+        val pendingActions = try {
+            calendarActionDao.getPendingCreatingActions(limit = 10)
+        } catch (e: Exception) {
+            logger.w(TAG, "Failed to query pending CREATING actions: ${e.message}")
+            return@withContext 0
+        }
+
+        var reconciled = 0
+        for (action in pendingActions) {
+            try {
+                val eventId = calendarWriter.findEventByActionId(action.id)
+                if (eventId != null) {
+                    logger.i(TAG, "Reconciled existing calendar event $eventId for action ${action.id}")
+                    if (NotificationHelper.canPostCalendarActionNotification(context)) {
+                        calendarActionDao.updateStatusAndEventId(action.id, "CREATED", eventId)
+                        val eventZone = action.zoneId?.let {
+                            try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
+                        } ?: ZoneId.systemDefault()
+                        val formattedTime = NotificationHelper.formatEventDateTime(
+                            action.startAt?.let { Instant.ofEpochMilli(it) },
+                            action.isAllDay,
+                            eventZone
+                        )
+                        NotificationHelper.showCalendarAddedNotification(
+                            context = context,
+                            notificationId = action.memoryId.hashCode(),
+                            actionId = action.id,
+                            calendarEventId = eventId,
+                            title = action.title ?: "Event",
+                            formattedDateTime = formattedTime
+                        )
+                    } else {
+                        logger.w(TAG, "Notification unavailable during reconciliation; compensating event $eventId")
+                        val delResult = calendarWriter.deleteEvent(eventId)
+                        if (delResult.isSuccess) {
+                            calendarActionDao.updateStatusAndEventId(action.id, "FAILED", null)
+                        } else {
+                            calendarActionDao.updateStatusAndEventId(action.id, "COMPENSATION_FAILED", eventId)
+                        }
+                    }
+                } else {
+                    logger.i(TAG, "No calendar event found for stale action ${action.id}; marking as FAILED")
+                    calendarActionDao.updateStatusAndEventId(action.id, "FAILED", null)
+                }
+                reconciled++
+            } catch (e: Exception) {
+                logger.w(TAG, "Exception during reconciliation for action ${action.id}: ${e.message}")
+            }
+        }
+        reconciled
     }
 }

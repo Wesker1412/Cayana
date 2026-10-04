@@ -12,7 +12,7 @@ import com.cayana.calendar.data.CalendarActionEntity
         MemoryEntity::class,
         CalendarActionEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
@@ -49,6 +49,14 @@ abstract class CayanaDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_calendar_actions_memoryId_actionType` ON `calendar_actions` (`memoryId`, `actionType`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_calendar_actions_memoryId` ON `calendar_actions` (`memoryId`)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `calendar_actions` ADD COLUMN `location` TEXT")
+                db.execSQL("ALTER TABLE `calendar_actions` ADD COLUMN `isAllDay` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `calendar_actions` ADD COLUMN `zoneId` TEXT")
             }
         }
     }
