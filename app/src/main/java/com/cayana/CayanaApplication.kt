@@ -34,8 +34,10 @@ class CayanaApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         initKoin()
-        initWatchers()
-        reconcileInFlightTasks()
+        if (android.os.Build.FINGERPRINT != "robolectric") {
+            initWatchers()
+            reconcileInFlightTasks()
+        }
     }
 
     private fun reconcileInFlightTasks() {

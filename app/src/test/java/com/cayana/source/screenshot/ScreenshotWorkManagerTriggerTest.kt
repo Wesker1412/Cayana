@@ -28,6 +28,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -75,6 +76,7 @@ class ScreenshotWorkManagerTriggerTest {
             stopKoin()
         }
         startKoin {
+            androidContext(context)
             modules(
                 module {
                     single<ScreenshotProcessingCoordinator> { coordinator }
@@ -83,10 +85,17 @@ class ScreenshotWorkManagerTriggerTest {
                 }
             )
         }
+        try {
+            workManager.cancelAllWork().result.get()
+        } catch (_: Exception) {}
     }
 
     @After
     fun tearDown() {
+        try {
+            ScreenshotIngestWorker.cancelTrigger(context)
+            workManager.cancelAllWork().result.get()
+        } catch (_: Exception) {}
         stopKoin()
     }
 

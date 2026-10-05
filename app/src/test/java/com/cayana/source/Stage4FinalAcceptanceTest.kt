@@ -438,12 +438,15 @@ class Stage4FinalAcceptanceTest {
     // 12. releaseDoesNotAllowGlobalCleartext
     @Test
     fun releaseDoesNotAllowGlobalCleartext() {
-        val manifestFile = File("src/main/AndroidManifest.xml")
-        val content = if (manifestFile.exists()) {
-            manifestFile.readText()
-        } else {
-            File("app/src/main/AndroidManifest.xml").readText()
-        }
+        val manifestCandidates = listOf(
+            File("src/main/AndroidManifest.xml"),
+            File("app/src/main/AndroidManifest.xml"),
+            File("../app/src/main/AndroidManifest.xml"),
+            File("../../app/src/main/AndroidManifest.xml")
+        )
+        val manifestFile = manifestCandidates.firstOrNull { it.exists() }
+        assertNotNull("AndroidManifest.xml must exist in project sources", manifestFile)
+        val content = manifestFile!!.readText()
         assertFalse(
             "Production/main AndroidManifest.xml must not enable global cleartext traffic",
             content.contains("android:usesCleartextTraffic=\"true\"")
