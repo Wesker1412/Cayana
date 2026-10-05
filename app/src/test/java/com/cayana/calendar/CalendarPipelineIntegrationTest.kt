@@ -1236,4 +1236,305 @@ class CalendarPipelineIntegrationTest {
         assertEquals(1, fakeProvider.events.size)
     }
 
+    @Test
+    fun mediumPromptPostFailureBecomesPromptRetry() = runTest {
+        val text = "2026巡迴展覽\n台北場 10/18 19:00\n高雄場 10/19 19:00"
+        val memory = createMemory("mem-prompt-retry", text)
+
+        val interceptingExtractor = object : com.cayana.event.extractor.EventExtractor by DeterministicEventExtractor() {
+            override fun extract(
+                text: String,
+                referenceTime: java.time.Instant,
+                zoneId: java.time.ZoneId
+            ): List<com.cayana.event.model.EventCandidate> {
+                val result = DeterministicEventExtractor().extract(text, referenceTime, zoneId)
+                val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+                shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+                return result
+            }
+        }
+
+        val testCoordinator = CalendarProcessingCoordinator(
+            context = context,
+            eventExtractor = interceptingExtractor,
+            calendarWriter = calendarWriter,
+            calendarProviderHelper = fakeHelper,
+            calendarActionDao = calendarActionDao,
+            settingsRepository = settingsRepository,
+            logger = DefaultCayanaLogger()
+        )
+
+        val handled = testCoordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        assertFalse(handled)
+
+        val actions = calendarActionDao.getActionsForMemory(memory.id)
+        assertEquals(1, actions.size)
+        val action = actions.first()
+        assertEquals(CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING, action.actionType)
+        assertEquals("PROMPT_RETRY", action.status)
+        assertNull(action.calendarEventId)
+        assertEquals(0, fakeProvider.events.size)
+    }
+
+    @Test
+    fun promptRetryNotificationUnavailableRemainsPromptRetry() = runTest {
+        val memory = createMemory("mem-prompt-unavail", "XX Live\n10/18 19:30")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val promptRetryAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROMPT_RETRY",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = null,
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(promptRetryAction)
+
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(0, count)
+
+        val actionAfter = calendarActionDao.getById(actionId)
+        assertNotNull(actionAfter)
+        assertEquals("PROMPT_RETRY", actionAfter!!.status)
+        assertNull(actionAfter.calendarEventId)
+        assertEquals(0, fakeProvider.events.size)
+    }
+
+    @Test
+    fun promptRetryNotificationRecoveredReturnsToPending() = runTest {
+        val memory = createMemory("mem-prompt-recovered", "XX Live\n10/18 19:30")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val promptRetryAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROMPT_RETRY",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = null,
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(promptRetryAction)
+
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        val actionAfter = calendarActionDao.getById(actionId)
+        assertNotNull(actionAfter)
+        assertEquals("PENDING", actionAfter!!.status)
+        assertNull(actionAfter.calendarEventId)
+        assertEquals(0, fakeProvider.events.size)
+    }
+
+    @Test
+    fun processingNotificationUnavailableRemainsProcessing() = runTest {
+        val memory = createMemory("mem-proc-notif-unavail", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val processingAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROCESSING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(processingAction)
+
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(0, count)
+
+        // Must remain PROCESSING; must NOT be marked FAILED
+        val actionAfter = calendarActionDao.getById(actionId)
+        assertNotNull(actionAfter)
+        assertEquals("PROCESSING", actionAfter!!.status)
+        assertNull(actionAfter.calendarEventId)
+        assertEquals(0, fakeProvider.events.size)
+    }
+
+    @Test
+    fun processingFoundEventNotificationUnavailableCompensatesAndRemainsProcessing() = runTest {
+        val memory = createMemory("mem-proc-found-comp", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val processingAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROCESSING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(processingAction)
+
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, 1L)
+            put(android.provider.CalendarContract.Events.TITLE, "XX Live")
+            put(android.provider.CalendarContract.Events.DTSTART, fixedRefTime.toEpochMilli())
+            put(android.provider.CalendarContract.Events.DTEND, fixedRefTime.plusSeconds(3600).toEpochMilli())
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, "Asia/Taipei")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_PACKAGE, "com.cayana")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_URI, "cayana://calendar-action/$actionId")
+        }
+        val uri = context.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        assertNotNull(uri)
+        assertEquals(1, fakeProvider.events.size)
+
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        // Event compensated (deleted) because notification unavailable, but status remains PROCESSING
+        assertEquals(0, fakeProvider.events.size)
+        val actionAfter = calendarActionDao.getById(actionId)
+        assertNotNull(actionAfter)
+        assertEquals("PROCESSING", actionAfter!!.status)
+        assertNull(actionAfter.calendarEventId)
+    }
+
+    @Test
+    fun processingNotificationPostFailureCompensatesAndRemainsProcessing() = runTest {
+        val memory = createMemory("mem-proc-notif-fail", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val processingAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROCESSING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(processingAction)
+
+        val interceptingWriter = object : com.cayana.calendar.writer.CalendarWriter by calendarWriter {
+            override suspend fun createEvent(
+                candidate: com.cayana.calendar.writer.ValidatedEvent
+            ): com.cayana.calendar.writer.CalendarWriteResult {
+                val res = calendarWriter.createEvent(candidate)
+                if (res is com.cayana.calendar.writer.CalendarWriteResult.Success) {
+                    val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+                    shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+                return res
+            }
+        }
+
+        val testCoordinator = CalendarProcessingCoordinator(
+            context = context,
+            eventExtractor = DeterministicEventExtractor(),
+            calendarWriter = interceptingWriter,
+            calendarProviderHelper = fakeHelper,
+            calendarActionDao = calendarActionDao,
+            settingsRepository = settingsRepository,
+            logger = DefaultCayanaLogger()
+        )
+
+        val count = testCoordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        // Notification post failed -> compensated -> status remains PROCESSING with null eventId
+        assertEquals(0, fakeProvider.events.size)
+        val actionAfter = calendarActionDao.getById(actionId)
+        assertNotNull(actionAfter)
+        assertEquals("PROCESSING", actionAfter!!.status)
+        assertNull(actionAfter.calendarEventId)
+    }
+
+    @Test
+    fun processingRecoversAfterNotificationReturnsExactlyOneEvent() = runTest {
+        val text = "2026巡迴展覽\n台北場 10/18 19:00\n高雄場 10/19 19:00"
+        val memory = createMemory("mem-e2e-recovery", text)
+
+        // 1. Initial process: MEDIUM confidence -> confirm notification posted -> PENDING
+        val handled = coordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        assertTrue(handled)
+        val action = calendarActionDao.getAction(memory.id, CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING)
+        assertNotNull(action)
+        assertEquals("PENDING", action!!.status)
+        assertEquals(0, fakeProvider.events.size)
+
+        // 2. User taps "加入" (confirm)
+        // Simulate crash right as user confirms before calendar write:
+        // claimPendingAction moves status to PROCESSING
+        val claimed = calendarActionDao.claimPendingAction(action.id)
+        assertEquals(1, claimed)
+        assertEquals("PROCESSING", calendarActionDao.getById(action.id)?.status)
+        assertEquals(0, fakeProvider.events.size)
+
+        // 3. Device enters state where notifications are temporarily unavailable
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        // Reconciliation runs during unavailable state
+        val countWhileUnavail = coordinator.reconcileInFlightActions()
+        assertEquals(0, countWhileUnavail)
+        assertEquals("PROCESSING", calendarActionDao.getById(action.id)?.status)
+        assertEquals(0, fakeProvider.events.size)
+
+        // 4. Later, notification permission is restored
+        shadowApp.grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        // 5. Next reconciliation run: recovers and creates event with exactly-once guarantee
+        val countAfterRestore = coordinator.reconcileInFlightActions()
+        assertEquals(1, countAfterRestore)
+
+        val completedAction = calendarActionDao.getById(action.id)
+        assertNotNull(completedAction)
+        assertEquals("CREATED", completedAction!!.status)
+        assertNotNull(completedAction.calendarEventId)
+        assertEquals(1, fakeProvider.events.size)
+
+        // 6. Idempotent rerun: no duplicate events created
+        val rerunCount = coordinator.reconcileInFlightActions()
+        assertEquals(0, rerunCount)
+        assertEquals(1, fakeProvider.events.size)
+    }
+
 }

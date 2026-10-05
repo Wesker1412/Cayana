@@ -248,7 +248,7 @@ class CalendarProcessingCoordinator(
 
                 val existingPending = existingActions.find {
                     it.actionType == ACTION_TYPE_CONFIRM_PENDING &&
-                            (it.status == "PENDING" || it.status == "PROCESSING" || it.status == "CREATED" || it.status == "IGNORED" || it.status == "UNDONE")
+                            (it.status == "PENDING" || it.status == "PROCESSING" || it.status == "PROMPT_RETRY" || it.status == "CREATED" || it.status == "IGNORED" || it.status == "UNDONE")
                 }
                 if (existingPending != null) {
                     logger.i(TAG, "Confirm action already exists (${existingPending.status}) for memory ${memoryItem.id}")
@@ -292,9 +292,9 @@ class CalendarProcessingCoordinator(
                     formattedDateTime = formattedTime
                 )
                 if (!posted) {
-                    logger.w(TAG, "Failed to post calendar confirm notification, updating status to FAILED")
+                    logger.w(TAG, "Failed to post calendar confirm notification, updating status to PROMPT_RETRY")
                     try {
-                        calendarActionDao.updateStatus(actionId, "FAILED")
+                        calendarActionDao.updateStatus(actionId, "PROMPT_RETRY")
                     } catch (_: Exception) {}
                     return false
                 }
@@ -320,6 +320,37 @@ class CalendarProcessingCoordinator(
         var reconciled = 0
         for (action in inFlightActions) {
             try {
+                if (action.status == "PROMPT_RETRY") {
+                    if (NotificationHelper.canPostCalendarActionNotification(context)) {
+                        val eventZone = action.zoneId?.let {
+                            try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
+                        } ?: ZoneId.systemDefault()
+                        val formattedTime = NotificationHelper.formatEventDateTime(
+                            action.startAt?.let { Instant.ofEpochMilli(it) },
+                            action.isAllDay,
+                            eventZone
+                        )
+                        val posted = NotificationHelper.showCalendarConfirmNotification(
+                            context = context,
+                            notificationId = action.memoryId.hashCode(),
+                            actionId = action.id,
+                            memoryId = action.memoryId,
+                            title = action.title ?: "Event",
+                            formattedDateTime = formattedTime
+                        )
+                        if (posted) {
+                            calendarActionDao.updateStatus(action.id, "PENDING")
+                            logger.i(TAG, "PROMPT_RETRY action ${action.id} reposted successfully; updated to PENDING")
+                            reconciled++
+                        } else {
+                            logger.w(TAG, "PROMPT_RETRY action ${action.id} repost failed; leaving PROMPT_RETRY unchanged")
+                        }
+                    } else {
+                        logger.i(TAG, "Notification unavailable for PROMPT_RETRY action ${action.id}; leaving PROMPT_RETRY unchanged")
+                    }
+                    continue
+                }
+
                 when (val lookup = calendarWriter.findEventByActionId(action.id)) {
                     is CalendarLookupResult.Unavailable -> {
                         logger.i(TAG, "Lookup unavailable for action ${action.id} (${lookup.cause?.message}); leaving status ${action.status} unchanged")
@@ -327,7 +358,8 @@ class CalendarProcessingCoordinator(
                     }
                     is CalendarLookupResult.Found -> {
                         val eventId = lookup.eventId
-                        logger.i(TAG, "Reconciled existing calendar event $eventId for in-flight action ${action.id}")
+                        val isProcessing = action.status == "PROCESSING"
+                        logger.i(TAG, "Reconciled existing calendar event $eventId for in-flight action ${action.id} (status=${action.status})")
                         if (NotificationHelper.canPostCalendarActionNotification(context)) {
                             val eventZone = action.zoneId?.let {
                                 try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
@@ -349,11 +381,11 @@ class CalendarProcessingCoordinator(
                                 calendarActionDao.updateStatusAndEventId(action.id, "CREATED", eventId)
                             } else {
                                 logger.w(TAG, "Notification post failed during reconciliation for event $eventId; compensating")
-                                compensateReconciledEvent(action.id, eventId)
+                                compensateReconciledEvent(action.id, eventId, isProcessing)
                             }
                         } else {
                             logger.w(TAG, "Notification unavailable during reconciliation; compensating event $eventId")
-                            compensateReconciledEvent(action.id, eventId)
+                            compensateReconciledEvent(action.id, eventId, isProcessing)
                         }
                         reconciled++
                     }
@@ -362,8 +394,10 @@ class CalendarProcessingCoordinator(
                         // Room reservation has full payload: title, startAt, endAt, location, isAllDay, zoneId, calendarId, actionId.
                         // Recreate event with same actionId / CUSTOM_APP_URI.
                         logger.i(TAG, "In-flight action ${action.id} (${action.status}) confirmed NotFound in calendar; safely resuming creation")
-                        resumeInFlightAction(action)
-                        reconciled++
+                        val resumed = resumeInFlightAction(action)
+                        if (resumed) {
+                            reconciled++
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -373,25 +407,33 @@ class CalendarProcessingCoordinator(
         reconciled
     }
 
-    private suspend fun compensateReconciledEvent(actionId: String, eventId: Long) {
+    private suspend fun compensateReconciledEvent(actionId: String, eventId: Long, isProcessing: Boolean) {
         val delResult = try {
             calendarWriter.deleteEvent(eventId)
         } catch (e: Exception) {
             Result.failure(e)
         }
         if (delResult.isSuccess) {
-            calendarActionDao.updateStatusAndEventId(actionId, "FAILED", null)
+            val targetStatus = if (isProcessing) "PROCESSING" else "FAILED"
+            calendarActionDao.updateStatusAndEventId(actionId, targetStatus, null)
         } else {
             logger.e(TAG, "Compensation deletion failed during reconciliation; persisting COMPENSATION_FAILED with eventId $eventId")
             calendarActionDao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId)
         }
     }
 
-    private suspend fun resumeInFlightAction(action: CalendarActionEntity) {
+    private suspend fun resumeInFlightAction(action: CalendarActionEntity): Boolean {
+        val isProcessing = action.status == "PROCESSING"
+
         if (!NotificationHelper.canPostCalendarActionNotification(context)) {
-            logger.w(TAG, "Notification unavailable during resume for action ${action.id}; marking FAILED")
-            calendarActionDao.updateStatus(action.id, "FAILED")
-            return
+            if (isProcessing) {
+                logger.i(TAG, "Notification unavailable during resume for PROCESSING action ${action.id}; leaving PROCESSING unchanged")
+                return false
+            } else {
+                logger.w(TAG, "Notification unavailable during resume for CREATING action ${action.id}; marking FAILED")
+                calendarActionDao.updateStatus(action.id, "FAILED")
+                return true
+            }
         }
 
         val originalZoneId = action.zoneId?.let {
@@ -433,12 +475,19 @@ class CalendarProcessingCoordinator(
                     calendarActionDao.updateStatusAndEventId(action.id, "CREATED", eventId)
                 } else {
                     logger.w(TAG, "Notification post failed on resume for event $eventId; compensating")
-                    compensateReconciledEvent(action.id, eventId)
+                    compensateReconciledEvent(action.id, eventId, isProcessing)
                 }
+                return true
             }
             is CalendarWriteResult.Failure -> {
                 logger.w(TAG, "Failed to create event on resume for action ${action.id}: ${result.reason}")
-                calendarActionDao.updateStatus(action.id, "FAILED")
+                if (isProcessing) {
+                    logger.i(TAG, "Transient failure during resume for PROCESSING action ${action.id}; leaving PROCESSING unchanged")
+                    return false
+                } else {
+                    calendarActionDao.updateStatus(action.id, "FAILED")
+                    return true
+                }
             }
         }
     }

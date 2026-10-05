@@ -109,7 +109,7 @@ class ConfirmCalendarEventReceiver(
                                 CayanaLogger.w(TAG, "Room update failed after calendar create, compensating: ${e.message}")
                                 val delResult = writer.deleteEvent(eventId)
                                 if (delResult.isSuccess) {
-                                    try { dao.updateStatus(actionId, "FAILED") } catch (_: Exception) {}
+                                    try { dao.updateStatusAndEventId(actionId, "PROCESSING", null) } catch (_: Exception) {}
                                 } else {
                                     CayanaLogger.e(TAG, "Compensation deletion failed after Room failure; persisting COMPENSATION_FAILED with eventId $eventId")
                                     try { dao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId) } catch (_: Exception) {}
@@ -134,7 +134,7 @@ class ConfirmCalendarEventReceiver(
                                 CayanaLogger.w(TAG, "Failed to post Undo notification after confirm, compensating event $eventId")
                                 val delResult = writer.deleteEvent(eventId)
                                 if (delResult.isSuccess) {
-                                    dao.updateStatusAndEventId(actionId, "FAILED", null)
+                                    dao.updateStatusAndEventId(actionId, "PROCESSING", null)
                                 } else {
                                     CayanaLogger.e(TAG, "Compensation deletion failed after notification failure; persisting COMPENSATION_FAILED with eventId $eventId")
                                     dao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId)
@@ -144,8 +144,7 @@ class ConfirmCalendarEventReceiver(
                             CayanaLogger.i(TAG, "Event confirmed & created for actionId=$actionId, eventId=$eventId")
                         }
                         is CalendarWriteResult.Failure -> {
-                            dao.updateStatus(actionId, "FAILED")
-                            CayanaLogger.w(TAG, "Failed to create event on confirm: ${result.reason}")
+                            CayanaLogger.w(TAG, "Failed to create event on confirm: ${result.reason}; keeping PROCESSING for recovery")
                         }
                     }
                 }
