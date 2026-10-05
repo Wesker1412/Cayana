@@ -51,7 +51,7 @@ class RecordingProcessingCoordinator(
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
-    var autoTranscribeSync: Boolean = true
+    var autoTranscribeSync: Boolean = false
 
     suspend fun processPendingRecordings(): List<MemoryItem> = withContext(dispatchers.io) {
         processingMutex.withLock {
@@ -291,7 +291,7 @@ class RecordingProcessingCoordinator(
      * Resumes transcription for in-flight recordings after process restart or failure recovery.
      * Starts from the latest completed chunk index; never restarts from chunk 0 if progress exists.
      */
-    suspend fun reconcileInFlightRecordings(autoTranscribeSync: Boolean = true): Int = withContext(dispatchers.io) {
+    suspend fun reconcileInFlightRecordings(autoTranscribeSync: Boolean = this.autoTranscribeSync): Int = withContext(dispatchers.io) {
         processingMutex.withLock {
             val allMemories = memoryRepository.getAllMemories().first()
             val inFlightItems = allMemories.filter {

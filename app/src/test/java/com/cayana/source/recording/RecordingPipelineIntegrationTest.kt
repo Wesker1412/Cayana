@@ -57,7 +57,9 @@ class RecordingPipelineIntegrationTest {
             permissionChecker = permissionChecker,
             sttEngine = fakeSttEngine,
             chunkDurationMs = 30_000L
-        )
+        ).apply {
+            autoTranscribeSync = true
+        }
     }
 
     private fun insertFakeRecording(
@@ -201,7 +203,9 @@ class RecordingPipelineIntegrationTest {
             permissionChecker = permissionChecker,
             sttEngine = fakeSttEngine,
             chunkDurationMs = 30_000L
-        )
+        ).apply {
+            autoTranscribeSync = true
+        }
 
         // Process restart catch-up / reconciliation
         val reconciledCount = restartedCoordinator.reconcileInFlightRecordings()

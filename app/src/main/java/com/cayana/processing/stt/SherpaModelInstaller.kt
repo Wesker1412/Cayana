@@ -1,34 +1,37 @@
 package com.cayana.processing.stt
 
 import android.content.Context
-import android.os.Build
 import com.cayana.core.common.AppDispatchers
 import com.cayana.core.common.CoroutineDispatchers
 import com.cayana.core.logging.CayanaLogger
 import com.cayana.ui.settings.repository.SettingsRepository
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import java.util.zip.ZipInputStream
 
 /**
  * Production installer for the on-device SenseVoice INT8 STT model.
  *
  * Requirements:
- * - Downloads artifact to app-private temporary directory (files/models/.download/).
- * - Never uploads audio or user data.
- * - Extracts and strictly verifies SHA-256 checksums before atomic move into production path.
- * - If checksum mismatches: immediately deletes temporary artifacts, throws SecurityException,
- *   and leaves the model directory clean.
+ * - Downloads artifact from official immutable public HTTPS URL.
+ * - Extracts both official tar.bz2 and zip archives into an isolated staging directory (.staging-<UUID>).
+ * - Strictly verifies SHA-256 checksums of every required file before commit.
+ * - Writes .ready marker and executes atomic directory swap (renames old -> .old-<UUID>, staging -> sense-voice).
+ * - If process fails at any point: previous verified model remains intact and usable, or no model is left.
+ *   Never leaves a partial/half-installed production model.
  * - Persists verified metadata in SettingsRepository on success.
  */
 class SherpaModelInstaller(
     private val context: Context,
     private val settingsRepository: SettingsRepository,
-    private val dispatchers: CoroutineDispatchers = AppDispatchers()
+    private val dispatchers: CoroutineDispatchers = AppDispatchers(),
+    private val customDownloadUrl: String? = null
 ) {
 
     sealed interface InstallProgress {
@@ -40,7 +43,7 @@ class SherpaModelInstaller(
     }
 
     suspend fun downloadAndInstall(
-        downloadUrl: String = getDefaultDownloadUrl(),
+        downloadUrl: String = customDownloadUrl ?: getDefaultDownloadUrl(),
         onProgress: ((InstallProgress) -> Unit)? = null
     ): Boolean = withContext(dispatchers.io) {
         val tempDir = SherpaModelManager.getDownloadTempDir(context)
@@ -48,26 +51,48 @@ class SherpaModelInstaller(
             tempDir.deleteRecursively()
             tempDir.mkdirs()
 
-            val tempZip = File(tempDir, "archive.zip")
-            CayanaLogger.i("ModelInstaller", "Starting STT model download from $downloadUrl to ${tempZip.absolutePath}")
+            val isTarBz2 = downloadUrl.contains(".tar.bz2") || downloadUrl.contains(".bz2")
+            val archiveFileName = if (isTarBz2) "archive.tar.bz2" else "archive.zip"
+            val tempArchive = File(tempDir, archiveFileName)
+            CayanaLogger.i("ModelInstaller", "Starting STT model download from $downloadUrl to ${tempArchive.absolutePath}")
 
-            val url = URL(downloadUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 30000
-            connection.readTimeout = 60000
-            connection.instanceFollowRedirects = true
-            connection.connect()
+            var currentUrl = downloadUrl
+            var connection: HttpURLConnection? = null
+            var redirects = 0
+            while (redirects < 5) {
+                val url = URL(currentUrl)
+                val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 30000
+                conn.readTimeout = 60000
+                conn.instanceFollowRedirects = true
+                conn.connect()
 
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
-                throw IllegalStateException("Failed to download model: HTTP $responseCode")
+                val responseCode = conn.responseCode
+                if (responseCode in 300..399) {
+                    val location = conn.getHeaderField("Location")
+                    if (!location.isNullOrBlank()) {
+                        currentUrl = location
+                        redirects++
+                        conn.disconnect()
+                        continue
+                    }
+                }
+
+                if (responseCode !in 200..299) {
+                    conn.disconnect()
+                    throw IllegalStateException("Failed to download model: HTTP $responseCode")
+                }
+
+                connection = conn
+                break
             }
 
-            val contentLength = connection.contentLength.toLong()
+            val activeConn = connection ?: throw IllegalStateException("Failed to establish connection to $downloadUrl")
+            val contentLength = activeConn.contentLength.toLong()
             var downloadedBytes = 0L
 
-            connection.inputStream.use { input ->
-                FileOutputStream(tempZip).use { output ->
+            activeConn.inputStream.use { input ->
+                FileOutputStream(tempArchive).use { output ->
                     val buffer = ByteArray(65536)
                     var read: Int
                     while (input.read(buffer).also { read = it } != -1) {
@@ -79,8 +104,8 @@ class SherpaModelInstaller(
                 }
             }
 
-            // Extract and verify archive
-            return@withContext installFromArchive(tempZip, onProgress = onProgress)
+            // Extract, verify, and atomically install
+            return@withContext installFromArchive(tempArchive, onProgress = onProgress)
         } catch (e: Throwable) {
             CayanaLogger.e("ModelInstaller", "Model download or installation failed: ${e.message}", e)
             tempDir.deleteRecursively()
@@ -97,32 +122,60 @@ class SherpaModelInstaller(
         expectedTokensSha256: String = SherpaModelManager.EXPECTED_TOKENS_SHA256,
         onProgress: ((InstallProgress) -> Unit)? = null
     ): Boolean = withContext(dispatchers.io) {
-        val tempDir = SherpaModelManager.getDownloadTempDir(context)
-        val extractedModel = File(tempDir, "model.int8.onnx")
-        val extractedTokens = File(tempDir, "tokens.txt")
+        val modelsParent = File(context.filesDir, "models")
+        modelsParent.mkdirs()
+
+        // Isolated staging directory
+        val stagingDir = File(modelsParent, ".staging-${UUID.randomUUID()}")
+        val extractedModel = File(stagingDir, "model.int8.onnx")
+        val extractedTokens = File(stagingDir, "tokens.txt")
 
         try {
-            tempDir.mkdirs()
+            stagingDir.deleteRecursively()
+            stagingDir.mkdirs()
             onProgress?.invoke(InstallProgress.Verifying)
-            CayanaLogger.i("ModelInstaller", "Extracting archive ${archiveFile.absolutePath}...")
+            CayanaLogger.i("ModelInstaller", "Extracting archive ${archiveFile.absolutePath} into staging: ${stagingDir.absolutePath}...")
 
-            // Extract zip contents
-            archiveFile.inputStream().use { fis ->
-                ZipInputStream(fis).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        val name = entry.name.substringAfterLast("/")
-                        if (name == "model.int8.onnx") {
-                            FileOutputStream(extractedModel).use { fos ->
-                                zis.copyTo(fos)
-                            }
-                        } else if (name == "tokens.txt") {
-                            FileOutputStream(extractedTokens).use { fos ->
-                                zis.copyTo(fos)
+            val isTarBz2 = archiveFile.name.endsWith(".tar.bz2") || archiveFile.name.endsWith(".bz2")
+            if (isTarBz2) {
+                archiveFile.inputStream().buffered().use { fis ->
+                    BZip2CompressorInputStream(fis).use { bzIn ->
+                        TarArchiveInputStream(bzIn).use { tarIn ->
+                            var entry = tarIn.nextEntry
+                            while (entry != null) {
+                                val name = entry.name.substringAfterLast("/")
+                                if (name == "model.int8.onnx") {
+                                    FileOutputStream(extractedModel).use { fos ->
+                                        tarIn.copyTo(fos)
+                                    }
+                                } else if (name == "tokens.txt") {
+                                    FileOutputStream(extractedTokens).use { fos ->
+                                        tarIn.copyTo(fos)
+                                    }
+                                }
+                                entry = tarIn.nextEntry
                             }
                         }
-                        zis.closeEntry()
-                        entry = zis.nextEntry
+                    }
+                }
+            } else {
+                archiveFile.inputStream().buffered().use { fis ->
+                    ZipInputStream(fis).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            val name = entry.name.substringAfterLast("/")
+                            if (name == "model.int8.onnx") {
+                                FileOutputStream(extractedModel).use { fos ->
+                                    zis.copyTo(fos)
+                                }
+                            } else if (name == "tokens.txt") {
+                                FileOutputStream(extractedTokens).use { fos ->
+                                    zis.copyTo(fos)
+                                }
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                        }
                     }
                 }
             }
@@ -131,8 +184,8 @@ class SherpaModelInstaller(
                 throw IllegalStateException("Archive is missing required model files (model.int8.onnx and tokens.txt)")
             }
 
-            // Verify checksums strictly
-            CayanaLogger.i("ModelInstaller", "Verifying model SHA-256 checksums...")
+            // Verify checksums strictly in staging directory before commit
+            CayanaLogger.i("ModelInstaller", "Verifying staging model SHA-256 checksums...")
             val modelSha = SherpaModelManager.computeSha256(extractedModel)
             val tokensSha = SherpaModelManager.computeSha256(extractedTokens)
 
@@ -140,40 +193,49 @@ class SherpaModelInstaller(
             val tokensValid = tokensSha.equals(expectedTokensSha256, ignoreCase = true)
 
             if (!modelValid || !tokensValid) {
-                CayanaLogger.e("ModelInstaller", "Checksum mismatch! ModelValid=$modelValid, TokensValid=$tokensValid. Deleting temporary files.")
-                tempDir.deleteRecursively()
+                CayanaLogger.e("ModelInstaller", "Checksum mismatch! ModelValid=$modelValid, TokensValid=$tokensValid. Deleting staging directory.")
+                stagingDir.deleteRecursively()
                 val error = SecurityException("Model checksum verification failed. Model hash: $modelSha, Tokens hash: $tokensSha")
                 onProgress?.invoke(InstallProgress.Failed(error))
                 throw error
             }
 
-            // Checksum verified: Atomic installation into production path
+            // Write ready marker into staging
+            val readyMarker = File(stagingDir, SherpaModelManager.READY_MARKER_FILE_NAME)
+            readyMarker.writeText(
+                "MODEL_ID=${SherpaModelManager.MODEL_ID}\n" +
+                "VERSION=${SherpaModelManager.MODEL_VERSION}\n" +
+                "MODEL_SHA=$expectedModelSha256\n" +
+                "TOKENS_SHA=$expectedTokensSha256\n" +
+                "INSTALLED_AT=${System.currentTimeMillis()}\n"
+            )
+
+            // Atomic directory swap
             onProgress?.invoke(InstallProgress.Installing)
             val prodDir = SherpaModelManager.getModelDir(context)
-            prodDir.mkdirs()
+            val backupDir = File(modelsParent, ".old-${UUID.randomUUID()}")
+
+            if (prodDir.exists()) {
+                val backupSuccess = prodDir.renameTo(backupDir)
+                if (!backupSuccess) {
+                    stagingDir.deleteRecursively()
+                    throw IllegalStateException("Failed to move existing model directory to backup")
+                }
+            }
+
+            val installSuccess = stagingDir.renameTo(prodDir)
+            if (installSuccess) {
+                backupDir.deleteRecursively()
+            } else {
+                // Rollback
+                if (backupDir.exists()) {
+                    backupDir.renameTo(prodDir)
+                }
+                stagingDir.deleteRecursively()
+                throw IllegalStateException("Failed to move staging directory to production path: ${prodDir.absolutePath}")
+            }
 
             val prodModel = SherpaModelManager.getModelFile(context)
-            val prodTokens = SherpaModelManager.getTokensFile(context)
-
-            // Atomic move / copy
-            if (prodModel.exists()) prodModel.delete()
-            if (prodTokens.exists()) prodTokens.delete()
-
-            val modelMoved = extractedModel.renameTo(prodModel) || run {
-                extractedModel.copyTo(prodModel, overwrite = true)
-                extractedModel.delete()
-                true
-            }
-
-            val tokensMoved = extractedTokens.renameTo(prodTokens) || run {
-                extractedTokens.copyTo(prodTokens, overwrite = true)
-                extractedTokens.delete()
-                true
-            }
-
-            if (!modelMoved || !tokensMoved) {
-                throw IllegalStateException("Failed to move verified model files to destination: ${prodDir.absolutePath}")
-            }
 
             // Persist cached verified metadata
             settingsRepository.updateVerifiedSttModel(
@@ -185,11 +247,11 @@ class SherpaModelInstaller(
                 lastModified = prodModel.lastModified()
             )
 
-            CayanaLogger.i("ModelInstaller", "Model successfully installed and verified at ${prodDir.absolutePath}")
+            CayanaLogger.i("ModelInstaller", "Model successfully atomically installed and verified at ${prodDir.absolutePath}")
             onProgress?.invoke(InstallProgress.Completed)
             true
         } catch (e: Throwable) {
-            tempDir.deleteRecursively()
+            stagingDir.deleteRecursively()
             throw e
         }
     }
@@ -198,20 +260,8 @@ class SherpaModelInstaller(
         const val OFFICIAL_RELEASE_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
 
-        const val LOCAL_EMULATOR_URL =
-            "http://10.0.2.2:8080/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.zip"
-
         fun getDefaultDownloadUrl(): String {
-            // If running on an emulator, prioritize fast local host server if reachable
-            val isEmulator = Build.HARDWARE.contains("goldfish") ||
-                    Build.HARDWARE.contains("ranchu") ||
-                    Build.FINGERPRINT.contains("generic")
-
-            return if (isEmulator) {
-                LOCAL_EMULATOR_URL
-            } else {
-                OFFICIAL_RELEASE_URL
-            }
+            return OFFICIAL_RELEASE_URL
         }
     }
 }

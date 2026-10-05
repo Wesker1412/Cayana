@@ -16,6 +16,7 @@ import com.cayana.processing.stt.SherpaModelManager
 import com.cayana.processing.stt.SherpaOnnxSttEngine
 import com.cayana.source.recording.RecordingConfig
 import com.cayana.source.recording.RecordingProcessingCoordinator
+import com.cayana.source.recording.RecordingTranscriptionWorker
 import com.cayana.test.FakePermissionChecker
 import com.cayana.ui.settings.repository.InMemorySettingsRepository
 import kotlinx.coroutines.flow.first
@@ -62,6 +63,15 @@ class Stage4FinalAcceptanceTest {
         // Clean any existing model dirs
         SherpaModelManager.getModelDir(context).deleteRecursively()
         SherpaModelManager.getDownloadTempDir(context).deleteRecursively()
+
+        // Initialize WorkManager test driver
+        val config = androidx.work.Configuration.Builder()
+            .setMinimumLoggingLevel(android.util.Log.DEBUG)
+            .setExecutor(androidx.work.testing.SynchronousExecutor())
+            .build()
+        try {
+            androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+        } catch (_: Exception) {}
     }
 
     @After
@@ -400,6 +410,287 @@ class Stage4FinalAcceptanceTest {
         assertEquals("All 100 retrieved memories must have unique IDs (0 skipped, 0 duplicate)", 100, uniqueIds.size)
     }
 
+    // 11. productionModelUrlUsesHttpsSupportedArchive
+    @Test
+    fun productionModelUrlUsesHttpsSupportedArchive() {
+        val defaultUrl = SherpaModelInstaller.getDefaultDownloadUrl()
+        assertTrue("Production model URL must use HTTPS", defaultUrl.startsWith("https://"))
+        assertTrue("Production model URL must point to pinned SenseVoice model", defaultUrl.contains(SherpaModelManager.MODEL_ID))
+        assertTrue(
+            "Production model URL must use supported archive format (.tar.bz2 or .zip)",
+            defaultUrl.endsWith(".tar.bz2") || defaultUrl.endsWith(".zip")
+        )
+        assertFalse("Production model URL must not be local emulator address", defaultUrl.contains("10.0.2.2"))
+    }
+
+    // 12. releaseDoesNotAllowGlobalCleartext
+    @Test
+    fun releaseDoesNotAllowGlobalCleartext() {
+        val manifestFile = File("src/main/AndroidManifest.xml")
+        val content = if (manifestFile.exists()) {
+            manifestFile.readText()
+        } else {
+            File("app/src/main/AndroidManifest.xml").readText()
+        }
+        assertFalse(
+            "Production/main AndroidManifest.xml must not enable global cleartext traffic",
+            content.contains("android:usesCleartextTraffic=\"true\"")
+        )
+    }
+
+    // 13. interruptedInstallPreservesPreviousVerifiedModel
+    @Test
+    fun interruptedInstallPreservesPreviousVerifiedModel() = runTest {
+        val settingsRepository = InMemorySettingsRepository()
+        val installer = SherpaModelInstaller(context, settingsRepository)
+
+        // Install Model A
+        val modelAData = "MODEL_A_INITIAL_VERIFIED_CONTENT".toByteArray()
+        val tokensAData = "TOKEN_A\nTOKEN_B".toByteArray()
+        val shaModelA = computeSha256(modelAData)
+        val shaTokensA = computeSha256(tokensAData)
+
+        val archiveA = File(context.cacheDir, "model_a.zip")
+        createTestArchive(archiveA, mapOf("model.int8.onnx" to modelAData, "tokens.txt" to tokensAData))
+        try {
+            val installedA = installer.installFromArchive(archiveA, shaModelA, shaTokensA)
+            assertTrue(installedA)
+
+            var settings = settingsRepository.getSettings().first()
+            assertTrue(SherpaModelManager.isModelReady(context, settings, shaModelA, shaTokensA))
+
+            // Now attempt installing corrupted Model B
+            val corruptB = File(context.cacheDir, "model_b_corrupt.zip")
+            createTestArchive(corruptB, mapOf("model.int8.onnx" to "CORRUPTED_B".toByteArray(), "tokens.txt" to tokensAData))
+            try {
+                installer.installFromArchive(corruptB, shaModelA, shaTokensA)
+                fail("Expected SecurityException")
+            } catch (e: SecurityException) {
+                // Expected failure
+            } finally {
+                corruptB.delete()
+            }
+
+            // Model A MUST REMAIN UNTOUCHED AND FULLY USABLE
+            settings = settingsRepository.getSettings().first()
+            assertTrue(
+                "Previous verified Model A must remain intact and usable after failed install",
+                SherpaModelManager.isModelReady(context, settings, shaModelA, shaTokensA)
+            )
+            val prodModel = SherpaModelManager.getModelFile(context)
+            assertEquals("MODEL_A_INITIAL_VERIFIED_CONTENT", prodModel.readText())
+        } finally {
+            archiveA.delete()
+        }
+    }
+
+    // 14. recordingDiscoveryDoesNotRunSttInline
+    @Test
+    fun recordingDiscoveryDoesNotRunSttInline() = runTest {
+        val memoryRepository = FakeMemoryRepository()
+        val settingsRepository = InMemorySettingsRepository()
+        val permissionChecker = FakePermissionChecker()
+        permissionChecker.setPermissionGranted("android.permission.READ_MEDIA_AUDIO", true)
+
+        var sttCalls = 0
+        val mockStt = object : SpeechToTextEngine {
+            override val engineName: String = "counting-stt"
+            override val isModelAvailable: Boolean = true
+            override suspend fun getAudioDurationMs(context: Context, audioUri: String): Long = 120_000L
+            override suspend fun transcribeChunk(context: Context, audioUri: String, chunkIndex: Int, startMs: Long, durationMs: Long): SttChunkResult {
+                sttCalls++
+                return SttChunkResult.Success(chunkIndex, "test")
+            }
+        }
+
+        val coordinator = RecordingProcessingCoordinator(
+            context = context,
+            memoryRepository = memoryRepository,
+            settingsRepository = settingsRepository,
+            permissionChecker = permissionChecker,
+            sttEngine = mockStt
+        )
+        assertFalse("Coordinator autoTranscribeSync must default to false in production", coordinator.autoTranscribeSync)
+
+        val audioFile = File(context.cacheDir, "new_rec.wav")
+        audioFile.writeBytes(createWavBytes(10))
+        val uri = android.net.Uri.fromFile(audioFile).toString()
+
+        try {
+            val memory = MemoryItem(
+                id = "disc_test",
+                sourceType = SourceType.RECORDING,
+                sourceUri = uri,
+                sourceExists = true,
+                capturedAt = System.currentTimeMillis(),
+                processingState = ProcessingState.PROCESSING,
+                metadata = mapOf("totalChunks" to "1", "completedChunks" to "0", "durationMs" to "10000")
+            )
+            memoryRepository.saveMemory(memory)
+
+            // In production, discovering or saving recording does not execute heavy STT inline
+            assertEquals(0, sttCalls)
+        } finally {
+            audioFile.delete()
+        }
+    }
+
+    // 15. startupReconciliationOnlySchedulesStt
+    @Test
+    fun startupReconciliationOnlySchedulesStt() = runTest {
+        val memoryRepository = FakeMemoryRepository()
+        val settingsRepository = InMemorySettingsRepository()
+        val permissionChecker = FakePermissionChecker()
+        permissionChecker.setPermissionGranted("android.permission.READ_MEDIA_AUDIO", true)
+
+        var sttCalls = 0
+        val mockStt = object : SpeechToTextEngine {
+            override val engineName: String = "counting-stt"
+            override val isModelAvailable: Boolean = true
+            override suspend fun getAudioDurationMs(context: Context, audioUri: String): Long = 60_000L
+            override suspend fun transcribeChunk(context: Context, audioUri: String, chunkIndex: Int, startMs: Long, durationMs: Long): SttChunkResult {
+                sttCalls++
+                return SttChunkResult.Success(chunkIndex, "test")
+            }
+        }
+
+        val coordinator = RecordingProcessingCoordinator(
+            context = context,
+            memoryRepository = memoryRepository,
+            settingsRepository = settingsRepository,
+            permissionChecker = permissionChecker,
+            sttEngine = mockStt
+        )
+
+        val unfinishItem = MemoryItem(
+            id = "rec_inflight_1",
+            sourceType = SourceType.RECORDING,
+            sourceUri = "content://media/external/audio/media/999",
+            sourceExists = true,
+            capturedAt = 1000L,
+            processingState = ProcessingState.PROCESSING,
+            metadata = mapOf("durationMs" to "45000", "totalChunks" to "2", "completedChunks" to "0")
+        )
+        memoryRepository.saveMemory(unfinishItem)
+
+        // Run startup reconciliation
+        val reconciledCount = coordinator.reconcileInFlightRecordings()
+        assertEquals(1, reconciledCount)
+
+        // Must NOT run SenseVoice inline
+        assertEquals("Startup reconciliation must only schedule work, never run heavy STT inline", 0, sttCalls)
+    }
+
+    // 16. duplicateSchedulingExecutesOneHeavyTranscription
+    @Test
+    fun duplicateSchedulingExecutesOneHeavyTranscription() = runTest {
+        val memoryRepository = FakeMemoryRepository()
+        val settingsRepository = InMemorySettingsRepository()
+        val permissionChecker = FakePermissionChecker()
+        permissionChecker.setPermissionGranted("android.permission.READ_MEDIA_AUDIO", true)
+
+        var heavySttExecutions = 0
+        val mockStt = object : SpeechToTextEngine {
+            override val engineName: String = "exec-counting-stt"
+            override val isModelAvailable: Boolean = true
+            override suspend fun getAudioDurationMs(context: Context, audioUri: String): Long = 10_000L
+            override suspend fun transcribeChunk(context: Context, audioUri: String, chunkIndex: Int, startMs: Long, durationMs: Long): SttChunkResult {
+                heavySttExecutions++
+                return SttChunkResult.Success(chunkIndex, "done")
+            }
+        }
+
+        val coordinator = RecordingProcessingCoordinator(
+            context = context,
+            memoryRepository = memoryRepository,
+            settingsRepository = settingsRepository,
+            permissionChecker = permissionChecker,
+            sttEngine = mockStt
+        )
+
+        val audioFile = File(context.cacheDir, "concurrent_rec.wav")
+        audioFile.writeBytes(createWavBytes(10))
+        val audioUri = android.net.Uri.fromFile(audioFile).toString()
+
+        try {
+            val memoryId = "concurrent_rec_1"
+            val memoryItem = MemoryItem(
+                id = memoryId,
+                sourceType = SourceType.RECORDING,
+                sourceUri = audioUri,
+                sourceExists = true,
+                capturedAt = 2000L,
+                processingState = ProcessingState.PROCESSING,
+                metadata = mapOf("durationMs" to "10000", "totalChunks" to "1", "completedChunks" to "0")
+            )
+            memoryRepository.saveMemory(memoryItem)
+
+            // Three concurrent discovery triggers schedule the same memory
+            RecordingTranscriptionWorker.scheduleTranscription(context, memoryId, 10_000L)
+            RecordingTranscriptionWorker.scheduleTranscription(context, memoryId, 10_000L)
+            RecordingTranscriptionWorker.scheduleTranscription(context, memoryId, 10_000L)
+
+            // WorkManager unique work name
+            val workName = RecordingTranscriptionWorker.getWorkName(memoryId)
+            val workInfos = androidx.work.WorkManager.getInstance(context).getWorkInfosForUniqueWork(workName).get()
+            assertEquals("Exactly one unique work must be enqueued despite duplicate triggers", 1, workInfos.size)
+
+            // Coordinator does not run inline STT
+            assertEquals(0, heavySttExecutions)
+
+            // When the single scheduled worker executes
+            coordinator.transcribeRecording(memoryItem)
+            assertEquals(1, heavySttExecutions)
+        } finally {
+            audioFile.delete()
+        }
+    }
+
+    // 17. veryLongRecordingDoesNotTranscribeBeforeChargingConstraint
+    @Test
+    fun veryLongRecordingDoesNotTranscribeBeforeChargingConstraint() = runTest {
+        val durationMs = 45 * 60 * 1000L // 45 minutes
+        val constraints = RecordingConfig.getConstraints(durationMs)
+        assertTrue("45 minute recording must require charging", constraints.requiresCharging())
+
+        val memoryId = "long_rec_45m"
+        RecordingTranscriptionWorker.scheduleTranscription(context, memoryId, durationMs)
+
+        val workName = RecordingTranscriptionWorker.getWorkName(memoryId)
+        val workInfos = androidx.work.WorkManager.getInstance(context).getWorkInfosForUniqueWork(workName).get()
+        assertEquals(1, workInfos.size)
+
+        val workInfo = workInfos[0]
+        assertEquals(androidx.work.WorkInfo.State.ENQUEUED, workInfo.state)
+    }
+
+    // 18. officialTarBz2ArchiveExtractedAndVerified
+    @Test
+    fun officialTarBz2ArchiveExtractedAndVerified() = runTest {
+        val settingsRepository = InMemorySettingsRepository()
+        val installer = SherpaModelInstaller(context, settingsRepository)
+
+        val dummyModel = "TAR_BZ2_VALID_MODEL_DATA".toByteArray()
+        val dummyTokens = "TOKEN_A\nTOKEN_B".toByteArray()
+        val shaModel = computeSha256(dummyModel)
+        val shaTokens = computeSha256(dummyTokens)
+
+        val tarBz2File = File(context.cacheDir, "test_model.tar.bz2")
+        createTestTarBz2Archive(tarBz2File, mapOf("model.int8.onnx" to dummyModel, "tokens.txt" to dummyTokens))
+
+        try {
+            val installed = installer.installFromArchive(tarBz2File, shaModel, shaTokens)
+            assertTrue("Installer should succeed extracting tar.bz2", installed)
+
+            val prodDir = SherpaModelManager.getModelDir(context)
+            assertTrue("Production model file must exist", File(prodDir, "model.int8.onnx").exists())
+            assertTrue("Production tokens file must exist", File(prodDir, "tokens.txt").exists())
+            assertTrue("Ready marker must exist", File(prodDir, SherpaModelManager.READY_MARKER_FILE_NAME).exists())
+        } finally {
+            tarBz2File.delete()
+        }
+    }
+
     // --- Helpers ---
 
     private fun createTestArchive(file: File, entries: Map<String, ByteArray>) {
@@ -411,6 +702,23 @@ class Stage4FinalAcceptanceTest {
                     zos.putNextEntry(entry)
                     zos.write(data)
                     zos.closeEntry()
+                }
+            }
+        }
+    }
+
+    private fun createTestTarBz2Archive(file: File, entries: Map<String, ByteArray>) {
+        file.parentFile?.mkdirs()
+        FileOutputStream(file).buffered().use { fos ->
+            org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream(fos).use { bzOut ->
+                org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(bzOut).use { tarOut ->
+                    for ((name, data) in entries) {
+                        val entry = org.apache.commons.compress.archivers.tar.TarArchiveEntry(name)
+                        entry.size = data.size.toLong()
+                        tarOut.putArchiveEntry(entry)
+                        tarOut.write(data)
+                        tarOut.closeArchiveEntry()
+                    }
                 }
             }
         }

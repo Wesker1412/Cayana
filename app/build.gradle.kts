@@ -103,6 +103,9 @@ dependencies {
     // On-device ASR (sherpa-onnx)
     implementation(files("libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"))
 
+    // Archive extraction (supports official tar.bz2 and zip)
+    implementation("org.apache.commons:commons-compress:1.26.1")
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
