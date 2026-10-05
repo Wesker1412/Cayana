@@ -34,6 +34,10 @@ class DataStoreSettingsRepository(
         val KEY_DOWNLOADS_DIRECTORY_URI = stringPreferencesKey("downloads_directory_uri")
         val KEY_LAST_SCREENSHOT_MEDIA_ID = longPreferencesKey("last_screenshot_media_id")
         val KEY_SCREENSHOT_WATCHER_STATUS = stringPreferencesKey("screenshot_watcher_status")
+        val KEY_LAST_PHOTO_MEDIA_ID = longPreferencesKey("last_photo_media_id")
+        val KEY_PHOTO_WATCHER_STATUS = stringPreferencesKey("photo_watcher_status")
+        val KEY_LAST_RECORDING_MEDIA_ID = longPreferencesKey("last_recording_media_id")
+        val KEY_RECORDING_WATCHER_STATUS = stringPreferencesKey("recording_watcher_status")
         val KEY_MEDIA_STORE_VERSION = stringPreferencesKey("media_store_version")
     }
 
@@ -74,12 +78,36 @@ class DataStoreSettingsRepository(
                 val rawWatcherStatus = preferences[KEY_SCREENSHOT_WATCHER_STATUS]
                 val watcherStatus = if (rawWatcherStatus != null) {
                     try {
-                        ScreenshotWatcherStatus.valueOf(rawWatcherStatus)
+                        SourceWatcherStatus.valueOf(rawWatcherStatus)
                     } catch (_: Exception) {
-                        ScreenshotWatcherStatus.UNINITIALIZED
+                        SourceWatcherStatus.UNINITIALIZED
                     }
                 } else {
-                    ScreenshotWatcherStatus.UNINITIALIZED
+                    SourceWatcherStatus.UNINITIALIZED
+                }
+
+                val lastPhotoId = preferences[KEY_LAST_PHOTO_MEDIA_ID] ?: 0L
+                val rawPhotoStatus = preferences[KEY_PHOTO_WATCHER_STATUS]
+                val photoStatus = if (rawPhotoStatus != null) {
+                    try {
+                        SourceWatcherStatus.valueOf(rawPhotoStatus)
+                    } catch (_: Exception) {
+                        SourceWatcherStatus.UNINITIALIZED
+                    }
+                } else {
+                    SourceWatcherStatus.UNINITIALIZED
+                }
+
+                val lastRecordingId = preferences[KEY_LAST_RECORDING_MEDIA_ID] ?: 0L
+                val rawRecordingStatus = preferences[KEY_RECORDING_WATCHER_STATUS]
+                val recordingStatus = if (rawRecordingStatus != null) {
+                    try {
+                        SourceWatcherStatus.valueOf(rawRecordingStatus)
+                    } catch (_: Exception) {
+                        SourceWatcherStatus.UNINITIALIZED
+                    }
+                } else {
+                    SourceWatcherStatus.UNINITIALIZED
                 }
 
                 UserSettings(
@@ -94,7 +122,11 @@ class DataStoreSettingsRepository(
                     downloadsDirectoryUri = downloadsUri,
                     lastScreenshotMediaId = lastMediaId,
                     mediaStoreVersion = mediaVersion,
-                    screenshotWatcherStatus = watcherStatus
+                    screenshotWatcherStatus = watcherStatus,
+                    lastPhotoMediaId = lastPhotoId,
+                    photoWatcherStatus = photoStatus,
+                    lastRecordingMediaId = lastRecordingId,
+                    recordingWatcherStatus = recordingStatus
                 )
             }
     }
@@ -163,9 +195,33 @@ class DataStoreSettingsRepository(
         }
     }
 
-    override suspend fun updateScreenshotWatcherStatus(status: ScreenshotWatcherStatus) {
+    override suspend fun updateScreenshotWatcherStatus(status: SourceWatcherStatus) {
         dataStore.edit { preferences ->
             preferences[KEY_SCREENSHOT_WATCHER_STATUS] = status.name
+        }
+    }
+
+    override suspend fun updateLastPhotoMediaId(id: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_PHOTO_MEDIA_ID] = id
+        }
+    }
+
+    override suspend fun updatePhotoWatcherStatus(status: SourceWatcherStatus) {
+        dataStore.edit { preferences ->
+            preferences[KEY_PHOTO_WATCHER_STATUS] = status.name
+        }
+    }
+
+    override suspend fun updateLastRecordingMediaId(id: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_RECORDING_MEDIA_ID] = id
+        }
+    }
+
+    override suspend fun updateRecordingWatcherStatus(status: SourceWatcherStatus) {
+        dataStore.edit { preferences ->
+            preferences[KEY_RECORDING_WATCHER_STATUS] = status.name
         }
     }
 

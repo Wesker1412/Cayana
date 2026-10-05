@@ -6,11 +6,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-enum class ScreenshotWatcherStatus {
+enum class SourceWatcherStatus {
     UNINITIALIZED,
     ACTIVE,
     DISABLED
 }
+
+typealias ScreenshotWatcherStatus = SourceWatcherStatus
 
 /**
  * Model holding persisted user preferences.
@@ -27,7 +29,11 @@ data class UserSettings(
     val downloadsDirectoryUri: String? = null,
     val lastScreenshotMediaId: Long = 0L,
     val mediaStoreVersion: String? = null,
-    val screenshotWatcherStatus: ScreenshotWatcherStatus = ScreenshotWatcherStatus.UNINITIALIZED
+    val screenshotWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED,
+    val lastPhotoMediaId: Long = 0L,
+    val photoWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED,
+    val lastRecordingMediaId: Long = 0L,
+    val recordingWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED
 )
 
 interface SettingsRepository {
@@ -39,7 +45,11 @@ interface SettingsRepository {
     suspend fun updateNotificationsEnabled(enabled: Boolean)
     suspend fun updateDownloadsDirectoryUri(uriString: String?)
     suspend fun updateLastScreenshotMediaId(id: Long)
-    suspend fun updateScreenshotWatcherStatus(status: ScreenshotWatcherStatus)
+    suspend fun updateScreenshotWatcherStatus(status: SourceWatcherStatus)
+    suspend fun updateLastPhotoMediaId(id: Long)
+    suspend fun updatePhotoWatcherStatus(status: SourceWatcherStatus)
+    suspend fun updateLastRecordingMediaId(id: Long)
+    suspend fun updateRecordingWatcherStatus(status: SourceWatcherStatus)
     suspend fun updateMediaStoreVersion(version: String?)
 }
 
@@ -90,8 +100,24 @@ class InMemorySettingsRepository(
         _settings.update { it.copy(lastScreenshotMediaId = id) }
     }
 
-    override suspend fun updateScreenshotWatcherStatus(status: ScreenshotWatcherStatus) {
+    override suspend fun updateScreenshotWatcherStatus(status: SourceWatcherStatus) {
         _settings.update { it.copy(screenshotWatcherStatus = status) }
+    }
+
+    override suspend fun updateLastPhotoMediaId(id: Long) {
+        _settings.update { it.copy(lastPhotoMediaId = id) }
+    }
+
+    override suspend fun updatePhotoWatcherStatus(status: SourceWatcherStatus) {
+        _settings.update { it.copy(photoWatcherStatus = status) }
+    }
+
+    override suspend fun updateLastRecordingMediaId(id: Long) {
+        _settings.update { it.copy(lastRecordingMediaId = id) }
+    }
+
+    override suspend fun updateRecordingWatcherStatus(status: SourceWatcherStatus) {
+        _settings.update { it.copy(recordingWatcherStatus = status) }
     }
 
     override suspend fun updateMediaStoreVersion(version: String?) {

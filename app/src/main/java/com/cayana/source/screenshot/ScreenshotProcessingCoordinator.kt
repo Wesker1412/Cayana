@@ -283,7 +283,7 @@ class ScreenshotProcessingCoordinator(
 
         var maxId = 0L
         val projection = arrayOf(MediaStore.Images.Media._ID)
-        val sortOrder = "${MediaStore.Images.Media._ID} DESC LIMIT 1"
+        val sortOrder = "${MediaStore.Images.Media._ID} DESC"
         try {
             val cursor = context.contentResolver.query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,

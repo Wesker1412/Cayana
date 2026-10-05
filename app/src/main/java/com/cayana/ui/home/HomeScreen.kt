@@ -269,7 +269,7 @@ private fun MemoryItemCard(
                     if (!item.sourceExists) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "(原圖已刪除)",
+                            text = if (item.sourceType == SourceType.RECORDING) "(原音訊已刪除)" else "(原圖已刪除)",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Medium

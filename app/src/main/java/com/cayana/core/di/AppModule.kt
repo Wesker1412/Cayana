@@ -99,6 +99,52 @@ val appModule = module {
         )
     }
 
+    single<com.cayana.processing.SpeechToTextEngine> {
+        com.cayana.processing.stt.CayanaLocalSttEngine()
+    }
+
+    single {
+        com.cayana.source.photo.PhotoProcessingCoordinator(
+            context = androidContext(),
+            memoryRepository = get(),
+            settingsRepository = get(),
+            permissionChecker = get(),
+            ocrEngine = get(),
+            dispatchers = get()
+        )
+    }
+
+    single {
+        com.cayana.source.photo.PhotoSourceWatcher(
+            context = androidContext(),
+            permissionChecker = get(),
+            coordinator = get(),
+            settingsRepository = get(),
+            dispatchers = get()
+        )
+    }
+
+    single {
+        com.cayana.source.recording.RecordingProcessingCoordinator(
+            context = androidContext(),
+            memoryRepository = get(),
+            settingsRepository = get(),
+            permissionChecker = get(),
+            sttEngine = get(),
+            dispatchers = get()
+        )
+    }
+
+    single {
+        com.cayana.source.recording.RecordingSourceWatcher(
+            context = androidContext(),
+            permissionChecker = get(),
+            coordinator = get(),
+            settingsRepository = get(),
+            dispatchers = get()
+        )
+    }
+
     single {
         com.cayana.source.SourceExistenceValidator(
             context = androidContext()

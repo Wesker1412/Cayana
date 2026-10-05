@@ -107,7 +107,11 @@ object NotificationHelper {
             val clean = item.rawText.replace("\n", " ").trim()
             if (clean.length > 50) clean.take(47) + "..." else clean
         } else {
-            "螢幕截圖已儲存至記憶庫"
+            when (item.sourceType) {
+                com.cayana.source.SourceType.PHOTO -> "相片已儲存至記憶庫"
+                com.cayana.source.SourceType.RECORDING -> "錄音已儲存至記憶庫"
+                else -> "螢幕截圖已儲存至記憶庫"
+            }
         }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

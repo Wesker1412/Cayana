@@ -101,11 +101,24 @@ class SettingsViewModel(
         }
         viewModelScope.launch {
             settingsRepository.updateSourceEnabled(sourceType, enabled)
-            if (sourceType == SourceType.SCREENSHOT) {
-                if (!enabled) {
-                    settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.ScreenshotWatcherStatus.DISABLED)
+            when (sourceType) {
+                SourceType.SCREENSHOT -> {
+                    if (!enabled) {
+                        settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.SourceWatcherStatus.DISABLED)
+                    }
+                    syncScreenshotWatcher()
                 }
-                syncScreenshotWatcher()
+                SourceType.PHOTO -> {
+                    if (!enabled) {
+                        settingsRepository.updatePhotoWatcherStatus(com.cayana.ui.settings.repository.SourceWatcherStatus.DISABLED)
+                    }
+                }
+                SourceType.RECORDING -> {
+                    if (!enabled) {
+                        settingsRepository.updateRecordingWatcherStatus(com.cayana.ui.settings.repository.SourceWatcherStatus.DISABLED)
+                    }
+                }
+                else -> {}
             }
         }
     }
