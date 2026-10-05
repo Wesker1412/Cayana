@@ -3,6 +3,7 @@ package com.cayana.calendar
 import android.content.Context
 import com.cayana.calendar.data.CalendarActionDao
 import com.cayana.calendar.data.CalendarActionEntity
+import com.cayana.calendar.writer.CalendarLookupResult
 import com.cayana.calendar.writer.CalendarWriteResult
 import com.cayana.calendar.writer.CalendarWriter
 import com.cayana.calendar.writer.ValidatedEvent
@@ -308,56 +309,139 @@ class CalendarProcessingCoordinator(
         }
     }
 
-    suspend fun reconcilePendingCreatingActions(): Int = withContext(Dispatchers.IO) {
-        val pendingActions = try {
-            calendarActionDao.getPendingCreatingActions(limit = 10)
+    suspend fun reconcileInFlightActions(): Int = withContext(Dispatchers.IO) {
+        val inFlightActions = try {
+            calendarActionDao.getInFlightActions(limit = 10)
         } catch (e: Exception) {
-            logger.w(TAG, "Failed to query pending CREATING actions: ${e.message}")
+            logger.w(TAG, "Failed to query in-flight actions: ${e.message}")
             return@withContext 0
         }
 
         var reconciled = 0
-        for (action in pendingActions) {
+        for (action in inFlightActions) {
             try {
-                val eventId = calendarWriter.findEventByActionId(action.id)
-                if (eventId != null) {
-                    logger.i(TAG, "Reconciled existing calendar event $eventId for action ${action.id}")
-                    if (NotificationHelper.canPostCalendarActionNotification(context)) {
-                        calendarActionDao.updateStatusAndEventId(action.id, "CREATED", eventId)
-                        val eventZone = action.zoneId?.let {
-                            try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
-                        } ?: ZoneId.systemDefault()
-                        val formattedTime = NotificationHelper.formatEventDateTime(
-                            action.startAt?.let { Instant.ofEpochMilli(it) },
-                            action.isAllDay,
-                            eventZone
-                        )
-                        NotificationHelper.showCalendarAddedNotification(
-                            context = context,
-                            notificationId = action.memoryId.hashCode(),
-                            actionId = action.id,
-                            calendarEventId = eventId,
-                            title = action.title ?: "Event",
-                            formattedDateTime = formattedTime
-                        )
-                    } else {
-                        logger.w(TAG, "Notification unavailable during reconciliation; compensating event $eventId")
-                        val delResult = calendarWriter.deleteEvent(eventId)
-                        if (delResult.isSuccess) {
-                            calendarActionDao.updateStatusAndEventId(action.id, "FAILED", null)
-                        } else {
-                            calendarActionDao.updateStatusAndEventId(action.id, "COMPENSATION_FAILED", eventId)
-                        }
+                when (val lookup = calendarWriter.findEventByActionId(action.id)) {
+                    is CalendarLookupResult.Unavailable -> {
+                        logger.i(TAG, "Lookup unavailable for action ${action.id} (${lookup.cause?.message}); leaving status ${action.status} unchanged")
+                        // Leave current state (CREATING or PROCESSING) unchanged; retry on a later bounded cycle
                     }
-                } else {
-                    logger.i(TAG, "No calendar event found for stale action ${action.id}; marking as FAILED")
-                    calendarActionDao.updateStatusAndEventId(action.id, "FAILED", null)
+                    is CalendarLookupResult.Found -> {
+                        val eventId = lookup.eventId
+                        logger.i(TAG, "Reconciled existing calendar event $eventId for in-flight action ${action.id}")
+                        if (NotificationHelper.canPostCalendarActionNotification(context)) {
+                            val eventZone = action.zoneId?.let {
+                                try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
+                            } ?: ZoneId.systemDefault()
+                            val formattedTime = NotificationHelper.formatEventDateTime(
+                                action.startAt?.let { Instant.ofEpochMilli(it) },
+                                action.isAllDay,
+                                eventZone
+                            )
+                            val posted = NotificationHelper.showCalendarAddedNotification(
+                                context = context,
+                                notificationId = action.memoryId.hashCode(),
+                                actionId = action.id,
+                                calendarEventId = eventId,
+                                title = action.title ?: "Event",
+                                formattedDateTime = formattedTime
+                            )
+                            if (posted) {
+                                calendarActionDao.updateStatusAndEventId(action.id, "CREATED", eventId)
+                            } else {
+                                logger.w(TAG, "Notification post failed during reconciliation for event $eventId; compensating")
+                                compensateReconciledEvent(action.id, eventId)
+                            }
+                        } else {
+                            logger.w(TAG, "Notification unavailable during reconciliation; compensating event $eventId")
+                            compensateReconciledEvent(action.id, eventId)
+                        }
+                        reconciled++
+                    }
+                    is CalendarLookupResult.NotFound -> {
+                        // Crash occurred before external insert.
+                        // Room reservation has full payload: title, startAt, endAt, location, isAllDay, zoneId, calendarId, actionId.
+                        // Recreate event with same actionId / CUSTOM_APP_URI.
+                        logger.i(TAG, "In-flight action ${action.id} (${action.status}) confirmed NotFound in calendar; safely resuming creation")
+                        resumeInFlightAction(action)
+                        reconciled++
+                    }
                 }
-                reconciled++
             } catch (e: Exception) {
                 logger.w(TAG, "Exception during reconciliation for action ${action.id}: ${e.message}")
             }
         }
         reconciled
     }
+
+    private suspend fun compensateReconciledEvent(actionId: String, eventId: Long) {
+        val delResult = try {
+            calendarWriter.deleteEvent(eventId)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+        if (delResult.isSuccess) {
+            calendarActionDao.updateStatusAndEventId(actionId, "FAILED", null)
+        } else {
+            logger.e(TAG, "Compensation deletion failed during reconciliation; persisting COMPENSATION_FAILED with eventId $eventId")
+            calendarActionDao.updateStatusAndEventId(actionId, "COMPENSATION_FAILED", eventId)
+        }
+    }
+
+    private suspend fun resumeInFlightAction(action: CalendarActionEntity) {
+        if (!NotificationHelper.canPostCalendarActionNotification(context)) {
+            logger.w(TAG, "Notification unavailable during resume for action ${action.id}; marking FAILED")
+            calendarActionDao.updateStatus(action.id, "FAILED")
+            return
+        }
+
+        val originalZoneId = action.zoneId?.let {
+            try { ZoneId.of(it) } catch (_: Exception) { ZoneId.systemDefault() }
+        } ?: ZoneId.systemDefault()
+
+        val startInstant = action.startAt?.let { Instant.ofEpochMilli(it) } ?: Instant.now()
+        val endInstant = action.endAt?.let { Instant.ofEpochMilli(it) } ?: startInstant.plusSeconds(3600)
+
+        val validatedEvent = ValidatedEvent(
+            memoryId = action.memoryId,
+            calendarId = action.calendarId,
+            title = action.title ?: "Event",
+            startAt = startInstant,
+            endAt = endInstant,
+            location = action.location,
+            isAllDay = action.isAllDay,
+            zoneId = originalZoneId,
+            actionId = action.id
+        )
+
+        when (val result = calendarWriter.createEvent(validatedEvent)) {
+            is CalendarWriteResult.Success -> {
+                val eventId = result.calendarEventId
+                val formattedTime = NotificationHelper.formatEventDateTime(
+                    startInstant,
+                    action.isAllDay,
+                    originalZoneId
+                )
+                val posted = NotificationHelper.showCalendarAddedNotification(
+                    context = context,
+                    notificationId = action.memoryId.hashCode(),
+                    actionId = action.id,
+                    calendarEventId = eventId,
+                    title = validatedEvent.title,
+                    formattedDateTime = formattedTime
+                )
+                if (posted) {
+                    calendarActionDao.updateStatusAndEventId(action.id, "CREATED", eventId)
+                } else {
+                    logger.w(TAG, "Notification post failed on resume for event $eventId; compensating")
+                    compensateReconciledEvent(action.id, eventId)
+                }
+            }
+            is CalendarWriteResult.Failure -> {
+                logger.w(TAG, "Failed to create event on resume for action ${action.id}: ${result.reason}")
+                calendarActionDao.updateStatus(action.id, "FAILED")
+            }
+        }
+    }
+
+    suspend fun reconcilePendingCreatingActions(): Int = reconcileInFlightActions()
 }

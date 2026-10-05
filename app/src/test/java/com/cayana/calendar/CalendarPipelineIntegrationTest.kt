@@ -853,4 +853,387 @@ class CalendarPipelineIntegrationTest {
         assertEquals("FAILED", reconciledAction!!.status)
         assertNull(reconciledAction.calendarEventId)
     }
+
+    @Test
+    fun creatingUnavailableLeavesStateUnchangedAndNoDuplicate() = runTest {
+        val memory = createMemory("mem-creating-unavailable", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val staleAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_AUTO_CREATED,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "CREATING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(staleAction)
+
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, 1L)
+            put(android.provider.CalendarContract.Events.TITLE, "XX Live")
+            put(android.provider.CalendarContract.Events.DTSTART, fixedRefTime.toEpochMilli())
+            put(android.provider.CalendarContract.Events.DTEND, fixedRefTime.plusSeconds(3600).toEpochMilli())
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, "Asia/Taipei")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_PACKAGE, "com.cayana")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_URI, "cayana://calendar-action/$actionId")
+        }
+        val uri = context.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        assertNotNull(uri)
+        val externalEventId = android.content.ContentUris.parseId(uri!!)
+
+        // Provider fails with exception when queried -> Unavailable
+        fakeProvider.shouldThrowOnQuery = true
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(0, count)
+
+        // Status must NOT be FAILED; must remain CREATING with null eventId
+        val untouchedAction = calendarActionDao.getById(actionId)
+        assertNotNull(untouchedAction)
+        assertEquals("CREATING", untouchedAction!!.status)
+        assertNull(untouchedAction.calendarEventId)
+        assertEquals(1, fakeProvider.events.size)
+
+        // Now provider recovers
+        fakeProvider.shouldThrowOnQuery = false
+
+        val secondCount = coordinator.reconcileInFlightActions()
+        assertEquals(1, secondCount)
+
+        val recoveredAction = calendarActionDao.getById(actionId)
+        assertNotNull(recoveredAction)
+        assertEquals("CREATED", recoveredAction!!.status)
+        assertEquals(externalEventId, recoveredAction.calendarEventId)
+        assertEquals(1, fakeProvider.events.size)
+    }
+
+    @Test
+    fun creatingNotFoundSafelyResumesCreationFromRoomPayload() = runTest {
+        val memory = createMemory("mem-creating-notfound", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val staleAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_AUTO_CREATED,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "CREATING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(staleAction)
+
+        assertEquals(0, fakeProvider.events.size)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        // Should safely resume creation and update Room to CREATED
+        val resumedAction = calendarActionDao.getById(actionId)
+        assertNotNull(resumedAction)
+        assertEquals("CREATED", resumedAction!!.status)
+        assertNotNull(resumedAction.calendarEventId)
+
+        // Verify event in provider
+        assertEquals(1, fakeProvider.events.size)
+        val createdEvent = fakeProvider.events[resumedAction.calendarEventId]
+        assertNotNull(createdEvent)
+        assertEquals("XX Live", createdEvent!!.getAsString(android.provider.CalendarContract.Events.TITLE))
+        assertEquals("cayana://calendar-action/$actionId", createdEvent.getAsString(android.provider.CalendarContract.Events.CUSTOM_APP_URI))
+    }
+
+    @Test
+    fun reconciliationFindsEventActualNotifyFailsCompensatesEvent() = runTest {
+        val memory = createMemory("mem-reconcile-notify-fail", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val staleAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_AUTO_CREATED,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "CREATING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(staleAction)
+
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, 1L)
+            put(android.provider.CalendarContract.Events.TITLE, "XX Live")
+            put(android.provider.CalendarContract.Events.DTSTART, fixedRefTime.toEpochMilli())
+            put(android.provider.CalendarContract.Events.DTEND, fixedRefTime.plusSeconds(3600).toEpochMilli())
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, "Asia/Taipei")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_PACKAGE, "com.cayana")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_URI, "cayana://calendar-action/$actionId")
+        }
+        val uri = context.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        assertNotNull(uri)
+        assertEquals(1, fakeProvider.events.size)
+
+        // Deny notification permission to make notification fail
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        // Event compensated (deleted) because notification could not be posted
+        assertEquals(0, fakeProvider.events.size)
+        val reconciledAction = calendarActionDao.getById(actionId)
+        assertNotNull(reconciledAction)
+        assertEquals("FAILED", reconciledAction!!.status)
+        assertNull(reconciledAction.calendarEventId)
+    }
+
+    @Test
+    fun reconciliationFindsEventNotifyFailsDeleteFailsPersistsCompensationFailed() = runTest {
+        val memory = createMemory("mem-reconcile-del-fail", "XX Live\n10/18 19:30\n台北流行音樂中心")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val staleAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_AUTO_CREATED,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "CREATING",
+            title = "XX Live",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "台北流行音樂中心",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(staleAction)
+
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, 1L)
+            put(android.provider.CalendarContract.Events.TITLE, "XX Live")
+            put(android.provider.CalendarContract.Events.DTSTART, fixedRefTime.toEpochMilli())
+            put(android.provider.CalendarContract.Events.DTEND, fixedRefTime.plusSeconds(3600).toEpochMilli())
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, "Asia/Taipei")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_PACKAGE, "com.cayana")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_URI, "cayana://calendar-action/$actionId")
+        }
+        val uri = context.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        assertNotNull(uri)
+        val externalEventId = android.content.ContentUris.parseId(uri!!)
+        assertEquals(1, fakeProvider.events.size)
+
+        // Deny notification permission AND make deletion fail
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        fakeProvider.shouldThrowOnDelete = true
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        // Event remains in provider because delete failed
+        assertEquals(1, fakeProvider.events.size)
+        val reconciledAction = calendarActionDao.getById(actionId)
+        assertNotNull(reconciledAction)
+        assertEquals("COMPENSATION_FAILED", reconciledAction!!.status)
+        assertEquals(externalEventId, reconciledAction.calendarEventId)
+
+        fakeProvider.shouldThrowOnDelete = false
+    }
+
+    @Test
+    fun processingNoExternalEventReconcilesToCreated() = runTest {
+        val memory = createMemory("mem-proc-notfound", "Team Sync\n10/18 19:30\nOffice")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val processingAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROCESSING",
+            title = "Team Sync",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "Office",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(processingAction)
+
+        assertEquals(0, fakeProvider.events.size)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        // Safely resumes creation using Room payload
+        val reconciledAction = calendarActionDao.getById(actionId)
+        assertNotNull(reconciledAction)
+        assertEquals("CREATED", reconciledAction!!.status)
+        assertNotNull(reconciledAction.calendarEventId)
+
+        assertEquals(1, fakeProvider.events.size)
+        val event = fakeProvider.events[reconciledAction.calendarEventId]
+        assertNotNull(event)
+        assertEquals("Team Sync", event!!.getAsString(android.provider.CalendarContract.Events.TITLE))
+        assertEquals("cayana://calendar-action/$actionId", event.getAsString(android.provider.CalendarContract.Events.CUSTOM_APP_URI))
+    }
+
+    @Test
+    fun processingExternalEventAlreadyExistsReconcilesWithoutDuplicate() = runTest {
+        val memory = createMemory("mem-proc-found", "Team Sync\n10/18 19:30\nOffice")
+        val actionId = java.util.UUID.randomUUID().toString()
+
+        val processingAction = com.cayana.calendar.data.CalendarActionEntity(
+            id = actionId,
+            memoryId = memory.id,
+            calendarId = 1L,
+            calendarEventId = null,
+            actionType = CalendarProcessingCoordinator.ACTION_TYPE_CONFIRM_PENDING,
+            createdAt = System.currentTimeMillis() - 60000,
+            status = "PROCESSING",
+            title = "Team Sync",
+            startAt = fixedRefTime.toEpochMilli(),
+            endAt = fixedRefTime.plusSeconds(3600).toEpochMilli(),
+            location = "Office",
+            isAllDay = false,
+            zoneId = "Asia/Taipei"
+        )
+        calendarActionDao.insert(processingAction)
+
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, 1L)
+            put(android.provider.CalendarContract.Events.TITLE, "Team Sync")
+            put(android.provider.CalendarContract.Events.DTSTART, fixedRefTime.toEpochMilli())
+            put(android.provider.CalendarContract.Events.DTEND, fixedRefTime.plusSeconds(3600).toEpochMilli())
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, "Asia/Taipei")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_PACKAGE, "com.cayana")
+            put(android.provider.CalendarContract.Events.CUSTOM_APP_URI, "cayana://calendar-action/$actionId")
+        }
+        val uri = context.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        assertNotNull(uri)
+        val externalEventId = android.content.ContentUris.parseId(uri!!)
+
+        val count = coordinator.reconcileInFlightActions()
+        assertEquals(1, count)
+
+        val reconciledAction = calendarActionDao.getById(actionId)
+        assertNotNull(reconciledAction)
+        assertEquals("CREATED", reconciledAction!!.status)
+        assertEquals(externalEventId, reconciledAction.calendarEventId)
+
+        // No duplicate event created
+        assertEquals(1, fakeProvider.events.size)
+    }
+
+    @Test
+    fun ocrRetrySucceedsRunsCalendarPipelineExactlyOneEvent() = runTest {
+        com.cayana.test.FakeMediaContentProvider.register(context)
+        val memoryRepository = com.cayana.memory.repository.FakeMemoryRepository()
+        val permissionChecker = com.cayana.test.FakePermissionChecker().apply {
+            setPermissionGranted("android.permission.READ_MEDIA_IMAGES", true)
+        }
+        val ocrEngine = object : com.cayana.processing.OcrEngine {
+            override val isReady: Boolean = true
+            var returnError: Boolean = true
+            override suspend fun extractText(uri: String): com.cayana.core.common.Result<String> {
+                return if (returnError) com.cayana.core.common.Result.Error(java.io.IOException("OCR timeout"))
+                else com.cayana.core.common.Result.Success("XX Live\n10/18 19:30\n台北流行音樂中心")
+            }
+            override suspend fun processImage(uri: String): com.cayana.core.common.Result<com.cayana.processing.OcrResult> {
+                return if (returnError) com.cayana.core.common.Result.Error(java.io.IOException("OCR timeout"))
+                else com.cayana.core.common.Result.Success(com.cayana.processing.OcrResult(fullText = "XX Live\n10/18 19:30\n台北流行音樂中心"))
+            }
+        }
+
+        val testSettingsRepository = com.cayana.ui.settings.repository.InMemorySettingsRepository(
+            initialSettings = com.cayana.ui.settings.repository.UserSettings(
+                autoCalendarEnabled = true,
+                selectedCalendarId = "1",
+                selectedCalendarName = "Personal",
+                screenshotWatcherStatus = com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE
+            )
+        )
+
+        val screenshotCoordinator = com.cayana.source.screenshot.ScreenshotProcessingCoordinator(
+            context = context,
+            memoryRepository = memoryRepository,
+            settingsRepository = testSettingsRepository,
+            permissionChecker = permissionChecker,
+            ocrEngine = ocrEngine,
+            calendarProcessingCoordinator = coordinator
+        )
+
+        // Insert mock screenshot in MediaStore
+        val cv = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "ConcertTicket.png")
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Screenshots/")
+            put(android.provider.MediaStore.Images.Media.BUCKET_DISPLAY_NAME, "Screenshots")
+            put(android.provider.MediaStore.Images.Media.SIZE, 2048L)
+        }
+        val mediaUri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+        assertNotNull(mediaUri)
+
+        // 1. Initial screenshot run: OCR fails
+        ocrEngine.returnError = true
+        val processed = screenshotCoordinator.processPendingScreenshots()
+        assertEquals(1, processed.size)
+        val initialMemory = memoryRepository.getMemoryBySourceUri(mediaUri.toString())
+        assertNotNull(initialMemory)
+        assertEquals(com.cayana.processing.ProcessingState.FAILED_RETRYABLE, initialMemory!!.processingState)
+
+        // No calendar actions created yet
+        val actionsBefore = calendarActionDao.getInFlightActions(10)
+        assertTrue(actionsBefore.isEmpty())
+        assertEquals(0, fakeProvider.events.size)
+
+        // 2. OCR recovers: retry pending OCR
+        ocrEngine.returnError = false
+        val retried = screenshotCoordinator.retryPendingOcr()
+        assertEquals(1, retried)
+
+        // Memory is now COMPLETED
+        val completedMemory = memoryRepository.getMemoryBySourceUri(mediaUri.toString())
+        assertNotNull(completedMemory)
+        assertEquals(com.cayana.processing.ProcessingState.COMPLETED, completedMemory!!.processingState)
+
+        // Calendar pipeline was automatically invoked by retry!
+        val action = calendarActionDao.getAction(completedMemory.id, CalendarProcessingCoordinator.ACTION_TYPE_AUTO_CREATED)
+        assertNotNull(action)
+        assertEquals("CREATED", action!!.status)
+        assertNotNull(action.calendarEventId)
+        assertEquals(1, fakeProvider.events.size)
+
+        // 3. Rerun retry: idempotent, exactly-one event guarantee
+        val retriedAgain = screenshotCoordinator.retryPendingOcr()
+        assertEquals(0, retriedAgain)
+
+        // Even if calendar coordinator is explicitly re-run on the same memory
+        val handledAgain = coordinator.process(completedMemory, completedMemory.rawText!!)
+        assertTrue(handledAgain)
+        assertEquals(1, fakeProvider.events.size)
+    }
+
 }

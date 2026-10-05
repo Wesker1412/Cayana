@@ -401,6 +401,17 @@ class ScreenshotProcessingCoordinator(
                         )
                         memoryRepository.saveMemory(updated)
                         retriedCount++
+
+                        if (newText != null && newState == ProcessingState.COMPLETED) {
+                            try {
+                                val handledByCalendar = calendarProcessingCoordinator?.process(updated, newText) ?: false
+                                if (!handledByCalendar) {
+                                    NotificationHelper.showMemoryIngestedNotification(context, updated)
+                                }
+                            } catch (e: Exception) {
+                                CayanaLogger.w("ScreenshotCoordinator", "Calendar processing error on OCR retry: ${e.message}")
+                            }
+                        }
                     }
                     is Result.Error, Result.Loading -> {
                         val updatedState = if (nextRetryCount >= 5) ProcessingState.FAILED_PERMANENT else ProcessingState.FAILED_RETRYABLE

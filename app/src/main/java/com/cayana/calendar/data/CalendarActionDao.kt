@@ -38,6 +38,9 @@ interface CalendarActionDao {
     @Query("SELECT * FROM calendar_actions WHERE status = 'CREATING' ORDER BY createdAt ASC LIMIT :limit")
     suspend fun getPendingCreatingActions(limit: Int = 10): List<CalendarActionEntity>
 
+    @Query("SELECT * FROM calendar_actions WHERE status IN ('CREATING', 'PROCESSING') ORDER BY createdAt ASC LIMIT :limit")
+    suspend fun getInFlightActions(limit: Int = 10): List<CalendarActionEntity>
+
     @Update
     suspend fun update(action: CalendarActionEntity): Int
 }

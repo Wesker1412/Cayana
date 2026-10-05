@@ -46,6 +46,7 @@ class FakeCalendarContentProvider : ContentProvider() {
     }
 
     var shouldThrowOnDelete = false
+    var shouldThrowOnQuery = false
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
         if (shouldThrowOnDelete) {
@@ -67,6 +68,9 @@ class FakeCalendarContentProvider : ContentProvider() {
         selectionArgs: Array<out String>?,
         sortOrder: String?
     ): Cursor {
+        if (shouldThrowOnQuery) {
+            throw RuntimeException("Simulated provider failure during query")
+        }
         if (uri.toString().startsWith(CalendarContract.Calendars.CONTENT_URI.toString())) {
             val proj = projection ?: arrayOf(
                 CalendarContract.Calendars._ID,

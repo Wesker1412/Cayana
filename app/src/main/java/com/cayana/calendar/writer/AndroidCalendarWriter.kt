@@ -90,10 +90,12 @@ class AndroidCalendarWriter(
         }
     }
 
-    override suspend fun findEventByActionId(actionId: String): Long? = withContext(Dispatchers.IO) {
+    override suspend fun findEventByActionId(actionId: String): CalendarLookupResult = withContext(Dispatchers.IO) {
         if (!calendarProviderHelper.hasCalendarPermission() && !calendarProviderHelper.hasWriteCalendarPermission()) {
             logger.w(TAG, "Missing calendar permission to find event by actionId $actionId")
-            return@withContext null
+            return@withContext CalendarLookupResult.Unavailable(
+                SecurityException("Missing calendar permissions")
+            )
         }
 
         try {
@@ -102,19 +104,25 @@ class AndroidCalendarWriter(
             val selection = "${CalendarContract.Events.CUSTOM_APP_PACKAGE} = ? AND ${CalendarContract.Events.CUSTOM_APP_URI} = ?"
             val selectionArgs = arrayOf("com.cayana", "cayana://calendar-action/$actionId")
 
-            context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idCol = cursor.getColumnIndex(CalendarContract.Events._ID)
+            val cursor = context.contentResolver.query(uri, projection, selection, selectionArgs, null)
+                ?: return@withContext CalendarLookupResult.Unavailable(
+                    IllegalStateException("ContentResolver query returned null cursor")
+                )
+
+            cursor.use {
+                if (it.moveToFirst()) {
+                    val idCol = it.getColumnIndex(CalendarContract.Events._ID)
                     if (idCol >= 0) {
-                        val eventId = cursor.getLong(idCol)
+                        val eventId = it.getLong(idCol)
                         logger.i(TAG, "Found calendar event $eventId for actionId $actionId")
-                        return@withContext eventId
+                        return@withContext CalendarLookupResult.Found(eventId)
                     }
                 }
             }
+            CalendarLookupResult.NotFound
         } catch (e: Exception) {
             logger.w(TAG, "Exception querying event by actionId $actionId: ${e.message}")
+            CalendarLookupResult.Unavailable(e)
         }
-        null
     }
 }

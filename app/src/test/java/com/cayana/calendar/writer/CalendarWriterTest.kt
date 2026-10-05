@@ -119,4 +119,50 @@ class CalendarWriterTest {
         val deleteResult2 = writer.deleteEvent(eventId)
         assertTrue(deleteResult2.isSuccess)
     }
+
+    @Test
+    fun findEventByActionId_found() = runTest {
+        val actionId = "action-found-1"
+        val event = ValidatedEvent(
+            memoryId = "mem-found",
+            calendarId = 1L,
+            title = "XX Live",
+            startAt = Instant.ofEpochMilli(1729251000000L),
+            endAt = Instant.ofEpochMilli(1729254600000L),
+            actionId = actionId
+        )
+        val createResult = writer.createEvent(event)
+        val eventId = (createResult as CalendarWriteResult.Success).calendarEventId
+
+        val lookupResult = writer.findEventByActionId(actionId)
+        assertTrue(lookupResult is CalendarLookupResult.Found)
+        assertEquals(eventId, (lookupResult as CalendarLookupResult.Found).eventId)
+    }
+
+    @Test
+    fun findEventByActionId_notFound() = runTest {
+        val lookupResult = writer.findEventByActionId("non-existent-action")
+        assertEquals(CalendarLookupResult.NotFound, lookupResult)
+    }
+
+    @Test
+    fun findEventByActionId_unavailable_permissionDenied() = runTest {
+        fakeHelper.hasPermission = false
+        fakeHelper.hasWritePermission = false
+
+        val lookupResult = writer.findEventByActionId("action-no-perm")
+        assertTrue(lookupResult is CalendarLookupResult.Unavailable)
+        assertTrue((lookupResult as CalendarLookupResult.Unavailable).cause is SecurityException)
+    }
+
+    @Test
+    fun findEventByActionId_unavailable_queryThrows() = runTest {
+        fakeProvider.shouldThrowOnQuery = true
+
+        val lookupResult = writer.findEventByActionId("action-query-throw")
+        assertTrue(lookupResult is CalendarLookupResult.Unavailable)
+        assertEquals("Simulated provider failure during query", (lookupResult as CalendarLookupResult.Unavailable).cause?.message)
+
+        fakeProvider.shouldThrowOnQuery = false
+    }
 }
