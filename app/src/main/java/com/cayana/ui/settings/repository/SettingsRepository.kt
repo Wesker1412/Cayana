@@ -29,11 +29,20 @@ data class UserSettings(
     val downloadsDirectoryUri: String? = null,
     val lastScreenshotMediaId: Long = 0L,
     val mediaStoreVersion: String? = null,
+    val screenshotMediaStoreVersion: String? = mediaStoreVersion,
     val screenshotWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED,
     val lastPhotoMediaId: Long = 0L,
+    val photoMediaStoreVersion: String? = null,
     val photoWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED,
     val lastRecordingMediaId: Long = 0L,
-    val recordingWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED
+    val recordingMediaStoreVersion: String? = null,
+    val recordingWatcherStatus: SourceWatcherStatus = SourceWatcherStatus.UNINITIALIZED,
+    val sttModelId: String? = null,
+    val sttModelVersion: String? = null,
+    val sttModelSha256: String? = null,
+    val sttModelInstalledAt: Long = 0L,
+    val lastPhotoReconciledCapturedAt: Long = Long.MAX_VALUE,
+    val lastRecordingReconciledCapturedAt: Long = Long.MAX_VALUE
 )
 
 interface SettingsRepository {
@@ -51,6 +60,12 @@ interface SettingsRepository {
     suspend fun updateLastRecordingMediaId(id: Long)
     suspend fun updateRecordingWatcherStatus(status: SourceWatcherStatus)
     suspend fun updateMediaStoreVersion(version: String?)
+    suspend fun updateScreenshotMediaStoreVersion(version: String?)
+    suspend fun updatePhotoMediaStoreVersion(version: String?)
+    suspend fun updateRecordingMediaStoreVersion(version: String?)
+    suspend fun updateSttModelInfo(modelId: String?, modelVersion: String?, modelSha256: String?, installedAt: Long)
+    suspend fun updateLastPhotoReconciledCapturedAt(timestamp: Long)
+    suspend fun updateLastRecordingReconciledCapturedAt(timestamp: Long)
 }
 
 /**
@@ -121,6 +136,42 @@ class InMemorySettingsRepository(
     }
 
     override suspend fun updateMediaStoreVersion(version: String?) {
-        _settings.update { it.copy(mediaStoreVersion = version) }
+        updateScreenshotMediaStoreVersion(version)
+    }
+
+    override suspend fun updateScreenshotMediaStoreVersion(version: String?) {
+        _settings.update { it.copy(screenshotMediaStoreVersion = version, mediaStoreVersion = version) }
+    }
+
+    override suspend fun updatePhotoMediaStoreVersion(version: String?) {
+        _settings.update { it.copy(photoMediaStoreVersion = version) }
+    }
+
+    override suspend fun updateRecordingMediaStoreVersion(version: String?) {
+        _settings.update { it.copy(recordingMediaStoreVersion = version) }
+    }
+
+    override suspend fun updateSttModelInfo(
+        modelId: String?,
+        modelVersion: String?,
+        modelSha256: String?,
+        installedAt: Long
+    ) {
+        _settings.update {
+            it.copy(
+                sttModelId = modelId,
+                sttModelVersion = modelVersion,
+                sttModelSha256 = modelSha256,
+                sttModelInstalledAt = installedAt
+            )
+        }
+    }
+
+    override suspend fun updateLastPhotoReconciledCapturedAt(timestamp: Long) {
+        _settings.update { it.copy(lastPhotoReconciledCapturedAt = timestamp) }
+    }
+
+    override suspend fun updateLastRecordingReconciledCapturedAt(timestamp: Long) {
+        _settings.update { it.copy(lastRecordingReconciledCapturedAt = timestamp) }
     }
 }

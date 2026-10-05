@@ -46,7 +46,8 @@ class RecordingProcessingCoordinator(
     private val permissionChecker: PermissionChecker,
     private val sttEngine: SpeechToTextEngine,
     private val dispatchers: CoroutineDispatchers = AppDispatchers(),
-    private val chunkDurationMs: Long = RecordingConfig.CHUNK_DURATION_MS
+    private val chunkDurationMs: Long = RecordingConfig.CHUNK_DURATION_MS,
+    private val sourceExistenceValidator: com.cayana.source.SourceExistenceValidator = com.cayana.source.SourceExistenceValidator(context, permissionChecker)
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
@@ -69,7 +70,7 @@ class RecordingProcessingCoordinator(
             }
 
             val currentVersion = mediaStoreVersionProvider(context)
-            val savedVersion = settings.mediaStoreVersion
+            val savedVersion = settings.recordingMediaStoreVersion
 
             // 2. MediaStore Version Reset Boundary Check
             if (savedVersion != null && currentVersion != null && savedVersion != currentVersion) {
@@ -269,7 +270,7 @@ class RecordingProcessingCoordinator(
             }
 
             if (savedVersion == null && currentVersion != null) {
-                settingsRepository.updateMediaStoreVersion(currentVersion)
+                settingsRepository.updateRecordingMediaStoreVersion(currentVersion)
             }
 
             try {
@@ -324,21 +325,26 @@ class RecordingProcessingCoordinator(
         val startChunk = currentMeta["completedChunks"]?.toIntOrNull() ?: 0
 
         // Check if source file is still accessible
-        val uri = Uri.parse(uriString)
-        val sourceExists = try {
-            context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
-        } catch (_: Exception) {
-            false
-        }
-
-        if (!sourceExists) {
-            CayanaLogger.i("RecordingCoordinator", "Source audio no longer exists for ${memoryItem.id}. Halting transcription.")
-            val finalItem = memoryItem.copy(
-                sourceExists = false,
-                processingState = if (startChunk > 0) ProcessingState.COMPLETED else ProcessingState.FAILED_PERMANENT
-            )
-            memoryRepository.saveMemory(finalItem)
-            return finalItem
+        val existence = sourceExistenceValidator.checkSourceExistence(uriString, SourceType.RECORDING)
+        when (existence) {
+            is com.cayana.source.SourceExistence.Missing -> {
+                CayanaLogger.i("RecordingCoordinator", "Source audio definitively missing for ${memoryItem.id}. Halting transcription.")
+                val finalItem = memoryItem.copy(
+                    sourceExists = false,
+                    processingState = if (startChunk > 0) ProcessingState.COMPLETED else ProcessingState.FAILED_PERMANENT
+                )
+                memoryRepository.saveMemory(finalItem)
+                return finalItem
+            }
+            is com.cayana.source.SourceExistence.Unavailable -> {
+                CayanaLogger.w("RecordingCoordinator", "Source audio temporarily unavailable for ${memoryItem.id}. Preserving state as FAILED_RETRYABLE.")
+                val pausedItem = memoryItem.copy(processingState = ProcessingState.FAILED_RETRYABLE)
+                memoryRepository.saveMemory(pausedItem)
+                return pausedItem
+            }
+            is com.cayana.source.SourceExistence.Exists -> {
+                // proceed
+            }
         }
 
         if (!sttEngine.isModelAvailable) {
@@ -412,7 +418,7 @@ class RecordingProcessingCoordinator(
     suspend fun establishBaseline(forceNew: Boolean = false): Long = withContext(dispatchers.io) {
         val currentSettings = settingsRepository.getSettings().first()
         val currentVersion = mediaStoreVersionProvider(context)
-        if (!forceNew && currentSettings.lastRecordingMediaId > 0L && currentVersion != null && currentSettings.mediaStoreVersion == currentVersion) {
+        if (!forceNew && currentSettings.lastRecordingMediaId > 0L && currentVersion != null && currentSettings.recordingMediaStoreVersion == currentVersion) {
             return@withContext currentSettings.lastRecordingMediaId
         }
 
@@ -436,32 +442,44 @@ class RecordingProcessingCoordinator(
 
         settingsRepository.updateLastRecordingMediaId(maxId)
         if (currentVersion != null) {
-            settingsRepository.updateMediaStoreVersion(currentVersion)
+            settingsRepository.updateRecordingMediaStoreVersion(currentVersion)
         }
         settingsRepository.updateRecordingWatcherStatus(SourceWatcherStatus.ACTIVE)
         maxId
     }
 
-    suspend fun reconcileDeletedRecordings(): Int = withContext(dispatchers.io) {
-        val allMemories = memoryRepository.getAllMemories().first()
-        val recordings = allMemories.filter { it.sourceType == SourceType.RECORDING && it.sourceExists }
+    suspend fun reconcileDeletedRecordings(batchSize: Int = 25): Int = withContext(dispatchers.io) {
+        val settings = settingsRepository.getSettings().first()
+        val cursorTimestamp = settings.lastRecordingReconciledCapturedAt
+        val recordings = memoryRepository.getMemoriesForReconciliation(
+            sourceType = SourceType.RECORDING,
+            cursorTimestamp = cursorTimestamp,
+            limit = batchSize
+        )
+        if (recordings.isEmpty()) return@withContext 0
+
         var updatedCount = 0
-
+        var minTimestamp = cursorTimestamp
         for (item in recordings) {
+            minTimestamp = minOf(minTimestamp, item.capturedAt)
             val uriString = item.sourceUri ?: continue
-            val exists = try {
-                val uri = Uri.parse(uriString)
-                context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
-            } catch (_: Exception) {
-                false
-            }
-
-            if (!exists) {
-                CayanaLogger.i("RecordingCoordinator", "Audio source file deleted for memory ${item.id}, updating sourceExists=false")
-                memoryRepository.saveMemory(item.copy(sourceExists = false))
-                updatedCount++
+            val existence = sourceExistenceValidator.checkSourceExistence(uriString, SourceType.RECORDING)
+            when (existence) {
+                is com.cayana.source.SourceExistence.Missing -> {
+                    CayanaLogger.i("RecordingCoordinator", "Audio source file deleted for memory ${item.id}, updating sourceExists=false")
+                    memoryRepository.markSourceExists(item.id, false)
+                    updatedCount++
+                }
+                is com.cayana.source.SourceExistence.Unavailable -> {
+                    CayanaLogger.d("RecordingCoordinator", "Audio source unavailable for memory ${item.id}, preserving sourceExists")
+                }
+                is com.cayana.source.SourceExistence.Exists -> {
+                    // source exists
+                }
             }
         }
+        val newCursor = if (recordings.size < batchSize) Long.MAX_VALUE else minTimestamp
+        settingsRepository.updateLastRecordingReconciledCapturedAt(newCursor)
         updatedCount
     }
 

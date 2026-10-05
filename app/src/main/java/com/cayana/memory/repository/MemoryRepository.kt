@@ -17,5 +17,10 @@ interface MemoryRepository {
     fun searchMemories(query: String): Flow<List<MemoryItem>>
     fun getMemoryCount(): Flow<Int>
     suspend fun markSourceExists(id: String, exists: Boolean)
+    suspend fun getMemoriesForReconciliation(
+        sourceType: com.cayana.source.SourceType,
+        cursorTimestamp: Long,
+        limit: Int = 25
+    ): List<MemoryItem>
     suspend fun clearAll()
 }

@@ -36,6 +36,12 @@ interface MemoryDao {
     @Query("UPDATE memories SET sourceExists = :exists WHERE id = :id")
     suspend fun updateSourceExists(id: String, exists: Boolean)
 
+    @Query("SELECT * FROM memories WHERE sourceType = :sourceType AND sourceExists = 1 AND capturedAt < :beforeCapturedAt ORDER BY capturedAt DESC LIMIT :limit")
+    suspend fun getExistingMemoriesForReconciliation(sourceType: String, beforeCapturedAt: Long, limit: Int): List<MemoryEntity>
+
+    @Query("SELECT * FROM memories WHERE sourceType = :sourceType AND sourceExists = 1 ORDER BY capturedAt DESC LIMIT :limit")
+    suspend fun getInitialMemoriesForReconciliation(sourceType: String, limit: Int): List<MemoryEntity>
+
     @Delete
     suspend fun delete(entity: MemoryEntity)
 

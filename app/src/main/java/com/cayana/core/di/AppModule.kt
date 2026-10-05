@@ -100,7 +100,7 @@ val appModule = module {
     }
 
     single<com.cayana.processing.SpeechToTextEngine> {
-        com.cayana.processing.stt.CayanaLocalSttEngine()
+        com.cayana.processing.stt.SherpaOnnxSttEngine(androidContext())
     }
 
     single {
@@ -147,7 +147,8 @@ val appModule = module {
 
     single {
         com.cayana.source.SourceExistenceValidator(
-            context = androidContext()
+            context = androidContext(),
+            permissionChecker = get()
         )
     }
 }

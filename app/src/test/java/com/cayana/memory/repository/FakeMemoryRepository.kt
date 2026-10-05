@@ -50,6 +50,25 @@ class FakeMemoryRepository : MemoryRepository {
         }
     }
 
+    override suspend fun getMemoriesForReconciliation(
+        sourceType: com.cayana.source.SourceType,
+        cursorTimestamp: Long,
+        limit: Int
+    ): List<MemoryItem> {
+        val eligible = memoriesMap.value.values
+            .filter { it.sourceType == sourceType && it.sourceExists }
+            .sortedByDescending { it.capturedAt }
+        if (cursorTimestamp == Long.MAX_VALUE) {
+            return eligible.take(limit)
+        }
+        val remaining = eligible.filter { it.capturedAt < cursorTimestamp }
+        return if (remaining.isEmpty()) {
+            eligible.take(limit)
+        } else {
+            remaining.take(limit)
+        }
+    }
+
     override suspend fun clearAll() {
         memoriesMap.update { emptyMap() }
     }

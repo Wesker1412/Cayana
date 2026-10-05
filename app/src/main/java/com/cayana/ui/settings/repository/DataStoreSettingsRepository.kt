@@ -39,6 +39,15 @@ class DataStoreSettingsRepository(
         val KEY_LAST_RECORDING_MEDIA_ID = longPreferencesKey("last_recording_media_id")
         val KEY_RECORDING_WATCHER_STATUS = stringPreferencesKey("recording_watcher_status")
         val KEY_MEDIA_STORE_VERSION = stringPreferencesKey("media_store_version")
+        val KEY_SCREENSHOT_MEDIA_STORE_VERSION = stringPreferencesKey("screenshot_media_store_version")
+        val KEY_PHOTO_MEDIA_STORE_VERSION = stringPreferencesKey("photo_media_store_version")
+        val KEY_RECORDING_MEDIA_STORE_VERSION = stringPreferencesKey("recording_media_store_version")
+        val KEY_STT_MODEL_ID = stringPreferencesKey("stt_model_id")
+        val KEY_STT_MODEL_VERSION = stringPreferencesKey("stt_model_version")
+        val KEY_STT_MODEL_SHA256 = stringPreferencesKey("stt_model_sha256")
+        val KEY_STT_MODEL_INSTALLED_AT = longPreferencesKey("stt_model_installed_at")
+        val KEY_LAST_PHOTO_RECONCILED_AT = longPreferencesKey("last_photo_reconciled_captured_at")
+        val KEY_LAST_RECORDING_RECONCILED_AT = longPreferencesKey("last_recording_reconciled_captured_at")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -74,7 +83,9 @@ class DataStoreSettingsRepository(
                 val localFirst = preferences[KEY_LOCAL_FIRST] ?: true
                 val downloadsUri = preferences[KEY_DOWNLOADS_DIRECTORY_URI]
                 val lastMediaId = preferences[KEY_LAST_SCREENSHOT_MEDIA_ID] ?: 0L
-                val mediaVersion = preferences[KEY_MEDIA_STORE_VERSION]
+                val screenshotMediaVersion = preferences[KEY_SCREENSHOT_MEDIA_STORE_VERSION] ?: preferences[KEY_MEDIA_STORE_VERSION]
+                val photoMediaVersion = preferences[KEY_PHOTO_MEDIA_STORE_VERSION]
+                val recordingMediaVersion = preferences[KEY_RECORDING_MEDIA_STORE_VERSION]
                 val rawWatcherStatus = preferences[KEY_SCREENSHOT_WATCHER_STATUS]
                 val watcherStatus = if (rawWatcherStatus != null) {
                     try {
@@ -110,6 +121,13 @@ class DataStoreSettingsRepository(
                     SourceWatcherStatus.UNINITIALIZED
                 }
 
+                val sttModelId = preferences[KEY_STT_MODEL_ID]
+                val sttModelVersion = preferences[KEY_STT_MODEL_VERSION]
+                val sttModelSha256 = preferences[KEY_STT_MODEL_SHA256]
+                val sttModelInstalledAt = preferences[KEY_STT_MODEL_INSTALLED_AT] ?: 0L
+                val lastPhotoReconciled = preferences[KEY_LAST_PHOTO_RECONCILED_AT] ?: Long.MAX_VALUE
+                val lastRecordingReconciled = preferences[KEY_LAST_RECORDING_RECONCILED_AT] ?: Long.MAX_VALUE
+
                 UserSettings(
                     onboardingCompleted = onboardingCompleted,
                     enabledSources = enabledSources,
@@ -121,12 +139,21 @@ class DataStoreSettingsRepository(
                     isLocalFirstOnly = localFirst,
                     downloadsDirectoryUri = downloadsUri,
                     lastScreenshotMediaId = lastMediaId,
-                    mediaStoreVersion = mediaVersion,
+                    mediaStoreVersion = screenshotMediaVersion,
+                    screenshotMediaStoreVersion = screenshotMediaVersion,
                     screenshotWatcherStatus = watcherStatus,
                     lastPhotoMediaId = lastPhotoId,
+                    photoMediaStoreVersion = photoMediaVersion,
                     photoWatcherStatus = photoStatus,
                     lastRecordingMediaId = lastRecordingId,
-                    recordingWatcherStatus = recordingStatus
+                    recordingMediaStoreVersion = recordingMediaVersion,
+                    recordingWatcherStatus = recordingStatus,
+                    sttModelId = sttModelId,
+                    sttModelVersion = sttModelVersion,
+                    sttModelSha256 = sttModelSha256,
+                    sttModelInstalledAt = sttModelInstalledAt,
+                    lastPhotoReconciledCapturedAt = lastPhotoReconciled,
+                    lastRecordingReconciledCapturedAt = lastRecordingReconciled
                 )
             }
     }
@@ -226,12 +253,64 @@ class DataStoreSettingsRepository(
     }
 
     override suspend fun updateMediaStoreVersion(version: String?) {
+        updateScreenshotMediaStoreVersion(version)
+    }
+
+    override suspend fun updateScreenshotMediaStoreVersion(version: String?) {
         dataStore.edit { preferences ->
             if (version != null) {
+                preferences[KEY_SCREENSHOT_MEDIA_STORE_VERSION] = version
                 preferences[KEY_MEDIA_STORE_VERSION] = version
             } else {
+                preferences.remove(KEY_SCREENSHOT_MEDIA_STORE_VERSION)
                 preferences.remove(KEY_MEDIA_STORE_VERSION)
             }
+        }
+    }
+
+    override suspend fun updatePhotoMediaStoreVersion(version: String?) {
+        dataStore.edit { preferences ->
+            if (version != null) {
+                preferences[KEY_PHOTO_MEDIA_STORE_VERSION] = version
+            } else {
+                preferences.remove(KEY_PHOTO_MEDIA_STORE_VERSION)
+            }
+        }
+    }
+
+    override suspend fun updateRecordingMediaStoreVersion(version: String?) {
+        dataStore.edit { preferences ->
+            if (version != null) {
+                preferences[KEY_RECORDING_MEDIA_STORE_VERSION] = version
+            } else {
+                preferences.remove(KEY_RECORDING_MEDIA_STORE_VERSION)
+            }
+        }
+    }
+
+    override suspend fun updateSttModelInfo(
+        modelId: String?,
+        modelVersion: String?,
+        modelSha256: String?,
+        installedAt: Long
+    ) {
+        dataStore.edit { preferences ->
+            if (modelId != null) preferences[KEY_STT_MODEL_ID] = modelId else preferences.remove(KEY_STT_MODEL_ID)
+            if (modelVersion != null) preferences[KEY_STT_MODEL_VERSION] = modelVersion else preferences.remove(KEY_STT_MODEL_VERSION)
+            if (modelSha256 != null) preferences[KEY_STT_MODEL_SHA256] = modelSha256 else preferences.remove(KEY_STT_MODEL_SHA256)
+            preferences[KEY_STT_MODEL_INSTALLED_AT] = installedAt
+        }
+    }
+
+    override suspend fun updateLastPhotoReconciledCapturedAt(timestamp: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_PHOTO_RECONCILED_AT] = timestamp
+        }
+    }
+
+    override suspend fun updateLastRecordingReconciledCapturedAt(timestamp: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_RECORDING_RECONCILED_AT] = timestamp
         }
     }
 }

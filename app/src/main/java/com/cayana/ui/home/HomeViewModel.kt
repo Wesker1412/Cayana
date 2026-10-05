@@ -39,7 +39,8 @@ class HomeViewModel(
         viewModelScope.launch {
             memories.forEach { item ->
                 if (item.sourceExists && item.sourceUri != null) {
-                    if (!validator.doesSourceExist(item.sourceUri)) {
+                    val existence = validator.checkSourceExistence(item.sourceUri, item.sourceType)
+                    if (existence is com.cayana.source.SourceExistence.Missing) {
                         memoryRepository.markSourceExists(item.id, false)
                     }
                 }

@@ -64,7 +64,7 @@ class ScreenshotProcessingCoordinator(
             }
 
             val currentVersion = mediaStoreVersionProvider(context)
-            val savedVersion = settings.mediaStoreVersion
+            val savedVersion = settings.screenshotMediaStoreVersion ?: settings.mediaStoreVersion
 
             // 2. MediaStore Version Reset Boundary Check (Item E & Item 6)
             if (savedVersion != null && currentVersion != null && savedVersion != currentVersion) {
@@ -257,7 +257,7 @@ class ScreenshotProcessingCoordinator(
             }
 
             if (savedVersion == null && currentVersion != null) {
-                settingsRepository.updateMediaStoreVersion(currentVersion)
+                settingsRepository.updateScreenshotMediaStoreVersion(currentVersion)
             }
 
             // 11. Production Path: Retry any pending retryable OCR memories
@@ -277,7 +277,8 @@ class ScreenshotProcessingCoordinator(
     suspend fun establishBaseline(forceNew: Boolean = false): Long = withContext(dispatchers.io) {
         val currentSettings = settingsRepository.getSettings().first()
         val currentVersion = mediaStoreVersionProvider(context)
-        if (!forceNew && currentSettings.lastScreenshotMediaId > 0L && currentVersion != null && currentSettings.mediaStoreVersion == currentVersion) {
+        val savedVer = currentSettings.screenshotMediaStoreVersion ?: currentSettings.mediaStoreVersion
+        if (!forceNew && currentSettings.lastScreenshotMediaId > 0L && currentVersion != null && savedVer == currentVersion) {
             return@withContext currentSettings.lastScreenshotMediaId
         }
 
@@ -301,7 +302,7 @@ class ScreenshotProcessingCoordinator(
 
         settingsRepository.updateLastScreenshotMediaId(maxId)
         if (currentVersion != null) {
-            settingsRepository.updateMediaStoreVersion(currentVersion)
+            settingsRepository.updateScreenshotMediaStoreVersion(currentVersion)
         }
         settingsRepository.updateScreenshotWatcherStatus(com.cayana.ui.settings.repository.ScreenshotWatcherStatus.ACTIVE)
         maxId

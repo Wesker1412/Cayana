@@ -100,6 +100,9 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     implementation(libs.kotlinx.coroutines.play.services)
 
+    // On-device ASR (sherpa-onnx)
+    implementation(files("libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"))
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

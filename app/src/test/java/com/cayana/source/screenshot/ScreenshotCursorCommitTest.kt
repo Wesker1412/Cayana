@@ -126,6 +126,14 @@ class ScreenshotCursorCommitTest {
         override fun searchMemories(query: String): Flow<List<MemoryItem>> = MutableStateFlow(emptyList())
         override fun getMemoryCount(): Flow<Int> = countFlow
         override suspend fun markSourceExists(id: String, exists: Boolean) {}
+        override suspend fun getMemoriesForReconciliation(
+            sourceType: com.cayana.source.SourceType,
+            cursorTimestamp: Long,
+            limit: Int
+        ): List<MemoryItem> = storage.values
+            .filter { it.sourceType == sourceType && it.sourceExists }
+            .sortedByDescending { it.capturedAt }
+            .take(limit)
         override suspend fun clearAll() {
             storage.clear()
             countFlow.value = 0

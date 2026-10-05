@@ -39,7 +39,8 @@ class PhotoProcessingCoordinator(
     private val settingsRepository: SettingsRepository,
     private val permissionChecker: PermissionChecker,
     private val ocrEngine: OcrEngine,
-    private val dispatchers: CoroutineDispatchers = AppDispatchers()
+    private val dispatchers: CoroutineDispatchers = AppDispatchers(),
+    private val sourceExistenceValidator: com.cayana.source.SourceExistenceValidator = com.cayana.source.SourceExistenceValidator(context, permissionChecker)
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
@@ -62,7 +63,7 @@ class PhotoProcessingCoordinator(
             }
 
             val currentVersion = mediaStoreVersionProvider(context)
-            val savedVersion = settings.mediaStoreVersion
+            val savedVersion = settings.photoMediaStoreVersion
 
             // 2. MediaStore Version Reset Boundary Check
             if (savedVersion != null && currentVersion != null && savedVersion != currentVersion) {
@@ -271,7 +272,7 @@ class PhotoProcessingCoordinator(
             }
 
             if (savedVersion == null && currentVersion != null) {
-                settingsRepository.updateMediaStoreVersion(currentVersion)
+                settingsRepository.updatePhotoMediaStoreVersion(currentVersion)
             }
 
             try {
@@ -293,7 +294,7 @@ class PhotoProcessingCoordinator(
     suspend fun establishBaseline(forceNew: Boolean = false): Long = withContext(dispatchers.io) {
         val currentSettings = settingsRepository.getSettings().first()
         val currentVersion = mediaStoreVersionProvider(context)
-        if (!forceNew && currentSettings.lastPhotoMediaId > 0L && currentVersion != null && currentSettings.mediaStoreVersion == currentVersion) {
+        if (!forceNew && currentSettings.lastPhotoMediaId > 0L && currentVersion != null && currentSettings.photoMediaStoreVersion == currentVersion) {
             return@withContext currentSettings.lastPhotoMediaId
         }
 
@@ -317,32 +318,44 @@ class PhotoProcessingCoordinator(
 
         settingsRepository.updateLastPhotoMediaId(maxId)
         if (currentVersion != null) {
-            settingsRepository.updateMediaStoreVersion(currentVersion)
+            settingsRepository.updatePhotoMediaStoreVersion(currentVersion)
         }
         settingsRepository.updatePhotoWatcherStatus(SourceWatcherStatus.ACTIVE)
         maxId
     }
 
-    suspend fun reconcileDeletedPhotos(): Int = withContext(dispatchers.io) {
-        val allMemories = memoryRepository.getAllMemories().first()
-        val photos = allMemories.filter { it.sourceType == SourceType.PHOTO && it.sourceExists }
+    suspend fun reconcileDeletedPhotos(batchSize: Int = 25): Int = withContext(dispatchers.io) {
+        val settings = settingsRepository.getSettings().first()
+        val cursorTimestamp = settings.lastPhotoReconciledCapturedAt
+        val photos = memoryRepository.getMemoriesForReconciliation(
+            sourceType = SourceType.PHOTO,
+            cursorTimestamp = cursorTimestamp,
+            limit = batchSize
+        )
+        if (photos.isEmpty()) return@withContext 0
+
         var updatedCount = 0
-
+        var minTimestamp = cursorTimestamp
         for (item in photos) {
+            minTimestamp = minOf(minTimestamp, item.capturedAt)
             val uriString = item.sourceUri ?: continue
-            val exists = try {
-                val uri = Uri.parse(uriString)
-                context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
-            } catch (_: Exception) {
-                false
-            }
-
-            if (!exists) {
-                CayanaLogger.i("PhotoCoordinator", "Photo source file deleted for memory ${item.id}, updating sourceExists=false")
-                memoryRepository.saveMemory(item.copy(sourceExists = false))
-                updatedCount++
+            val existence = sourceExistenceValidator.checkSourceExistence(uriString, SourceType.PHOTO)
+            when (existence) {
+                is com.cayana.source.SourceExistence.Missing -> {
+                    CayanaLogger.i("PhotoCoordinator", "Photo source file deleted for memory ${item.id}, updating sourceExists=false")
+                    memoryRepository.markSourceExists(item.id, false)
+                    updatedCount++
+                }
+                is com.cayana.source.SourceExistence.Unavailable -> {
+                    CayanaLogger.d("PhotoCoordinator", "Photo source unavailable for memory ${item.id}, preserving sourceExists")
+                }
+                is com.cayana.source.SourceExistence.Exists -> {
+                    // source exists
+                }
             }
         }
+        val newCursor = if (photos.size < batchSize) Long.MAX_VALUE else minTimestamp
+        settingsRepository.updateLastPhotoReconciledCapturedAt(newCursor)
         updatedCount
     }
 
@@ -366,15 +379,12 @@ class PhotoProcessingCoordinator(
                 continue
             }
 
-            val exists = try {
-                val uri = Uri.parse(uriString)
-                context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
-            } catch (_: Exception) {
-                false
-            }
-
-            if (!exists) {
+            val existence = sourceExistenceValidator.checkSourceExistence(uriString, SourceType.PHOTO)
+            if (existence is com.cayana.source.SourceExistence.Missing) {
                 memoryRepository.saveMemory(item.copy(processingState = ProcessingState.FAILED_PERMANENT, sourceExists = false))
+                continue
+            }
+            if (existence is com.cayana.source.SourceExistence.Unavailable) {
                 continue
             }
 

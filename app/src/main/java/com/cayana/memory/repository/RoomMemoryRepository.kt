@@ -54,6 +54,24 @@ class RoomMemoryRepository(
         memoryDao.updateSourceExists(id, exists)
     }
 
+    override suspend fun getMemoriesForReconciliation(
+        sourceType: com.cayana.source.SourceType,
+        cursorTimestamp: Long,
+        limit: Int
+    ): List<MemoryItem> = withContext(dispatchers.io) {
+        val entities = if (cursorTimestamp == Long.MAX_VALUE) {
+            memoryDao.getInitialMemoriesForReconciliation(sourceType.name, limit)
+        } else {
+            val next = memoryDao.getExistingMemoriesForReconciliation(sourceType.name, cursorTimestamp, limit)
+            if (next.isEmpty()) {
+                memoryDao.getInitialMemoriesForReconciliation(sourceType.name, limit)
+            } else {
+                next
+            }
+        }
+        entities.map { it.toDomain() }
+    }
+
     override suspend fun clearAll() = withContext(dispatchers.io) {
         memoryDao.clearAll()
     }
