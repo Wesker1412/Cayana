@@ -126,8 +126,7 @@ class ScreenshotWorkManagerTriggerTest {
         testDriver.setAllConstraintsMet(firstId)
         awaitWorkFinished(firstId)
 
-        val activeWorks = workManager.getWorkInfosForUniqueWork(ScreenshotIngestWorker.WORK_NAME).get()
-            .filter { !it.state.isFinished }
+        val activeWorks = awaitActiveWorks(1)
         assertEquals("There must be exactly 1 active work scheduled", 1, activeWorks.size)
         assertEquals(WorkInfo.State.ENQUEUED, activeWorks[0].state)
     }
@@ -142,16 +141,14 @@ class ScreenshotWorkManagerTriggerTest {
         testDriver.setAllConstraintsMet(firstId)
         awaitWorkFinished(firstId)
 
-        val secondWorks = workManager.getWorkInfosForUniqueWork(ScreenshotIngestWorker.WORK_NAME).get()
-            .filter { !it.state.isFinished }
+        val secondWorks = awaitActiveWorks(1)
         assertEquals(1, secondWorks.size)
         val secondId = secondWorks[0].id
 
         testDriver.setAllConstraintsMet(secondId)
         awaitWorkFinished(secondId)
 
-        val thirdWorks = workManager.getWorkInfosForUniqueWork(ScreenshotIngestWorker.WORK_NAME).get()
-            .filter { !it.state.isFinished }
+        val thirdWorks = awaitActiveWorks(1)
         assertEquals("Consecutive executions must maintain only 1 active work request without stacking", 1, thirdWorks.size)
     }
 
@@ -211,6 +208,20 @@ class ScreenshotWorkManagerTriggerTest {
             Thread.sleep(50)
         }
         return workManager.getWorkInfoById(workId).get() ?: error("Work not found")
+    }
+
+    private fun awaitActiveWorks(expectedCount: Int = 1, timeoutMs: Long = 5000): List<WorkInfo> {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            val active = workManager.getWorkInfosForUniqueWork(ScreenshotIngestWorker.WORK_NAME).get()
+                .filter { !it.state.isFinished }
+            if (active.size == expectedCount) return active
+            Thread.sleep(50)
+        }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        return workManager.getWorkInfosForUniqueWork(ScreenshotIngestWorker.WORK_NAME).get()
+            .filter { !it.state.isFinished }
     }
 
     private fun awaitNoActiveWorks(timeoutMs: Long = 5000): Boolean {

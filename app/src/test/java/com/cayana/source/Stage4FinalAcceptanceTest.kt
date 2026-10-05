@@ -49,16 +49,10 @@ import java.util.zip.ZipOutputStream
 class Stage4FinalAcceptanceTest {
 
     private lateinit var context: Context
-    private lateinit var database: CayanaDatabase
-    private lateinit var roomMemoryRepository: RoomMemoryRepository
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
-        database = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
-        roomMemoryRepository = RoomMemoryRepository(database.memoryDao())
 
         // Clean any existing model dirs
         SherpaModelManager.getModelDir(context).deleteRecursively()
@@ -76,7 +70,7 @@ class Stage4FinalAcceptanceTest {
 
     @After
     fun tearDown() {
-        database.close()
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
         SherpaModelManager.getModelDir(context).deleteRecursively()
         SherpaModelManager.getDownloadTempDir(context).deleteRecursively()
     }
@@ -327,87 +321,105 @@ class Stage4FinalAcceptanceTest {
     // 9. photoReconciliationHandlesSameTimestampWithoutSkipping
     @Test
     fun photoReconciliationHandlesSameTimestampWithoutSkipping() = runTest {
-        val sameCapturedAt = 1_700_000_000_000L
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val roomRepo = RoomMemoryRepository(db.memoryDao())
+            val sameCapturedAt = 1_700_000_000_000L
 
-        // Insert 100 photo memories with exact same capturedAt and distinct IDs
-        for (i in 1..100) {
-            val id = "photo_%03d".format(i)
-            val item = MemoryItem(
-                id = id,
-                sourceType = SourceType.PHOTO,
-                sourceUri = "cayana://test/photo/$id.jpg",
-                sourceExists = true,
-                capturedAt = sameCapturedAt,
-                processingState = ProcessingState.COMPLETED
-            )
-            roomMemoryRepository.saveMemory(item)
+            // Insert 100 photo memories with exact same capturedAt and distinct IDs
+            for (i in 1..100) {
+                val id = "photo_%03d".format(i)
+                val item = MemoryItem(
+                    id = id,
+                    sourceType = SourceType.PHOTO,
+                    sourceUri = "cayana://test/photo/$id.jpg",
+                    sourceExists = true,
+                    capturedAt = sameCapturedAt,
+                    processingState = ProcessingState.COMPLETED
+                )
+                roomRepo.saveMemory(item)
+            }
+
+            // Paginate using compound cursor (capturedAt, id) with limit 25
+            var cursorCapturedAt = Long.MAX_VALUE
+            var cursorId = ""
+            val collectedMemories = mutableListOf<MemoryItem>()
+
+            while (true) {
+                val batch = roomRepo.getMemoriesForCompoundReconciliation(
+                    sourceType = SourceType.PHOTO,
+                    cursorCapturedAt = cursorCapturedAt,
+                    cursorId = cursorId,
+                    limit = 25
+                )
+                if (batch.isEmpty()) break
+                collectedMemories.addAll(batch)
+                val last = batch.last()
+                cursorCapturedAt = last.capturedAt
+                cursorId = last.id
+            }
+
+            assertEquals("Should retrieve all 100 memories across 4 batches of 25", 100, collectedMemories.size)
+            val uniqueIds = collectedMemories.map { it.id }.toSet()
+            assertEquals("All 100 retrieved memories must have unique IDs (0 skipped, 0 duplicate)", 100, uniqueIds.size)
+        } finally {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            db.close()
         }
-
-        // Paginate using compound cursor (capturedAt, id) with limit 25
-        var cursorCapturedAt = Long.MAX_VALUE
-        var cursorId = ""
-        val collectedMemories = mutableListOf<MemoryItem>()
-
-        while (true) {
-            val batch = roomMemoryRepository.getMemoriesForCompoundReconciliation(
-                sourceType = SourceType.PHOTO,
-                cursorCapturedAt = cursorCapturedAt,
-                cursorId = cursorId,
-                limit = 25
-            )
-            if (batch.isEmpty()) break
-            collectedMemories.addAll(batch)
-            val last = batch.last()
-            cursorCapturedAt = last.capturedAt
-            cursorId = last.id
-        }
-
-        assertEquals("Should retrieve all 100 memories across 4 batches of 25", 100, collectedMemories.size)
-        val uniqueIds = collectedMemories.map { it.id }.toSet()
-        assertEquals("All 100 retrieved memories must have unique IDs (0 skipped, 0 duplicate)", 100, uniqueIds.size)
     }
 
     // 10. recordingReconciliationHandlesSameTimestampWithoutSkipping
     @Test
     fun recordingReconciliationHandlesSameTimestampWithoutSkipping() = runTest {
-        val sameCapturedAt = 1_700_000_000_000L
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val roomRepo = RoomMemoryRepository(db.memoryDao())
+            val sameCapturedAt = 1_700_000_000_000L
 
-        // Insert 100 recording memories with exact same capturedAt and distinct IDs
-        for (i in 1..100) {
-            val id = "rec_%03d".format(i)
-            val item = MemoryItem(
-                id = id,
-                sourceType = SourceType.RECORDING,
-                sourceUri = "cayana://test/audio/$id.m4a",
-                sourceExists = true,
-                capturedAt = sameCapturedAt,
-                processingState = ProcessingState.COMPLETED
-            )
-            roomMemoryRepository.saveMemory(item)
+            // Insert 100 recording memories with exact same capturedAt and distinct IDs
+            for (i in 1..100) {
+                val id = "rec_%03d".format(i)
+                val item = MemoryItem(
+                    id = id,
+                    sourceType = SourceType.RECORDING,
+                    sourceUri = "cayana://test/audio/$id.m4a",
+                    sourceExists = true,
+                    capturedAt = sameCapturedAt,
+                    processingState = ProcessingState.COMPLETED
+                )
+                roomRepo.saveMemory(item)
+            }
+
+            // Paginate using compound cursor (capturedAt, id) with limit 25
+            var cursorCapturedAt = Long.MAX_VALUE
+            var cursorId = ""
+            val collectedMemories = mutableListOf<MemoryItem>()
+
+            while (true) {
+                val batch = roomRepo.getMemoriesForCompoundReconciliation(
+                    sourceType = SourceType.RECORDING,
+                    cursorCapturedAt = cursorCapturedAt,
+                    cursorId = cursorId,
+                    limit = 25
+                )
+                if (batch.isEmpty()) break
+                collectedMemories.addAll(batch)
+                val last = batch.last()
+                cursorCapturedAt = last.capturedAt
+                cursorId = last.id
+            }
+
+            assertEquals("Should retrieve all 100 memories across 4 batches of 25", 100, collectedMemories.size)
+            val uniqueIds = collectedMemories.map { it.id }.toSet()
+            assertEquals("All 100 retrieved memories must have unique IDs (0 skipped, 0 duplicate)", 100, uniqueIds.size)
+        } finally {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            db.close()
         }
-
-        // Paginate using compound cursor (capturedAt, id) with limit 25
-        var cursorCapturedAt = Long.MAX_VALUE
-        var cursorId = ""
-        val collectedMemories = mutableListOf<MemoryItem>()
-
-        while (true) {
-            val batch = roomMemoryRepository.getMemoriesForCompoundReconciliation(
-                sourceType = SourceType.RECORDING,
-                cursorCapturedAt = cursorCapturedAt,
-                cursorId = cursorId,
-                limit = 25
-            )
-            if (batch.isEmpty()) break
-            collectedMemories.addAll(batch)
-            val last = batch.last()
-            cursorCapturedAt = last.capturedAt
-            cursorId = last.id
-        }
-
-        assertEquals("Should retrieve all 100 memories across 4 batches of 25", 100, collectedMemories.size)
-        val uniqueIds = collectedMemories.map { it.id }.toSet()
-        assertEquals("All 100 retrieved memories must have unique IDs (0 skipped, 0 duplicate)", 100, uniqueIds.size)
     }
 
     // 11. productionModelUrlUsesHttpsSupportedArchive
