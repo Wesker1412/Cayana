@@ -1,5 +1,6 @@
 package com.cayana.ui.home
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,21 +14,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +46,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -46,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cayana.memory.model.MemoryItem
+import com.cayana.processing.ProcessingState
+import com.cayana.search.SearchFilterCategory
 import com.cayana.source.SourceType
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -103,7 +117,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
-                placeholder = { Text("Search memories, OCR text, notes...") },
+                placeholder = { Text("搜尋你的記憶……") },
                 leadingIcon = {
                     Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
                 },
@@ -111,11 +125,31 @@ fun HomeScreen(
                 singleLine = true
             )
 
+            // Search Filter Chips
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(SearchFilterCategory.values()) { category ->
+                    FilterChip(
+                        selected = uiState.filterCategory == category,
+                        onClick = { viewModel.onFilterCategoryChanged(category) },
+                        label = { Text(category.label) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
+            }
+
             // Header status info
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -132,7 +166,7 @@ fun HomeScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             if (uiState.memories.isEmpty()) {
                 EmptyStateView(
@@ -158,12 +192,25 @@ fun HomeScreen(
                     items(uiState.memories, key = { it.id }) { memory ->
                         MemoryItemCard(
                             item = memory,
+                            onClick = { viewModel.onSelectMemoryForDetail(memory) },
                             onDelete = { viewModel.deleteMemory(memory.id) }
                         )
                     }
                 }
             }
         }
+    }
+
+    // Memory Detail Dialog
+    uiState.selectedDetailMemory?.let { memory ->
+        MemoryDetailDialog(
+            memory = memory,
+            onDismiss = { viewModel.onSelectMemoryForDetail(null) },
+            onDelete = {
+                viewModel.deleteMemory(memory.id)
+                viewModel.onSelectMemoryForDetail(null)
+            }
+        )
     }
 }
 
@@ -193,7 +240,7 @@ private fun EmptyStateView(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Cayana quietly gathers fragments from screenshots, recordings, and photos without disturbing your routine.",
+                text = "Cayana quietly gathers fragments from screenshots, recordings, photos, and shares without disturbing your routine.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -216,6 +263,7 @@ private fun EmptyStateView(
 @Composable
 private fun MemoryItemCard(
     item: MemoryItem,
+    onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
@@ -223,7 +271,9 @@ private fun MemoryItemCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -234,6 +284,9 @@ private fun MemoryItemCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val icon = when (item.sourceType) {
                         SourceType.RECORDING -> Icons.Default.Mic
+                        SourceType.SHARED_URL -> Icons.Default.Link
+                        SourceType.SHARED_TEXT -> Icons.Default.Notes
+                        SourceType.SHARED_DOCUMENT, SourceType.DOWNLOAD -> Icons.Default.Description
                         else -> Icons.Default.Image
                     }
                     Icon(
@@ -255,21 +308,40 @@ private fun MemoryItemCard(
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
+
+                    // Processing state label
+                    val stateText = when (item.processingState) {
+                        ProcessingState.WAITING_FOR_MODEL -> "正在等待本機語音模型"
+                        ProcessingState.PENDING -> "處理中"
+                        ProcessingState.FAILED_RETRYABLE -> "待重試"
+                        ProcessingState.COMPLETED_WITHOUT_TEXT -> "已記住"
+                        else -> "已記住"
+                    }
+                    val stateColor = when (item.processingState) {
+                        ProcessingState.WAITING_FOR_MODEL -> MaterialTheme.colorScheme.tertiary
+                        ProcessingState.FAILED_RETRYABLE -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.secondary
+                    }
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                        color = stateColor.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = "已記住",
+                            text = stateText,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary,
+                            color = stateColor,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
+
                     if (!item.sourceExists) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (item.sourceType == SourceType.RECORDING) "(原音訊已刪除)" else "(原圖已刪除)",
+                            text = when (item.sourceType) {
+                                SourceType.RECORDING -> "(原音訊已刪除)"
+                                SourceType.PHOTO, SourceType.SCREENSHOT, SourceType.SHARED_IMAGE -> "(原圖已刪除)"
+                                else -> "(原檔案已刪除)"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Medium
@@ -324,4 +396,149 @@ private fun MemoryItemCard(
             }
         }
     }
+}
+
+@Composable
+private fun MemoryDetailDialog(
+    memory: MemoryItem,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Text(
+                            text = memory.sourceType.displayName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    val dateStr = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
+                        .format(Date(memory.capturedAt))
+                    Text(
+                        text = dateStr,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = memory.title ?: memory.sourceType.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Missing Source Alert (Prompt Section 32)
+                if (!memory.sourceExists) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "原始檔案已不存在",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Processing State
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "處理狀態: ",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = memory.processingState.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Source URL if present
+                if (!memory.sourceUrl.isNullOrBlank()) {
+                    Column {
+                        Text(
+                            text = "連結網址:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = memory.sourceUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                // Raw Text / Transcript / OCR
+                if (!memory.rawText.isNullOrBlank()) {
+                    Column {
+                        Text(
+                            text = "記憶內容:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = memory.rawText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDelete,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("刪除此 Memory")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("關閉")
+            }
+        }
+    )
 }

@@ -15,11 +15,13 @@ val databaseModule = module {
             .addMigrations(
                 CayanaDatabase.MIGRATION_1_2,
                 CayanaDatabase.MIGRATION_2_3,
-                CayanaDatabase.MIGRATION_3_4
+                CayanaDatabase.MIGRATION_3_4,
+                CayanaDatabase.MIGRATION_4_5
             )
             .build()
     }
 
     single { get<CayanaDatabase>().memoryDao() }
     single { get<CayanaDatabase>().calendarActionDao() }
+    single { get<CayanaDatabase>().searchDao() }
 }

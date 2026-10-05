@@ -148,5 +148,7 @@ class ScreenshotCursorCommitTest {
             storage.clear()
             countFlow.value = 0
         }
+        override suspend fun rebuildSearchIndex() {}
+        override fun isIndexRebuildNeeded(): Boolean = false
     }
 }

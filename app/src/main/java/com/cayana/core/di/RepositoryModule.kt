@@ -12,6 +12,7 @@ val repositoryModule = module {
     single<MemoryRepository> {
         RoomMemoryRepository(
             memoryDao = get(),
+            searchDao = get(),
             dispatchers = get()
         )
     }
@@ -22,7 +23,8 @@ val repositoryModule = module {
 
     single<MemorySearchEngine> {
         DefaultMemorySearchEngine(
-            memoryRepository = get()
+            memoryRepository = get(),
+            searchDao = get()
         )
     }
 }

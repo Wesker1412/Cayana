@@ -102,7 +102,15 @@ class FakeMediaContentProvider : ContentProvider() {
 
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
-    override fun getType(uri: Uri): String? = "vnd.android.cursor.dir/image"
+    override fun getType(uri: Uri): String? {
+        val id = try { ContentUris.parseId(uri) } catch (_: Exception) { null }
+        if (id != null) {
+            val item = items.find { (it.getAsLong(MediaStore.Images.Media._ID) ?: 0L) == id }
+            val mime = item?.getAsString(MediaStore.Images.Media.MIME_TYPE)
+            if (mime != null) return mime
+        }
+        return "vnd.android.cursor.dir/image"
+    }
 
     companion object {
         fun register(context: Context): FakeMediaContentProvider {

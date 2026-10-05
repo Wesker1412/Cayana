@@ -18,6 +18,9 @@ interface MemoryDao {
     @Query("SELECT * FROM memories ORDER BY capturedAt DESC")
     fun getAllMemoriesFlow(): Flow<List<MemoryEntity>>
 
+    @Query("SELECT * FROM memories ORDER BY capturedAt DESC")
+    suspend fun getAllMemoriesDirect(): List<MemoryEntity>
+
     @Query("SELECT * FROM memories WHERE id = :id LIMIT 1")
     suspend fun getMemoryById(id: String): MemoryEntity?
 

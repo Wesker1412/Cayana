@@ -1,0 +1,409 @@
+package com.cayana.search
+
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.cayana.memory.data.CayanaDatabase
+import com.cayana.memory.model.MemoryItem
+import com.cayana.memory.repository.RoomMemoryRepository
+import com.cayana.processing.ProcessingState
+import com.cayana.source.SourceType
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class LocalSearchTest {
+
+    private lateinit var database: CayanaDatabase
+    private lateinit var repository: RoomMemoryRepository
+    private lateinit var searchEngine: DefaultMemorySearchEngine
+
+    @Before
+    fun setup() {
+        database = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            CayanaDatabase::class.java
+        ).allowMainThreadQueries().build()
+
+        repository = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = database.searchDao()
+        )
+
+        searchEngine = DefaultMemorySearchEngine(
+            memoryRepository = repository,
+            searchDao = database.searchDao()
+        )
+    }
+
+    @After
+    fun teardown() {
+        database.close()
+    }
+
+    @Test
+    fun searchScreenshotOcr() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-screenshot-1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Screenshot Note",
+            rawText = "2026 台北馬拉松報名確認信 號碼布 12345",
+            normalizedText = "2026 台北馬拉松報名確認信 號碼布 12345",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        val results = searchEngine.search(SearchQuery(query = "馬拉松"))
+        assertEquals(1, results.size)
+        assertEquals("mem-screenshot-1", results.first().memory.id)
+    }
+
+    @Test
+    fun searchPhotoOcr() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-photo-1",
+            sourceType = SourceType.PHOTO,
+            createdAt = 2000L,
+            capturedAt = 2000L,
+            title = "居酒屋帳單",
+            rawText = "生啤酒 兩杯 烤牛舌 炸豆腐 總計 980元",
+            normalizedText = "生啤酒 兩杯 烤牛舌 炸豆腐 總計 980元",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        val results = searchEngine.search(SearchQuery(query = "生啤酒"))
+        assertEquals(1, results.size)
+        assertEquals("mem-photo-1", results.first().memory.id)
+    }
+
+    @Test
+    fun searchRecordingTranscript() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-rec-1",
+            sourceType = SourceType.RECORDING,
+            createdAt = 3000L,
+            capturedAt = 3000L,
+            title = "語音記錄",
+            rawText = "明天下午三點跟張經理核對合約細節",
+            normalizedText = "明天下午三點跟張經理核對合約細節",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        val results = searchEngine.search(SearchQuery(query = "張經理"))
+        assertEquals(1, results.size)
+        assertEquals("mem-rec-1", results.first().memory.id)
+    }
+
+    @Test
+    fun searchSharedText() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-shared-txt-1",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 4000L,
+            capturedAt = 4000L,
+            title = "待辦事項",
+            rawText = "週末記得去買皇家貓糧幼貓配方",
+            normalizedText = "週末記得去買皇家貓糧幼貓配方",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        val results = searchEngine.search(SearchQuery(query = "貓糧"))
+        assertEquals(1, results.size)
+        assertEquals("mem-shared-txt-1", results.first().memory.id)
+    }
+
+    @Test
+    fun searchUrlHost() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-shared-url-1",
+            sourceType = SourceType.SHARED_URL,
+            createdAt = 5000L,
+            capturedAt = 5000L,
+            title = "GitHub",
+            sourceUrl = "https://github.com/google/guava",
+            metadata = mapOf("host" to "github.com"),
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        val results = searchEngine.search(SearchQuery(query = "github"))
+        assertEquals(1, results.size)
+        assertEquals("mem-shared-url-1", results.first().memory.id)
+    }
+
+    @Test
+    fun searchChineseSubstring() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-cjk-1",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 6000L,
+            capturedAt = 6000L,
+            title = "台北車站會面",
+            rawText = "約在台北車站北三門碰面",
+            normalizedText = "約在台北車站北三門碰面",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        // Search "台北"
+        val res1 = searchEngine.search(SearchQuery(query = "台北"))
+        assertEquals(1, res1.size)
+
+        // Search "車站"
+        val res2 = searchEngine.search(SearchQuery(query = "車站"))
+        assertEquals(1, res2.size)
+
+        // Search "北三門"
+        val res3 = searchEngine.search(SearchQuery(query = "北三門"))
+        assertEquals(1, res3.size)
+    }
+
+    @Test
+    fun searchEnglishTokensAndPrefix() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-eng-1",
+            sourceType = SourceType.SHARED_DOCUMENT,
+            createdAt = 7000L,
+            capturedAt = 7000L,
+            title = "Privacy Policy Document",
+            rawText = "Please review our comprehensive privacy and security terms",
+            normalizedText = "Please review our comprehensive privacy and security terms",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        // Exact word token
+        val res1 = searchEngine.search(SearchQuery(query = "security"))
+        assertEquals(1, res1.size)
+
+        // Prefix match
+        val res2 = searchEngine.search(SearchQuery(query = "priv"))
+        assertEquals(1, res2.size)
+    }
+
+    @Test
+    fun searchMixedChineseEnglish() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-mixed-1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 8000L,
+            capturedAt = 8000L,
+            title = "NVIDIA 發表會",
+            rawText = "台北旗艦店展示 RTX 5090 顯卡售價與規格",
+            normalizedText = "台北旗艦店展示 RTX 5090 顯卡售價與規格",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        val results = searchEngine.search(SearchQuery(query = "台北 RTX 5090"))
+        assertEquals(1, results.size)
+        assertEquals("mem-mixed-1", results.first().memory.id)
+    }
+
+    @Test
+    fun specialCharactersDoNotCrash() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-safe-1",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 9000L,
+            capturedAt = 9000L,
+            title = "特殊符號測試",
+            rawText = "包含 (括號) 與 \"引號\" 和 *星號 - 破折號: 冒號 ^ 符號",
+            normalizedText = "包含 (括號) 與 \"引號\" 和 *星號 - 破折號: 冒號 ^ 符號",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        // Malformed / raw FTS special operators should be safely sanitized without SQL syntax error
+        val malformedQuery = "\"*-(()^:~~"
+        val results = searchEngine.search(SearchQuery(query = malformedQuery))
+        // Should execute smoothly without throwing SQLiteException
+        assertNotNull(results)
+    }
+
+    @Test
+    fun deletedMemoryDisappearsFromIndex() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-delete-1",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 10000L,
+            capturedAt = 10000L,
+            title = "短暫記憶",
+            rawText = "即將被刪除的機密資訊",
+            normalizedText = "即將被刪除的機密資訊",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+
+        var found = searchEngine.search(SearchQuery(query = "機密資訊"))
+        assertEquals(1, found.size)
+
+        repository.deleteMemory("mem-delete-1")
+
+        found = searchEngine.search(SearchQuery(query = "機密資訊"))
+        assertTrue("Deleted memory must not appear in search results", found.isEmpty())
+    }
+
+    @Test
+    fun updatedTranscriptBecomesSearchable() = runBlocking {
+        val initialMemory = MemoryItem(
+            id = "mem-update-rec-1",
+            sourceType = SourceType.RECORDING,
+            createdAt = 11000L,
+            capturedAt = 11000L,
+            title = "錄音中",
+            rawText = null,
+            normalizedText = null,
+            sourceExists = true,
+            processingState = ProcessingState.PENDING
+        )
+        repository.saveMemory(initialMemory)
+
+        var found = searchEngine.search(SearchQuery(query = "語音辨識完成"))
+        assertTrue(found.isEmpty())
+
+        // Background STT completes
+        val updatedMemory = initialMemory.copy(
+            title = "晨會記錄",
+            rawText = "語音辨識完成：今天主要討論 Stage 5 實作",
+            normalizedText = "語音辨識完成：今天主要討論 Stage 5 實作",
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(updatedMemory)
+
+        found = searchEngine.search(SearchQuery(query = "語音辨識完成"))
+        assertEquals(1, found.size)
+        assertEquals("mem-update-rec-1", found.first().memory.id)
+    }
+
+    @Test
+    fun rebuildIndexRestoresSearch() = runBlocking {
+        val m1 = MemoryItem(
+            id = "rebuild-1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "備忘錄 1",
+            rawText = "關鍵字測試目標 Alpha",
+            normalizedText = "關鍵字測試目標 Alpha",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(m1)
+
+        // Clear FTS index directly to simulate index corruption/loss
+        database.searchDao().clearFts()
+        assertEquals(0, database.searchDao().getFtsCount())
+
+        // Rebuild index from repository
+        repository.rebuildSearchIndex()
+
+        val results = searchEngine.search(SearchQuery(query = "Alpha"))
+        assertEquals(1, results.size)
+        assertEquals("rebuild-1", results.first().memory.id)
+    }
+
+    @Test
+    fun categoryFilterFiltersResults() = runBlocking {
+        val screenshot = MemoryItem(
+            id = "cat-screen",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "專案報告",
+            rawText = "Cayana 設計架構截圖",
+            normalizedText = "Cayana 設計架構截圖",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        val sharedText = MemoryItem(
+            id = "cat-shared",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 2000L,
+            capturedAt = 2000L,
+            title = "專案筆記",
+            rawText = "Cayana 相關備忘錄",
+            normalizedText = "Cayana 相關備忘錄",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(screenshot)
+        repository.saveMemory(sharedText)
+
+        // Search ALL category
+        val allResults = searchEngine.search(SearchQuery(query = "Cayana", filterCategory = SearchFilterCategory.ALL))
+        assertEquals(2, allResults.size)
+
+        // Filter SCREENSHOTS
+        val screenshotResults = searchEngine.search(SearchQuery(query = "Cayana", filterCategory = SearchFilterCategory.SCREENSHOTS))
+        assertEquals(1, screenshotResults.size)
+        assertEquals("cat-screen", screenshotResults.first().memory.id)
+
+        // Filter SHARED
+        val sharedResults = searchEngine.search(SearchQuery(query = "Cayana", filterCategory = SearchFilterCategory.SHARED))
+        assertEquals(1, sharedResults.size)
+        assertEquals("cat-shared", sharedResults.first().memory.id)
+
+        // Filter RECORDINGS (none)
+        val recordingResults = searchEngine.search(SearchQuery(query = "Cayana", filterCategory = SearchFilterCategory.RECORDINGS))
+        assertTrue(recordingResults.isEmpty())
+    }
+
+    @Test
+    fun rankingOrdersExactTitleMatchHigherThanBodyMatch() = runBlocking {
+        val bodyMatch = MemoryItem(
+            id = "body-match",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 5000L, // newer
+            capturedAt = 5000L,
+            title = "隨手記事",
+            rawText = "這是一篇關於預算的長文",
+            normalizedText = "這是一篇關於預算的長文",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        val titleMatch = MemoryItem(
+            id = "title-match",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 1000L, // older
+            capturedAt = 1000L,
+            title = "預算",
+            rawText = "無其他內容",
+            normalizedText = "無其他內容",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(bodyMatch)
+        repository.saveMemory(titleMatch)
+
+        val results = searchEngine.search(SearchQuery(query = "預算"))
+        assertEquals(2, results.size)
+        // Title match has score 100 vs body match score 40
+        assertEquals("title-match", results[0].memory.id)
+        assertEquals("body-match", results[1].memory.id)
+    }
+}

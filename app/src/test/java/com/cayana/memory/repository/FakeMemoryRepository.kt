@@ -88,4 +88,8 @@ class FakeMemoryRepository : MemoryRepository {
     override suspend fun clearAll() {
         memoriesMap.update { emptyMap() }
     }
+
+    override suspend fun rebuildSearchIndex() {
+        // No-op for in-memory fake
+    }
 }

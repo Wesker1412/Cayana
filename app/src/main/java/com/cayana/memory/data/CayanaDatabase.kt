@@ -6,18 +6,21 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.cayana.calendar.data.CalendarActionDao
 import com.cayana.calendar.data.CalendarActionEntity
+import com.cayana.search.data.SearchDao
 
 @Database(
     entities = [
         MemoryEntity::class,
-        CalendarActionEntity::class
+        CalendarActionEntity::class,
+        MemoryFtsEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
     abstract fun memoryDao(): MemoryDao
     abstract fun calendarActionDao(): CalendarActionDao
+    abstract fun searchDao(): SearchDao
 
     companion object {
         const val DATABASE_NAME = "cayana_memory.db"
@@ -57,6 +60,89 @@ abstract class CayanaDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `calendar_actions` ADD COLUMN `location` TEXT")
                 db.execSQL("ALTER TABLE `calendar_actions` ADD COLUMN `isAllDay` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `calendar_actions` ADD COLUMN `zoneId` TEXT")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS `memories_fts` USING FTS4(
+                        `memoryId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `rawText` TEXT NOT NULL,
+                        `normalizedText` TEXT NOT NULL,
+                        `sourceType` TEXT NOT NULL,
+                        `sourceUrl` TEXT NOT NULL,
+                        `host` TEXT NOT NULL,
+                        `displayName` TEXT NOT NULL,
+                        `searchTokens` TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+
+                val cursor = db.query("SELECT id, sourceType, capturedAt, title, rawText, normalizedText, sourceUrl, metadataJson FROM memories")
+                val insertStmt = db.compileStatement(
+                    """
+                    INSERT INTO `memories_fts` (
+                        `memoryId`, `title`, `rawText`, `normalizedText`,
+                        `sourceType`, `sourceUrl`, `host`, `displayName`, `searchTokens`
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent()
+                )
+
+                try {
+                    val idCol = cursor.getColumnIndex("id")
+                    val sourceCol = cursor.getColumnIndex("sourceType")
+                    val capturedCol = cursor.getColumnIndex("capturedAt")
+                    val titleCol = cursor.getColumnIndex("title")
+                    val rawCol = cursor.getColumnIndex("rawText")
+                    val normCol = cursor.getColumnIndex("normalizedText")
+                    val urlCol = cursor.getColumnIndex("sourceUrl")
+                    val metaCol = cursor.getColumnIndex("metadataJson")
+
+                    while (cursor.moveToNext()) {
+                        val id = if (idCol >= 0) cursor.getString(idCol) ?: "" else ""
+                        val sourceTypeStr = if (sourceCol >= 0) cursor.getString(sourceCol) ?: "" else ""
+                        val capturedAt = if (capturedCol >= 0) cursor.getLong(capturedCol) else 0L
+                        val title = if (titleCol >= 0) cursor.getString(titleCol) ?: "" else ""
+                        val rawText = if (rawCol >= 0) cursor.getString(rawCol) ?: "" else ""
+                        val normText = if (normCol >= 0) cursor.getString(normCol) ?: "" else ""
+                        val sourceUrl = if (urlCol >= 0) cursor.getString(urlCol) ?: "" else ""
+                        val metaJson = if (metaCol >= 0) cursor.getString(metaCol) ?: "" else ""
+
+                        val metadata = Converters.parseMetadata(metaJson)
+                        val sourceType = runCatching { com.cayana.source.SourceType.valueOf(sourceTypeStr) }
+                            .getOrDefault(com.cayana.source.SourceType.SCREENSHOT)
+                        val host = com.cayana.search.MemorySearchDocumentBuilder.extractHost(sourceUrl) ?: ""
+                        val displayName = metadata["displayName"] ?: metadata["filename"] ?: ""
+                        val searchTokens = com.cayana.search.MemorySearchDocumentBuilder.buildSearchTokens(
+                            title = title,
+                            rawText = rawText,
+                            normalizedText = normText,
+                            sourceType = sourceType,
+                            sourceUrl = sourceUrl,
+                            host = host,
+                            displayName = displayName,
+                            capturedAt = capturedAt,
+                            metadata = metadata
+                        )
+
+                        insertStmt.clearBindings()
+                        insertStmt.bindString(1, id)
+                        insertStmt.bindString(2, title)
+                        insertStmt.bindString(3, rawText)
+                        insertStmt.bindString(4, normText)
+                        insertStmt.bindString(5, sourceTypeStr)
+                        insertStmt.bindString(6, sourceUrl)
+                        insertStmt.bindString(7, host)
+                        insertStmt.bindString(8, displayName)
+                        insertStmt.bindString(9, searchTokens)
+                        insertStmt.executeInsert()
+                    }
+                } finally {
+                    cursor.close()
+                }
             }
         }
     }

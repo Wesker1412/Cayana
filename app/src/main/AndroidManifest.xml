@@ -37,6 +37,27 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".source.share.ShareReceiverActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:noHistory="true"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name="com.cayana.calendar.receiver.UndoCalendarEventReceiver"
             android:exported="false" />

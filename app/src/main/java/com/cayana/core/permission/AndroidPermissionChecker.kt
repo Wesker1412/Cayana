@@ -52,7 +52,7 @@ class AndroidPermissionChecker(
                 // Downloads uses Storage Access Framework (SAF) folder picker rather than runtime permissions
                 emptyList()
             }
-            SourceType.SHARED_URL, SourceType.SHARED_TEXT, SourceType.SHARED_FILE -> {
+            SourceType.SHARED_URL, SourceType.SHARED_TEXT, SourceType.SHARED_IMAGE, SourceType.SHARED_DOCUMENT, SourceType.SHARED_FILE -> {
                 emptyList()
             }
         }
@@ -90,7 +90,7 @@ class AndroidPermissionChecker(
             SourceType.DOWNLOAD -> {
                 isDownloadsAuthorized(customUri)
             }
-            SourceType.SHARED_URL, SourceType.SHARED_TEXT, SourceType.SHARED_FILE -> true
+            SourceType.SHARED_URL, SourceType.SHARED_TEXT, SourceType.SHARED_IMAGE, SourceType.SHARED_DOCUMENT, SourceType.SHARED_FILE -> true
         }
     }
 

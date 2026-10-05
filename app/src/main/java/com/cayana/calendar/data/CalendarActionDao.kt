@@ -43,4 +43,7 @@ interface CalendarActionDao {
 
     @Update
     suspend fun update(action: CalendarActionEntity): Int
+
+    @Query("DELETE FROM calendar_actions WHERE memoryId = :memoryId")
+    suspend fun deleteByMemoryId(memoryId: String): Int
 }

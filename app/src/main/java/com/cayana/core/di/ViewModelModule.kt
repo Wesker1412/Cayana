@@ -10,6 +10,8 @@ val viewModelModule = module {
     viewModel {
         HomeViewModel(
             memoryRepository = get(),
+            searchEngine = getOrNull(),
+            calendarActionDao = getOrNull(),
             sourceValidator = getOrNull()
         )
     }

@@ -29,4 +29,6 @@ interface MemoryRepository {
         limit: Int = 25
     ): List<MemoryItem>
     suspend fun clearAll()
+    suspend fun rebuildSearchIndex()
+    fun isIndexRebuildNeeded(): Boolean = false
 }

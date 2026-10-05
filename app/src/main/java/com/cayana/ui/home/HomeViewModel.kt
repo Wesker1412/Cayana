@@ -2,33 +2,54 @@ package com.cayana.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.cayana.calendar.data.CalendarActionDao
 import com.cayana.memory.model.MemoryItem
 import com.cayana.memory.repository.MemoryRepository
+import com.cayana.search.MemorySearchEngine
+import com.cayana.search.SearchFilterCategory
+import com.cayana.search.SearchQuery
+import com.cayana.search.SearchResult
+import com.cayana.source.SourceExistence
+import com.cayana.source.SourceExistenceValidator
+import com.cayana.source.SourceType
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
-import com.cayana.source.SourceExistenceValidator
-import kotlinx.coroutines.flow.onEach
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     private val memoryRepository: MemoryRepository,
+    private val searchEngine: MemorySearchEngine? = null,
+    private val calendarActionDao: CalendarActionDao? = null,
     private val sourceValidator: SourceExistenceValidator? = null
 ) : ViewModel() {
 
     private val searchQuery = MutableStateFlow("")
+    private val filterCategory = MutableStateFlow(SearchFilterCategory.ALL)
+    private val selectedDetailMemory = MutableStateFlow<MemoryItem?>(null)
 
-    private val memoriesFlow = searchQuery.flatMapLatest { query ->
+    private val memoriesFlow = combine(searchQuery, filterCategory) { query, category ->
+        Pair(query, category)
+    }.flatMapLatest { (query, category) ->
         if (query.isBlank()) {
             memoryRepository.getAllMemories()
         } else {
-            memoryRepository.searchMemories(query)
+            // Use search engine if available, otherwise fallback to repository flow
+            if (searchEngine != null) {
+                val results = searchEngine.search(
+                    SearchQuery(query = query, filterCategory = category)
+                )
+                flowOf(results.map { it.memory })
+            } else {
+                memoryRepository.searchMemories(query)
+            }
         }
     }.onEach { memories ->
         checkAndReconcileSources(memories)
@@ -40,7 +61,7 @@ class HomeViewModel(
             memories.forEach { item ->
                 if (item.sourceExists && item.sourceUri != null) {
                     val existence = validator.checkSourceExistence(item.sourceUri, item.sourceType)
-                    if (existence is com.cayana.source.SourceExistence.Missing) {
+                    if (existence is SourceExistence.Missing) {
                         memoryRepository.markSourceExists(item.id, false)
                     }
                 }
@@ -51,13 +72,22 @@ class HomeViewModel(
     val uiState: StateFlow<HomeUiState> = combine(
         memoriesFlow,
         memoryRepository.getMemoryCount(),
-        searchQuery
-    ) { memories, count, query ->
+        searchQuery,
+        filterCategory,
+        selectedDetailMemory
+    ) { memories, count, query, category, detailMemory ->
+        val filtered = filterByCategory(memories, category)
+        val searchResults = filtered.map { item ->
+            SearchResult(memory = item)
+        }
         HomeUiState(
-            memories = memories,
+            memories = filtered,
+            searchResults = searchResults,
             totalCount = count,
             isLoading = false,
-            searchQuery = query
+            searchQuery = query,
+            filterCategory = category,
+            selectedDetailMemory = detailMemory
         )
     }.stateIn(
         scope = viewModelScope,
@@ -65,8 +95,26 @@ class HomeViewModel(
         initialValue = HomeUiState(isLoading = true)
     )
 
+    private fun filterByCategory(items: List<MemoryItem>, category: SearchFilterCategory): List<MemoryItem> {
+        return when (category) {
+            SearchFilterCategory.ALL -> items
+            SearchFilterCategory.SCREENSHOTS -> items.filter { it.sourceType == SourceType.SCREENSHOT }
+            SearchFilterCategory.PHOTOS -> items.filter { it.sourceType == SourceType.PHOTO }
+            SearchFilterCategory.RECORDINGS -> items.filter { it.sourceType == SourceType.RECORDING }
+            SearchFilterCategory.SHARED -> items.filter { it.sourceType.isShared }
+        }
+    }
+
     fun onSearchQueryChanged(query: String) {
         searchQuery.value = query
+    }
+
+    fun onFilterCategoryChanged(category: SearchFilterCategory) {
+        filterCategory.value = category
+    }
+
+    fun onSelectMemoryForDetail(item: MemoryItem?) {
+        selectedDetailMemory.value = item
     }
 
     fun addSampleMemory(item: MemoryItem) {
@@ -78,6 +126,12 @@ class HomeViewModel(
     fun deleteMemory(id: String) {
         viewModelScope.launch {
             memoryRepository.deleteMemory(id)
+            try {
+                calendarActionDao?.deleteByMemoryId(id)
+            } catch (_: Exception) {}
+            if (selectedDetailMemory.value?.id == id) {
+                selectedDetailMemory.value = null
+            }
         }
     }
 }

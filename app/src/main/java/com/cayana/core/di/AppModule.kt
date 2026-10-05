@@ -159,4 +159,12 @@ val appModule = module {
             permissionChecker = get()
         )
     }
+
+    single {
+        com.cayana.source.share.ShareProcessor(
+            context = androidContext(),
+            memoryRepository = get(),
+            ocrEngine = get()
+        )
+    }
 }
