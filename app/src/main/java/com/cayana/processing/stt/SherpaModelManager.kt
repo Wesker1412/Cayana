@@ -1,6 +1,7 @@
 package com.cayana.processing.stt
 
 import android.content.Context
+import com.cayana.ui.settings.repository.UserSettings
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
@@ -12,7 +13,7 @@ import java.security.MessageDigest
  * - Engine: sherpa-onnx (OfflineRecognizer)
  * - Model ID: sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
  * - Version: 2024-07-17
- * - Archive Size: 163,002,883 bytes (~155.4 MB compressed)
+ * - Archive Size: 160,304,482 bytes (~152.8 MB compressed zip / 163 MB bz2)
  * - Uncompressed Model File: model.int8.onnx (239,233,841 bytes)
  * - Tokens File: tokens.txt (315,894 bytes)
  * - Total Installed Size: 239,549,735 bytes (~228.4 MB)
@@ -26,13 +27,17 @@ object SherpaModelManager {
     const val MODEL_ID = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
     const val MODEL_VERSION = "2024-07-17"
     const val LICENSE = "Apache 2.0"
-    const val ARCHIVE_DOWNLOAD_SIZE_BYTES = 163002883L
+    const val ARCHIVE_DOWNLOAD_SIZE_BYTES = 160304482L
     const val INSTALLED_SIZE_BYTES = 239549735L
     const val EXPECTED_MODEL_SHA256 = "C71F0CE00BEC95B07744E116345E33D8CBBE08CEF896382CF907BF4B51A2CD51"
     const val EXPECTED_TOKENS_SHA256 = "F449EB28DC567533D7FA59BE34E2ABCA8784F771850C78A47FB731A31429A1DC"
 
     fun getModelDir(context: Context): File {
         return File(context.filesDir, "models/sense-voice")
+    }
+
+    fun getDownloadTempDir(context: Context): File {
+        return File(context.filesDir, "models/.download")
     }
 
     fun getModelFile(context: Context): File {
@@ -49,15 +54,52 @@ object SherpaModelManager {
         return modelFile.exists() && modelFile.length() > 0 && tokensFile.exists() && tokensFile.length() > 0
     }
 
-    fun verifyModelChecksums(context: Context): Boolean {
+    /**
+     * Checks if the model is ready with cached verified state validation.
+     * Prevents re-computing SHA-256 for 239 MB files on every chunk while ensuring
+     * modified or missing files trigger full re-verification.
+     */
+    fun isModelReady(
+        context: Context,
+        settings: UserSettings,
+        expectedModelSha256: String = EXPECTED_MODEL_SHA256,
+        expectedTokensSha256: String = EXPECTED_TOKENS_SHA256
+    ): Boolean {
+        val modelFile = getModelFile(context)
+        val tokensFile = getTokensFile(context)
+        if (!modelFile.exists() || !tokensFile.exists() || modelFile.length() == 0L || tokensFile.length() == 0L) {
+            return false
+        }
+
+        // Fast path: verify cached verified state
+        val matchesCachedState = settings.sttModelId == MODEL_ID &&
+                settings.sttModelVersion == MODEL_VERSION &&
+                settings.verifiedModelSha256.equals(expectedModelSha256, ignoreCase = true) &&
+                settings.verifiedTokensSha256.equals(expectedTokensSha256, ignoreCase = true) &&
+                settings.sttModelFileSize == modelFile.length() &&
+                settings.sttModelLastModified == modelFile.lastModified()
+
+        if (matchesCachedState) {
+            return true
+        }
+
+        // Slow path: full SHA-256 verification
+        return verifyModelChecksums(context, expectedModelSha256, expectedTokensSha256)
+    }
+
+    fun verifyModelChecksums(
+        context: Context,
+        expectedModelSha256: String = EXPECTED_MODEL_SHA256,
+        expectedTokensSha256: String = EXPECTED_TOKENS_SHA256
+    ): Boolean {
         val modelFile = getModelFile(context)
         val tokensFile = getTokensFile(context)
         if (!modelFile.exists() || !tokensFile.exists()) return false
 
         val modelHash = computeSha256(modelFile)
         val tokensHash = computeSha256(tokensFile)
-        return modelHash.equals(EXPECTED_MODEL_SHA256, ignoreCase = true) &&
-                tokensHash.equals(EXPECTED_TOKENS_SHA256, ignoreCase = true)
+        return modelHash.equals(expectedModelSha256, ignoreCase = true) &&
+                tokensHash.equals(expectedTokensSha256, ignoreCase = true)
     }
 
     fun computeSha256(file: File): String {

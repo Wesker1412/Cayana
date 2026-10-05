@@ -22,5 +22,11 @@ interface MemoryRepository {
         cursorTimestamp: Long,
         limit: Int = 25
     ): List<MemoryItem>
+    suspend fun getMemoriesForCompoundReconciliation(
+        sourceType: com.cayana.source.SourceType,
+        cursorCapturedAt: Long,
+        cursorId: String,
+        limit: Int = 25
+    ): List<MemoryItem>
     suspend fun clearAll()
 }

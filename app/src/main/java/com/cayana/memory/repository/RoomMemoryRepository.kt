@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 
 class RoomMemoryRepository(
     private val memoryDao: MemoryDao,
-    private val dispatchers: CoroutineDispatchers
+    private val dispatchers: CoroutineDispatchers = com.cayana.core.common.AppDispatchers()
 ) : MemoryRepository {
 
     override fun getAllMemories(): Flow<List<MemoryItem>> {
@@ -69,6 +69,21 @@ class RoomMemoryRepository(
                 next
             }
         }
+        entities.map { it.toDomain() }
+    }
+
+    override suspend fun getMemoriesForCompoundReconciliation(
+        sourceType: com.cayana.source.SourceType,
+        cursorCapturedAt: Long,
+        cursorId: String,
+        limit: Int
+    ): List<MemoryItem> = withContext(dispatchers.io) {
+        val entities = memoryDao.getMemoriesForCompoundReconciliation(
+            sourceType = sourceType.name,
+            cursorCapturedAt = cursorCapturedAt,
+            cursorId = cursorId,
+            limit = limit
+        )
         entities.map { it.toDomain() }
     }
 

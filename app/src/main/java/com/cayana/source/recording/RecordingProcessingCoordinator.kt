@@ -51,6 +51,7 @@ class RecordingProcessingCoordinator(
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
+    var autoTranscribeSync: Boolean = true
 
     suspend fun processPendingRecordings(): List<MemoryItem> = withContext(dispatchers.io) {
         processingMutex.withLock {
@@ -248,12 +249,15 @@ class RecordingProcessingCoordinator(
                             break
                         }
 
-                        // 7. Execute Chunked Transcription if model is available
+                        // 7. Schedule transcription work with battery policy
                         if (initialState == ProcessingState.PROCESSING) {
-                            val completedMemory = processChunksForMemory(initialMemoryItem, durationMs, totalChunks)
-                            if (completedMemory.processingState == ProcessingState.COMPLETED ||
-                                completedMemory.processingState == ProcessingState.COMPLETED_WITHOUT_TEXT) {
-                                NotificationHelper.showMemoryIngestedNotification(context, completedMemory)
+                            RecordingTranscriptionWorker.scheduleTranscription(context, initialMemoryItem.id, durationMs)
+                            if (autoTranscribeSync) {
+                                val completedMemory = processChunksForMemory(initialMemoryItem, durationMs, totalChunks)
+                                if (completedMemory.processingState == ProcessingState.COMPLETED ||
+                                    completedMemory.processingState == ProcessingState.COMPLETED_WITHOUT_TEXT) {
+                                    NotificationHelper.showMemoryIngestedNotification(context, completedMemory)
+                                }
                             }
                         }
                     }
@@ -287,7 +291,7 @@ class RecordingProcessingCoordinator(
      * Resumes transcription for in-flight recordings after process restart or failure recovery.
      * Starts from the latest completed chunk index; never restarts from chunk 0 if progress exists.
      */
-    suspend fun reconcileInFlightRecordings(): Int = withContext(dispatchers.io) {
+    suspend fun reconcileInFlightRecordings(autoTranscribeSync: Boolean = true): Int = withContext(dispatchers.io) {
         processingMutex.withLock {
             val allMemories = memoryRepository.getAllMemories().first()
             val inFlightItems = allMemories.filter {
@@ -301,14 +305,35 @@ class RecordingProcessingCoordinator(
             for (item in inFlightItems) {
                 val durationMs = item.metadata["durationMs"]?.toLongOrNull() ?: 0L
                 val totalChunks = item.metadata["totalChunks"]?.toIntOrNull() ?: 1
-                val updated = processChunksForMemory(item, durationMs, totalChunks)
-                if (updated.processingState == ProcessingState.COMPLETED ||
-                    updated.processingState == ProcessingState.COMPLETED_WITHOUT_TEXT) {
-                    NotificationHelper.showMemoryIngestedNotification(context, updated)
+                RecordingTranscriptionWorker.scheduleTranscription(context, item.id, durationMs)
+                if (autoTranscribeSync) {
+                    val updated = processChunksForMemory(item, durationMs, totalChunks)
+                    if (updated.processingState == ProcessingState.COMPLETED ||
+                        updated.processingState == ProcessingState.COMPLETED_WITHOUT_TEXT) {
+                        NotificationHelper.showMemoryIngestedNotification(context, updated)
+                        processedCount++
+                    }
+                } else {
                     processedCount++
                 }
             }
             processedCount
+        }
+    }
+
+    /**
+     * Directly transcribes a recording memory (invoked by RecordingTranscriptionWorker).
+     */
+    suspend fun transcribeRecording(memoryItem: MemoryItem): MemoryItem = withContext(dispatchers.io) {
+        processingMutex.withLock {
+            val durationMs = memoryItem.metadata["durationMs"]?.toLongOrNull() ?: 0L
+            val totalChunks = memoryItem.metadata["totalChunks"]?.toIntOrNull() ?: 1
+            val updated = processChunksForMemory(memoryItem, durationMs, totalChunks)
+            if (updated.processingState == ProcessingState.COMPLETED ||
+                updated.processingState == ProcessingState.COMPLETED_WITHOUT_TEXT) {
+                NotificationHelper.showMemoryIngestedNotification(context, updated)
+            }
+            updated
         }
     }
 
@@ -451,17 +476,20 @@ class RecordingProcessingCoordinator(
     suspend fun reconcileDeletedRecordings(batchSize: Int = 25): Int = withContext(dispatchers.io) {
         val settings = settingsRepository.getSettings().first()
         val cursorTimestamp = settings.lastRecordingReconciledCapturedAt
-        val recordings = memoryRepository.getMemoriesForReconciliation(
+        val cursorId = settings.lastRecordingReconciledMemoryId
+        val recordings = memoryRepository.getMemoriesForCompoundReconciliation(
             sourceType = SourceType.RECORDING,
-            cursorTimestamp = cursorTimestamp,
+            cursorCapturedAt = cursorTimestamp,
+            cursorId = cursorId,
             limit = batchSize
         )
-        if (recordings.isEmpty()) return@withContext 0
+        if (recordings.isEmpty()) {
+            settingsRepository.resetRecordingReconcileCursor()
+            return@withContext 0
+        }
 
         var updatedCount = 0
-        var minTimestamp = cursorTimestamp
         for (item in recordings) {
-            minTimestamp = minOf(minTimestamp, item.capturedAt)
             val uriString = item.sourceUri ?: continue
             val existence = sourceExistenceValidator.checkSourceExistence(uriString, SourceType.RECORDING)
             when (existence) {
@@ -478,8 +506,12 @@ class RecordingProcessingCoordinator(
                 }
             }
         }
-        val newCursor = if (recordings.size < batchSize) Long.MAX_VALUE else minTimestamp
-        settingsRepository.updateLastRecordingReconciledCapturedAt(newCursor)
+        val lastItem = recordings.last()
+        if (recordings.size < batchSize) {
+            settingsRepository.resetRecordingReconcileCursor()
+        } else {
+            settingsRepository.updateRecordingReconcileCursor(lastItem.capturedAt, lastItem.id)
+        }
         updatedCount
     }
 

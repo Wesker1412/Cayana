@@ -38,6 +38,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -232,6 +233,8 @@ fun SettingsScreen(
                         if (index > 0) Spacer(modifier = Modifier.height(16.dp))
                         SourceItemRow(
                             item = item,
+                            isSttModelInstalled = uiState.isSttModelInstalled,
+                            onDownloadModelClick = { viewModel.showSttModelDialog() },
                             onCheckedChange = { checked ->
                                 viewModel.toggleSource(item.type, checked)
                                 if (checked && item.status != SourceStatus.ENABLED_AND_AUTHORIZED) {
@@ -586,11 +589,110 @@ fun SettingsScreen(
             }
         )
     }
+
+    // STT Model Download Dialog
+    if (uiState.showSttModelDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (uiState.sttModelInstallState !is ModelInstallUiState.Downloading &&
+                    uiState.sttModelInstallState !is ModelInstallUiState.Verifying &&
+                    uiState.sttModelInstallState !is ModelInstallUiState.Installing
+                ) {
+                    viewModel.dismissSttModelDialog()
+                }
+            },
+            title = { Text("本機語音辨識模型") },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    when (val state = uiState.sttModelInstallState) {
+                        is ModelInstallUiState.Idle -> {
+                            Text(
+                                "約 156 MB 下載，安裝後約 229 MB\n\n錄音只會在此裝置上處理。",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        is ModelInstallUiState.Downloading -> {
+                            Text("正在下載模型檔案...", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            if (state.percentage >= 0) {
+                                LinearProgressIndicator(
+                                    progress = { state.percentage / 100f },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "${state.percentage}% (${state.bytesDownloaded / 1048576} MB / ${state.totalBytes / 1048576} MB)",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            } else {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                        is ModelInstallUiState.Verifying -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("驗證模型 SHA-256 完整性...", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        is ModelInstallUiState.Installing -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("正在安裝模型至安全目錄...", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        is ModelInstallUiState.Completed -> {
+                            Text("✓ 模型已成功安裝！現在錄音將在離線狀態下自動進行本機語音辨識。", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        is ModelInstallUiState.Failed -> {
+                            Text(
+                                "安裝失敗：${state.message}\n\n已清除暫存檔案。錄音已安全保留為等待模型狀態。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                when (uiState.sttModelInstallState) {
+                    is ModelInstallUiState.Idle -> {
+                        Button(onClick = { viewModel.startModelDownload() }) {
+                            Text("下載模型")
+                        }
+                    }
+                    is ModelInstallUiState.Completed -> {
+                        Button(onClick = { viewModel.dismissSttModelDialog() }) {
+                            Text("完成")
+                        }
+                    }
+                    is ModelInstallUiState.Failed -> {
+                        Button(onClick = { viewModel.startModelDownload() }) {
+                            Text("重試")
+                        }
+                    }
+                    else -> {}
+                }
+            },
+            dismissButton = {
+                if (uiState.sttModelInstallState is ModelInstallUiState.Idle ||
+                    uiState.sttModelInstallState is ModelInstallUiState.Failed
+                ) {
+                    TextButton(onClick = { viewModel.dismissSttModelDialog() }) {
+                        Text("取消")
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun SourceItemRow(
     item: SourceItemUiState,
+    isSttModelInstalled: Boolean = false,
+    onDownloadModelClick: () -> Unit = {},
     onCheckedChange: (Boolean) -> Unit,
     onRequestPermission: () -> Unit,
     onRequestSettings: () -> Unit
@@ -672,6 +774,35 @@ private fun SourceItemRow(
                         }
                     }
                     else -> {}
+                }
+            }
+
+            if (item.type == SourceType.RECORDING) {
+                Spacer(modifier = Modifier.height(8.dp))
+                if (isSttModelInstalled) {
+                    Text(
+                        text = "✓ 本機語音辨識模型已就緒 (SenseVoice INT8)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "⚠ 尚未下載語音模型 (156 MB)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        OutlinedButton(
+                            onClick = onDownloadModelClick,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("下載模型", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
         }

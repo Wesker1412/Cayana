@@ -18,11 +18,18 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.cayana.processing.SpeechToTextEngine
+import com.cayana.processing.stt.SherpaModelInstaller
+import com.cayana.source.recording.RecordingProcessingCoordinator
+
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val permissionChecker: PermissionChecker,
     private val calendarProviderHelper: CalendarProviderHelper,
-    private val screenshotWatcher: ScreenshotSourceWatcher? = null
+    private val screenshotWatcher: ScreenshotSourceWatcher? = null,
+    private val modelInstaller: SherpaModelInstaller? = null,
+    private val sttEngine: SpeechToTextEngine? = null,
+    private val recordingCoordinator: RecordingProcessingCoordinator? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -35,6 +42,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             settingsRepository.getSettings().collect { userSettings ->
                 lastUserSettings = userSettings
+                val isInstalled = userSettings.verifiedModelSha256 != null || (sttEngine?.isModelAvailable == true)
                 val sourceItems = listOf(
                     createSourceItem(
                         SourceType.SCREENSHOT,
@@ -69,12 +77,14 @@ class SettingsViewModel(
                 _uiState.update { current ->
                     current.copy(
                         settings = userSettings,
-                        sourceItems = sourceItems
+                        sourceItems = sourceItems,
+                        isSttModelInstalled = isInstalled
                     )
                 }
             }
         }
         checkCalendarPermission()
+        checkModelStatus()
     }
 
     private fun createSourceItem(
@@ -98,6 +108,9 @@ class SettingsViewModel(
     fun toggleSource(sourceType: SourceType, enabled: Boolean) {
         if (!enabled) {
             deniedSources.remove(sourceType)
+        }
+        if (sourceType == SourceType.RECORDING && enabled && !_uiState.value.isSttModelInstalled) {
+            _uiState.update { it.copy(showSttModelDialog = true) }
         }
         viewModelScope.launch {
             settingsRepository.updateSourceEnabled(sourceType, enabled)
@@ -222,6 +235,96 @@ class SettingsViewModel(
     fun toggleAutoCalendar(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.updateAutoCalendar(enabled)
+        }
+    }
+
+    fun showSttModelDialog() {
+        _uiState.update { it.copy(showSttModelDialog = true) }
+    }
+
+    fun dismissSttModelDialog() {
+        _uiState.update { it.copy(showSttModelDialog = false, sttModelInstallState = ModelInstallUiState.Idle) }
+    }
+
+    fun checkModelStatus() {
+        val available = sttEngine?.isModelAvailable ?: false
+        viewModelScope.launch {
+            val settings = settingsRepository.getSettings().first()
+            val installed = available || settings.verifiedModelSha256 != null
+            _uiState.update { it.copy(isSttModelInstalled = installed) }
+        }
+    }
+
+    fun startModelDownload(customUrl: String? = null) {
+        val installer = modelInstaller ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(sttModelInstallState = ModelInstallUiState.Downloading(0L, 0L, 0)) }
+            try {
+                val success = if (customUrl != null) {
+                    installer.downloadAndInstall(customUrl) { progress ->
+                        updateInstallProgress(progress)
+                    }
+                } else {
+                    installer.downloadAndInstall { progress ->
+                        updateInstallProgress(progress)
+                    }
+                }
+                if (success) {
+                    checkModelStatus()
+                    _uiState.update {
+                        it.copy(
+                            isSttModelInstalled = true,
+                            sttModelInstallState = ModelInstallUiState.Completed
+                        )
+                    }
+                    recordingCoordinator?.reconcileInFlightRecordings()
+                } else {
+                    _uiState.update {
+                        it.copy(sttModelInstallState = ModelInstallUiState.Failed("Download failed"))
+                    }
+                }
+            } catch (e: Throwable) {
+                _uiState.update {
+                    it.copy(sttModelInstallState = ModelInstallUiState.Failed(e.message ?: "Download failed"))
+                }
+            }
+        }
+    }
+
+    private fun updateInstallProgress(progress: SherpaModelInstaller.InstallProgress) {
+        when (progress) {
+            is SherpaModelInstaller.InstallProgress.Downloading -> {
+                _uiState.update {
+                    it.copy(
+                        sttModelInstallState = ModelInstallUiState.Downloading(
+                            progress.bytesDownloaded,
+                            progress.totalBytes,
+                            progress.percentage
+                        )
+                    )
+                }
+            }
+            is SherpaModelInstaller.InstallProgress.Verifying -> {
+                _uiState.update { it.copy(sttModelInstallState = ModelInstallUiState.Verifying) }
+            }
+            is SherpaModelInstaller.InstallProgress.Installing -> {
+                _uiState.update { it.copy(sttModelInstallState = ModelInstallUiState.Installing) }
+            }
+            is SherpaModelInstaller.InstallProgress.Completed -> {
+                _uiState.update {
+                    it.copy(
+                        isSttModelInstalled = true,
+                        sttModelInstallState = ModelInstallUiState.Completed
+                    )
+                }
+            }
+            is SherpaModelInstaller.InstallProgress.Failed -> {
+                _uiState.update {
+                    it.copy(
+                        sttModelInstallState = ModelInstallUiState.Failed(progress.error.message ?: "Installation failed")
+                    )
+                }
+            }
         }
     }
 }

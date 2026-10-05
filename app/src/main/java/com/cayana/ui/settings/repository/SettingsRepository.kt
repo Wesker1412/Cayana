@@ -41,8 +41,14 @@ data class UserSettings(
     val sttModelVersion: String? = null,
     val sttModelSha256: String? = null,
     val sttModelInstalledAt: Long = 0L,
+    val verifiedModelSha256: String? = sttModelSha256,
+    val verifiedTokensSha256: String? = null,
+    val sttModelFileSize: Long = 0L,
+    val sttModelLastModified: Long = 0L,
     val lastPhotoReconciledCapturedAt: Long = Long.MAX_VALUE,
-    val lastRecordingReconciledCapturedAt: Long = Long.MAX_VALUE
+    val lastPhotoReconciledMemoryId: String = "",
+    val lastRecordingReconciledCapturedAt: Long = Long.MAX_VALUE,
+    val lastRecordingReconciledMemoryId: String = ""
 )
 
 interface SettingsRepository {
@@ -64,8 +70,21 @@ interface SettingsRepository {
     suspend fun updatePhotoMediaStoreVersion(version: String?)
     suspend fun updateRecordingMediaStoreVersion(version: String?)
     suspend fun updateSttModelInfo(modelId: String?, modelVersion: String?, modelSha256: String?, installedAt: Long)
+    suspend fun updateVerifiedSttModel(
+        modelId: String,
+        modelVersion: String,
+        modelSha256: String,
+        tokensSha256: String,
+        fileSize: Long,
+        lastModified: Long
+    )
+    suspend fun clearSttModelMetadata()
     suspend fun updateLastPhotoReconciledCapturedAt(timestamp: Long)
     suspend fun updateLastRecordingReconciledCapturedAt(timestamp: Long)
+    suspend fun updatePhotoReconcileCursor(capturedAt: Long, memoryId: String)
+    suspend fun resetPhotoReconcileCursor()
+    suspend fun updateRecordingReconcileCursor(capturedAt: Long, memoryId: String)
+    suspend fun resetRecordingReconcileCursor()
 }
 
 /**
@@ -173,5 +192,78 @@ class InMemorySettingsRepository(
 
     override suspend fun updateLastRecordingReconciledCapturedAt(timestamp: Long) {
         _settings.update { it.copy(lastRecordingReconciledCapturedAt = timestamp) }
+    }
+
+    override suspend fun updatePhotoReconcileCursor(capturedAt: Long, memoryId: String) {
+        _settings.update {
+            it.copy(
+                lastPhotoReconciledCapturedAt = capturedAt,
+                lastPhotoReconciledMemoryId = memoryId
+            )
+        }
+    }
+
+    override suspend fun resetPhotoReconcileCursor() {
+        _settings.update {
+            it.copy(
+                lastPhotoReconciledCapturedAt = Long.MAX_VALUE,
+                lastPhotoReconciledMemoryId = ""
+            )
+        }
+    }
+
+    override suspend fun updateRecordingReconcileCursor(capturedAt: Long, memoryId: String) {
+        _settings.update {
+            it.copy(
+                lastRecordingReconciledCapturedAt = capturedAt,
+                lastRecordingReconciledMemoryId = memoryId
+            )
+        }
+    }
+
+    override suspend fun resetRecordingReconcileCursor() {
+        _settings.update {
+            it.copy(
+                lastRecordingReconciledCapturedAt = Long.MAX_VALUE,
+                lastRecordingReconciledMemoryId = ""
+            )
+        }
+    }
+
+    override suspend fun updateVerifiedSttModel(
+        modelId: String,
+        modelVersion: String,
+        modelSha256: String,
+        tokensSha256: String,
+        fileSize: Long,
+        lastModified: Long
+    ) {
+        _settings.update {
+            it.copy(
+                sttModelId = modelId,
+                sttModelVersion = modelVersion,
+                sttModelSha256 = modelSha256,
+                verifiedModelSha256 = modelSha256,
+                verifiedTokensSha256 = tokensSha256,
+                sttModelFileSize = fileSize,
+                sttModelLastModified = lastModified,
+                sttModelInstalledAt = System.currentTimeMillis()
+            )
+        }
+    }
+
+    override suspend fun clearSttModelMetadata() {
+        _settings.update {
+            it.copy(
+                sttModelId = null,
+                sttModelVersion = null,
+                sttModelSha256 = null,
+                verifiedModelSha256 = null,
+                verifiedTokensSha256 = null,
+                sttModelFileSize = 0L,
+                sttModelLastModified = 0L,
+                sttModelInstalledAt = 0L
+            )
+        }
     }
 }

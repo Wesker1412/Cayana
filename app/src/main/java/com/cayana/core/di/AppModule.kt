@@ -104,6 +104,14 @@ val appModule = module {
     }
 
     single {
+        com.cayana.processing.stt.SherpaModelInstaller(
+            context = androidContext(),
+            settingsRepository = get(),
+            dispatchers = get()
+        )
+    }
+
+    single {
         com.cayana.source.photo.PhotoProcessingCoordinator(
             context = androidContext(),
             memoryRepository = get(),

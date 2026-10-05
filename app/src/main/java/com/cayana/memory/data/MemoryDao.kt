@@ -42,6 +42,24 @@ interface MemoryDao {
     @Query("SELECT * FROM memories WHERE sourceType = :sourceType AND sourceExists = 1 ORDER BY capturedAt DESC LIMIT :limit")
     suspend fun getInitialMemoriesForReconciliation(sourceType: String, limit: Int): List<MemoryEntity>
 
+    @Query("""
+        SELECT * FROM memories 
+        WHERE sourceType = :sourceType 
+          AND sourceExists = 1 
+          AND (
+              capturedAt < :cursorCapturedAt 
+              OR (capturedAt = :cursorCapturedAt AND id < :cursorId)
+          )
+        ORDER BY capturedAt DESC, id DESC 
+        LIMIT :limit
+    """)
+    suspend fun getMemoriesForCompoundReconciliation(
+        sourceType: String,
+        cursorCapturedAt: Long,
+        cursorId: String,
+        limit: Int
+    ): List<MemoryEntity>
+
     @Delete
     suspend fun delete(entity: MemoryEntity)
 

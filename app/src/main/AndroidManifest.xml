@@ -14,9 +14,13 @@
     <!-- Notification permission for Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Internet permission for downloading on-device STT model artifacts -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".CayanaApplication"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

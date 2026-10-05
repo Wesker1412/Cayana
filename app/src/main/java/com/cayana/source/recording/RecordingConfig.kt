@@ -43,4 +43,24 @@ object RecordingConfig {
             else -> BatteryPolicy.CHARGING
         }
     }
+
+    /**
+     * Builds WorkManager Constraints derived strictly from the BatteryPolicy.
+     */
+    fun getConstraints(durationMs: Long): androidx.work.Constraints {
+        val policy = getBatteryPolicy(durationMs)
+        val builder = androidx.work.Constraints.Builder()
+        when (policy) {
+            BatteryPolicy.NORMAL -> {
+                // Short recordings (< 5m): no special battery constraints
+            }
+            BatteryPolicy.BATTERY_NOT_LOW -> {
+                builder.setRequiresBatteryNotLow(true)
+            }
+            BatteryPolicy.CHARGING -> {
+                builder.setRequiresCharging(true)
+            }
+        }
+        return builder.build()
+    }
 }

@@ -51,10 +51,36 @@ class SherpaOnnxSttEngine(
     private var recognizer: OfflineRecognizer? = null
     private val initLock = Any()
 
-    fun isModelReady(ctx: Context): Boolean {
+    @Volatile
+    private var cachedVerifiedValid: Boolean? = null
+    private var lastVerifiedMtime: Long = 0L
+    private var lastVerifiedLength: Long = 0L
+
+    fun isModelReady(
+        ctx: Context,
+        expectedModelSha: String = SherpaModelManager.EXPECTED_MODEL_SHA256,
+        expectedTokensSha: String = SherpaModelManager.EXPECTED_TOKENS_SHA256
+    ): Boolean {
         val modelFile = getModelFile(ctx)
         val tokensFile = getTokensFile(ctx)
-        return modelFile.exists() && modelFile.length() > 0 && tokensFile.exists() && tokensFile.length() > 0
+        if (!modelFile.exists() || !tokensFile.exists() || modelFile.length() == 0L || tokensFile.length() == 0L) {
+            cachedVerifiedValid = null
+            return false
+        }
+        if (modelDirProvider != null) {
+            return true
+        }
+        val currentMtime = modelFile.lastModified()
+        val currentLength = modelFile.length()
+        val cached = cachedVerifiedValid
+        if (cached != null && lastVerifiedMtime == currentMtime && lastVerifiedLength == currentLength) {
+            return cached
+        }
+        val valid = SherpaModelManager.verifyModelChecksums(ctx, expectedModelSha, expectedTokensSha)
+        cachedVerifiedValid = valid
+        lastVerifiedMtime = currentMtime
+        lastVerifiedLength = currentLength
+        return valid
     }
 
     private fun getModelFile(ctx: Context): File {
@@ -144,29 +170,13 @@ class SherpaOnnxSttEngine(
             )
         }
 
-        // 2. Real audio decoding to 16 kHz mono float samples
-        val fullSamples = try {
-            AudioDecoder.decodeToMono16k(context, uri)
+        // 2. Real range-based audio decoding to 16 kHz mono float samples (memory bound to chunk duration)
+        val chunkSamples = try {
+            AudioDecoder.decodeRangeToMono16k(context, uri, startMs, durationMs)
         } catch (e: Exception) {
-            CayanaLogger.w("SherpaOnnxStt", "Audio decoding failed for chunk $chunkIndex: ${e.message}")
+            CayanaLogger.w("SherpaOnnxStt", "Range audio decoding failed for chunk $chunkIndex: ${e.message}")
             return@withContext SttChunkResult.Failure(e, isRetryable = false)
         }
-
-        if (fullSamples.isEmpty()) {
-            return@withContext SttChunkResult.Success(
-                chunkIndex = chunkIndex,
-                text = "",
-                segments = emptyList()
-            )
-        }
-
-        // 3. Exact sample-accurate time slicing [startMs, startMs + durationMs]
-        val chunkSamples = AudioDecoder.sliceSamples(
-            samples = fullSamples,
-            startMs = startMs,
-            durationMs = durationMs,
-            sampleRate = 16000
-        )
 
         if (chunkSamples.isEmpty()) {
             return@withContext SttChunkResult.Success(

@@ -69,6 +69,22 @@ class FakeMemoryRepository : MemoryRepository {
         }
     }
 
+    override suspend fun getMemoriesForCompoundReconciliation(
+        sourceType: com.cayana.source.SourceType,
+        cursorCapturedAt: Long,
+        cursorId: String,
+        limit: Int
+    ): List<MemoryItem> {
+        val eligible = memoriesMap.value.values
+            .filter { it.sourceType == sourceType && it.sourceExists }
+            .sortedWith(compareByDescending<MemoryItem> { it.capturedAt }.thenByDescending { it.id })
+
+        val remaining = eligible.filter {
+            it.capturedAt < cursorCapturedAt || (it.capturedAt == cursorCapturedAt && it.id < cursorId)
+        }
+        return remaining.take(limit)
+    }
+
     override suspend fun clearAll() {
         memoriesMap.update { emptyMap() }
     }

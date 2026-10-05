@@ -134,6 +134,16 @@ class ScreenshotCursorCommitTest {
             .filter { it.sourceType == sourceType && it.sourceExists }
             .sortedByDescending { it.capturedAt }
             .take(limit)
+        override suspend fun getMemoriesForCompoundReconciliation(
+            sourceType: com.cayana.source.SourceType,
+            cursorCapturedAt: Long,
+            cursorId: String,
+            limit: Int
+        ): List<MemoryItem> = storage.values
+            .filter { it.sourceType == sourceType && it.sourceExists }
+            .filter { it.capturedAt < cursorCapturedAt || (it.capturedAt == cursorCapturedAt && it.id < cursorId) }
+            .sortedWith(compareByDescending<MemoryItem> { it.capturedAt }.thenByDescending { it.id })
+            .take(limit)
         override suspend fun clearAll() {
             storage.clear()
             countFlow.value = 0

@@ -19,7 +19,10 @@ val viewModelModule = module {
             settingsRepository = get(),
             permissionChecker = get(),
             calendarProviderHelper = get(),
-            screenshotWatcher = getOrNull()
+            screenshotWatcher = getOrNull(),
+            modelInstaller = getOrNull(),
+            sttEngine = getOrNull(),
+            recordingCoordinator = getOrNull()
         )
     }
 

@@ -45,9 +45,15 @@ class DataStoreSettingsRepository(
         val KEY_STT_MODEL_ID = stringPreferencesKey("stt_model_id")
         val KEY_STT_MODEL_VERSION = stringPreferencesKey("stt_model_version")
         val KEY_STT_MODEL_SHA256 = stringPreferencesKey("stt_model_sha256")
+        val KEY_VERIFIED_MODEL_SHA256 = stringPreferencesKey("verified_model_sha256")
+        val KEY_VERIFIED_TOKENS_SHA256 = stringPreferencesKey("verified_tokens_sha256")
+        val KEY_STT_MODEL_FILE_SIZE = longPreferencesKey("stt_model_file_size")
+        val KEY_STT_MODEL_LAST_MODIFIED = longPreferencesKey("stt_model_last_modified")
         val KEY_STT_MODEL_INSTALLED_AT = longPreferencesKey("stt_model_installed_at")
         val KEY_LAST_PHOTO_RECONCILED_AT = longPreferencesKey("last_photo_reconciled_captured_at")
+        val KEY_LAST_PHOTO_RECONCILED_ID = stringPreferencesKey("last_photo_reconciled_memory_id")
         val KEY_LAST_RECORDING_RECONCILED_AT = longPreferencesKey("last_recording_reconciled_captured_at")
+        val KEY_LAST_RECORDING_RECONCILED_ID = stringPreferencesKey("last_recording_reconciled_memory_id")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -124,9 +130,15 @@ class DataStoreSettingsRepository(
                 val sttModelId = preferences[KEY_STT_MODEL_ID]
                 val sttModelVersion = preferences[KEY_STT_MODEL_VERSION]
                 val sttModelSha256 = preferences[KEY_STT_MODEL_SHA256]
+                val verifiedModelSha256 = preferences[KEY_VERIFIED_MODEL_SHA256] ?: sttModelSha256
+                val verifiedTokensSha256 = preferences[KEY_VERIFIED_TOKENS_SHA256]
+                val sttModelFileSize = preferences[KEY_STT_MODEL_FILE_SIZE] ?: 0L
+                val sttModelLastModified = preferences[KEY_STT_MODEL_LAST_MODIFIED] ?: 0L
                 val sttModelInstalledAt = preferences[KEY_STT_MODEL_INSTALLED_AT] ?: 0L
                 val lastPhotoReconciled = preferences[KEY_LAST_PHOTO_RECONCILED_AT] ?: Long.MAX_VALUE
+                val lastPhotoReconciledId = preferences[KEY_LAST_PHOTO_RECONCILED_ID] ?: ""
                 val lastRecordingReconciled = preferences[KEY_LAST_RECORDING_RECONCILED_AT] ?: Long.MAX_VALUE
+                val lastRecordingReconciledId = preferences[KEY_LAST_RECORDING_RECONCILED_ID] ?: ""
 
                 UserSettings(
                     onboardingCompleted = onboardingCompleted,
@@ -152,8 +164,14 @@ class DataStoreSettingsRepository(
                     sttModelVersion = sttModelVersion,
                     sttModelSha256 = sttModelSha256,
                     sttModelInstalledAt = sttModelInstalledAt,
+                    verifiedModelSha256 = verifiedModelSha256,
+                    verifiedTokensSha256 = verifiedTokensSha256,
+                    sttModelFileSize = sttModelFileSize,
+                    sttModelLastModified = sttModelLastModified,
                     lastPhotoReconciledCapturedAt = lastPhotoReconciled,
-                    lastRecordingReconciledCapturedAt = lastRecordingReconciled
+                    lastPhotoReconciledMemoryId = lastPhotoReconciledId,
+                    lastRecordingReconciledCapturedAt = lastRecordingReconciled,
+                    lastRecordingReconciledMemoryId = lastRecordingReconciledId
                 )
             }
     }
@@ -311,6 +329,67 @@ class DataStoreSettingsRepository(
     override suspend fun updateLastRecordingReconciledCapturedAt(timestamp: Long) {
         dataStore.edit { preferences ->
             preferences[KEY_LAST_RECORDING_RECONCILED_AT] = timestamp
+        }
+    }
+
+    override suspend fun updatePhotoReconcileCursor(capturedAt: Long, memoryId: String) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_PHOTO_RECONCILED_AT] = capturedAt
+            preferences[KEY_LAST_PHOTO_RECONCILED_ID] = memoryId
+        }
+    }
+
+    override suspend fun resetPhotoReconcileCursor() {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_PHOTO_RECONCILED_AT] = Long.MAX_VALUE
+            preferences[KEY_LAST_PHOTO_RECONCILED_ID] = ""
+        }
+    }
+
+    override suspend fun updateRecordingReconcileCursor(capturedAt: Long, memoryId: String) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_RECORDING_RECONCILED_AT] = capturedAt
+            preferences[KEY_LAST_RECORDING_RECONCILED_ID] = memoryId
+        }
+    }
+
+    override suspend fun resetRecordingReconcileCursor() {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_RECORDING_RECONCILED_AT] = Long.MAX_VALUE
+            preferences[KEY_LAST_RECORDING_RECONCILED_ID] = ""
+        }
+    }
+
+    override suspend fun updateVerifiedSttModel(
+        modelId: String,
+        modelVersion: String,
+        modelSha256: String,
+        tokensSha256: String,
+        fileSize: Long,
+        lastModified: Long
+    ) {
+        dataStore.edit { preferences ->
+            preferences[KEY_STT_MODEL_ID] = modelId
+            preferences[KEY_STT_MODEL_VERSION] = modelVersion
+            preferences[KEY_STT_MODEL_SHA256] = modelSha256
+            preferences[KEY_VERIFIED_MODEL_SHA256] = modelSha256
+            preferences[KEY_VERIFIED_TOKENS_SHA256] = tokensSha256
+            preferences[KEY_STT_MODEL_FILE_SIZE] = fileSize
+            preferences[KEY_STT_MODEL_LAST_MODIFIED] = lastModified
+            preferences[KEY_STT_MODEL_INSTALLED_AT] = System.currentTimeMillis()
+        }
+    }
+
+    override suspend fun clearSttModelMetadata() {
+        dataStore.edit { preferences ->
+            preferences.remove(KEY_STT_MODEL_ID)
+            preferences.remove(KEY_STT_MODEL_VERSION)
+            preferences.remove(KEY_STT_MODEL_SHA256)
+            preferences.remove(KEY_VERIFIED_MODEL_SHA256)
+            preferences.remove(KEY_VERIFIED_TOKENS_SHA256)
+            preferences.remove(KEY_STT_MODEL_FILE_SIZE)
+            preferences.remove(KEY_STT_MODEL_LAST_MODIFIED)
+            preferences.remove(KEY_STT_MODEL_INSTALLED_AT)
         }
     }
 }

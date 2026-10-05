@@ -327,17 +327,20 @@ class PhotoProcessingCoordinator(
     suspend fun reconcileDeletedPhotos(batchSize: Int = 25): Int = withContext(dispatchers.io) {
         val settings = settingsRepository.getSettings().first()
         val cursorTimestamp = settings.lastPhotoReconciledCapturedAt
-        val photos = memoryRepository.getMemoriesForReconciliation(
+        val cursorId = settings.lastPhotoReconciledMemoryId
+        val photos = memoryRepository.getMemoriesForCompoundReconciliation(
             sourceType = SourceType.PHOTO,
-            cursorTimestamp = cursorTimestamp,
+            cursorCapturedAt = cursorTimestamp,
+            cursorId = cursorId,
             limit = batchSize
         )
-        if (photos.isEmpty()) return@withContext 0
+        if (photos.isEmpty()) {
+            settingsRepository.resetPhotoReconcileCursor()
+            return@withContext 0
+        }
 
         var updatedCount = 0
-        var minTimestamp = cursorTimestamp
         for (item in photos) {
-            minTimestamp = minOf(minTimestamp, item.capturedAt)
             val uriString = item.sourceUri ?: continue
             val existence = sourceExistenceValidator.checkSourceExistence(uriString, SourceType.PHOTO)
             when (existence) {
@@ -354,8 +357,12 @@ class PhotoProcessingCoordinator(
                 }
             }
         }
-        val newCursor = if (photos.size < batchSize) Long.MAX_VALUE else minTimestamp
-        settingsRepository.updateLastPhotoReconciledCapturedAt(newCursor)
+        val lastItem = photos.last()
+        if (photos.size < batchSize) {
+            settingsRepository.resetPhotoReconcileCursor()
+        } else {
+            settingsRepository.updatePhotoReconcileCursor(lastItem.capturedAt, lastItem.id)
+        }
         updatedCount
     }
 
