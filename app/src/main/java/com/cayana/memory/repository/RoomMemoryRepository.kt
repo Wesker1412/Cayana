@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class RoomMemoryRepository(
@@ -21,6 +23,8 @@ class RoomMemoryRepository(
     private val searchIndexStateDao: SearchIndexStateDao? = null,
     private val dispatchers: CoroutineDispatchers = com.cayana.core.common.AppDispatchers()
 ) : MemoryRepository {
+
+    private val searchIndexMutationMutex = Mutex()
 
     @Volatile
     private var indexNeedsRebuild: Boolean = false
@@ -48,37 +52,41 @@ class RoomMemoryRepository(
     }
 
     override suspend fun saveMemory(item: MemoryItem): Unit = withContext(dispatchers.io) {
-        searchIndexStateDao?.markDirty()
-        indexNeedsRebuild = true
+        searchIndexMutationMutex.withLock {
+            searchIndexStateDao?.markDirty()
+            indexNeedsRebuild = true
 
-        val entity = MemoryEntity.fromDomain(item)
-        memoryDao.insertOrUpdate(entity)
+            val entity = MemoryEntity.fromDomain(item)
+            memoryDao.insertOrUpdate(entity)
 
-        // Update derived search index safely with replaceFts
-        try {
-            searchDao?.let { sDao ->
-                val ftsEntity = MemorySearchDocumentBuilder.buildDocument(item)
-                sDao.replaceFts(ftsEntity)
+            // Update derived search index safely with replaceFts
+            try {
+                searchDao?.let { sDao ->
+                    val ftsEntity = MemorySearchDocumentBuilder.buildDocument(item)
+                    sDao.replaceFts(ftsEntity)
+                }
+                searchIndexStateDao?.clearDirtyIfNoPending()
+                indexNeedsRebuild = searchIndexStateDao?.isDirty() ?: false
+            } catch (e: Exception) {
+                CayanaLogger.w("SearchIndex", "Failed to replace FTS: ${e.javaClass.simpleName}")
             }
-            searchIndexStateDao?.clearDirtyIfNoPending()
-            indexNeedsRebuild = searchIndexStateDao?.isDirty() ?: false
-        } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to replace FTS: ${e.javaClass.simpleName}")
         }
     }
 
     override suspend fun deleteMemory(id: String): Unit = withContext(dispatchers.io) {
-        searchIndexStateDao?.markDirty()
-        indexNeedsRebuild = true
+        searchIndexMutationMutex.withLock {
+            searchIndexStateDao?.markDirty()
+            indexNeedsRebuild = true
 
-        memoryDao.deleteById(id)
+            memoryDao.deleteById(id)
 
-        try {
-            searchDao?.deleteFtsByMemoryId(id)
-            searchIndexStateDao?.clearDirtyIfNoPending()
-            indexNeedsRebuild = searchIndexStateDao?.isDirty() ?: false
-        } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to delete FTS entry: ${e.javaClass.simpleName}")
+            try {
+                searchDao?.deleteFtsByMemoryId(id)
+                searchIndexStateDao?.clearDirtyIfNoPending()
+                indexNeedsRebuild = searchIndexStateDao?.isDirty() ?: false
+            } catch (e: Exception) {
+                CayanaLogger.w("SearchIndex", "Failed to delete FTS entry: ${e.javaClass.simpleName}")
+            }
         }
     }
 
@@ -90,23 +98,25 @@ class RoomMemoryRepository(
 
     override suspend fun rebuildSearchIndex(): Unit = withContext(dispatchers.io) {
         val sDao = searchDao ?: return@withContext
-        try {
-            sDao.clearFts()
-            val allEntities = memoryDao.getAllMemoriesDirect()
-            // Bounded batches of 50
-            allEntities.chunked(50).forEach { batch ->
-                val ftsList = batch.map { entity ->
-                    val metadata = Converters.parseMetadata(entity.metadataJson)
-                    MemorySearchDocumentBuilder.buildDocument(entity, metadata)
+        searchIndexMutationMutex.withLock {
+            try {
+                sDao.clearFts()
+                val allEntities = memoryDao.getAllMemoriesDirect()
+                // Bounded batches of 50
+                allEntities.chunked(50).forEach { batch ->
+                    val ftsList = batch.map { entity ->
+                        val metadata = Converters.parseMetadata(entity.metadataJson)
+                        MemorySearchDocumentBuilder.buildDocument(entity, metadata)
+                    }
+                    sDao.insertAllFts(ftsList)
                 }
-                sDao.insertAllFts(ftsList)
+                searchIndexStateDao?.forceClearDirty()
+                indexNeedsRebuild = false
+            } catch (e: Exception) {
+                CayanaLogger.w("SearchIndex", "Failed to rebuild search index: ${e.javaClass.simpleName}")
+                indexNeedsRebuild = true
+                throw e
             }
-            searchIndexStateDao?.forceClearDirty()
-            indexNeedsRebuild = false
-        } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to rebuild search index: ${e.javaClass.simpleName}")
-            indexNeedsRebuild = true
-            throw e
         }
         Unit
     }
@@ -154,13 +164,15 @@ class RoomMemoryRepository(
     }
 
     override suspend fun clearAll(): Unit = withContext(dispatchers.io) {
-        memoryDao.clearAll()
-        try {
-            searchDao?.clearFts()
-            searchIndexStateDao?.forceClearDirty()
-            indexNeedsRebuild = false
-        } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to clear FTS index: ${e.javaClass.simpleName}")
+        searchIndexMutationMutex.withLock {
+            memoryDao.clearAll()
+            try {
+                searchDao?.clearFts()
+                searchIndexStateDao?.forceClearDirty()
+                indexNeedsRebuild = false
+            } catch (e: Exception) {
+                CayanaLogger.w("SearchIndex", "Failed to clear FTS index: ${e.javaClass.simpleName}")
+            }
         }
         Unit
     }

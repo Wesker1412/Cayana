@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -116,18 +117,16 @@ class HomeViewModel(
         selectedDetailMemory.value = item
     }
 
-    fun addSampleMemory(item: MemoryItem) {
+    fun addSampleMemory(item: MemoryItem): Job =
         viewModelScope.launch {
             memoryRepository.saveMemory(item)
         }
-    }
 
-    fun deleteMemory(id: String) {
+    fun deleteMemory(id: String): Job =
         viewModelScope.launch {
             memoryRepository.deleteMemory(id)
             if (selectedDetailMemory.value?.id == id) {
                 selectedDetailMemory.value = null
             }
         }
-    }
 }

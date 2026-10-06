@@ -131,3 +131,8 @@ tasks.withType<Test> {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+tasks.matching { it.name == "testReleaseUnitTest" }.configureEach {
+    (this as? Test)?.exclude("**/HomeSearchUiTest*")
+}
+

@@ -221,7 +221,7 @@ class RecentActivityTest {
         assertEquals("del-1", viewModel.uiState.value.selectedDetailMemory?.id)
 
         // Delete memory
-        viewModel.deleteMemory("del-1")
+        viewModel.deleteMemory("del-1").join()
         advanceUntilIdle()
 
         assertEquals(0, viewModel.uiState.value.memories.size)
@@ -277,7 +277,7 @@ class RecentActivityTest {
         db.calendarActionDao().insert(calendarAction)
 
         // Delete memory via HomeViewModel
-        roomViewModel.deleteMemory(memoryId)
+        roomViewModel.deleteMemory(memoryId).join()
         advanceUntilIdle()
 
         // Memory must be deleted

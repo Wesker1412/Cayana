@@ -7,11 +7,15 @@ import com.cayana.memory.model.MemoryItem
 import com.cayana.memory.repository.RoomMemoryRepository
 import com.cayana.processing.ProcessingState
 import com.cayana.source.SourceType
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -715,5 +719,165 @@ class LocalSearchTest {
         results = freshSearchEngine.search(SearchQuery(query = "99999"))
         assertEquals(0, results.size)
         assertEquals(0, database.searchDao().getFtsCount())
+    }
+
+    @Test
+    fun rebuildVsConcurrentSaveKeepsOnlyNewestDocument() = runBlocking {
+        // Step 1: Save old text
+        val memoryA = MemoryItem(
+            id = "mem-concurrent-save-1",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Document A Old",
+            rawText = "old unique text alpha",
+            normalizedText = "old unique text alpha",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memoryA)
+
+        // Step 2: Use custom MemoryDao to pause rebuild after it starts/reads snapshot
+        val rebuildStarted = CompletableDeferred<Unit>()
+        val canProceedRebuild = CompletableDeferred<Unit>()
+
+        val realMemoryDao = database.memoryDao()
+        val interceptedMemoryDao = object : com.cayana.memory.data.MemoryDao by realMemoryDao {
+            override suspend fun getAllMemoriesDirect(): List<com.cayana.memory.data.MemoryEntity> {
+                // Rebuild is inside searchIndexMutationMutex, reading snapshot
+                val result = realMemoryDao.getAllMemoriesDirect()
+                rebuildStarted.complete(Unit)
+                canProceedRebuild.await()
+                return result
+            }
+        }
+
+        val concurrentRepo = RoomMemoryRepository(
+            memoryDao = interceptedMemoryDao,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+        val concurrentSearchEngine = DefaultMemorySearchEngine(
+            memoryRepository = concurrentRepo,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        // Launch rebuild in background coroutine
+        val rebuildJob = launch(Dispatchers.IO) {
+            concurrentRepo.rebuildSearchIndex()
+        }
+
+        // Wait until rebuild starts and acquires lock
+        rebuildStarted.await()
+
+        // Launch concurrent save of "new text"
+        val updatedMemoryA = memoryA.copy(
+            title = "Document A New",
+            rawText = "new unique text beta",
+            normalizedText = "new unique text beta"
+        )
+        val saveJob = launch(Dispatchers.IO) {
+            concurrentRepo.saveMemory(updatedMemoryA)
+        }
+
+        // Allow rebuild to finish its work
+        canProceedRebuild.complete(Unit)
+
+        // Await both jobs
+        rebuildJob.join()
+        saveJob.join()
+
+        // Assertions:
+        // 1. FTS rows for A = 1
+        assertEquals(1, database.searchDao().getFtsCount())
+
+        // 2. search "new text" -> found
+        val newResults = concurrentSearchEngine.search(SearchQuery(query = "new unique text beta"))
+        assertEquals(1, newResults.size)
+        assertEquals("mem-concurrent-save-1", newResults[0].memory.id)
+
+        // 3. search "old text" -> not found
+        val oldResults = concurrentSearchEngine.search(SearchQuery(query = "old unique text alpha"))
+        assertEquals(0, oldResults.size)
+
+        // 4. dirty = false
+        assertFalse("Search index must not be dirty", concurrentRepo.isIndexRebuildNeeded())
+        assertEquals(false, database.searchIndexStateDao().isDirty())
+    }
+
+    @Test
+    fun rebuildVsConcurrentDeleteDoesNotResurrectDeletedDocument() = runBlocking {
+        // Step 1: Save memory A
+        val memoryA = MemoryItem(
+            id = "mem-concurrent-del-1",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Delete Target",
+            rawText = "target to delete concurrent gamma",
+            normalizedText = "target to delete concurrent gamma",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memoryA)
+
+        val rebuildStarted = CompletableDeferred<Unit>()
+        val canProceedRebuild = CompletableDeferred<Unit>()
+
+        val realMemoryDao = database.memoryDao()
+        val interceptedMemoryDao = object : com.cayana.memory.data.MemoryDao by realMemoryDao {
+            override suspend fun getAllMemoriesDirect(): List<com.cayana.memory.data.MemoryEntity> {
+                val result = realMemoryDao.getAllMemoriesDirect()
+                rebuildStarted.complete(Unit)
+                canProceedRebuild.await()
+                return result
+            }
+        }
+
+        val concurrentRepo = RoomMemoryRepository(
+            memoryDao = interceptedMemoryDao,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+        val concurrentSearchEngine = DefaultMemorySearchEngine(
+            memoryRepository = concurrentRepo,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        // Launch rebuild in background
+        val rebuildJob = launch(Dispatchers.IO) {
+            concurrentRepo.rebuildSearchIndex()
+        }
+
+        // Wait until rebuild starts and acquires lock
+        rebuildStarted.await()
+
+        // Launch concurrent delete while rebuild is running
+        val deleteJob = launch(Dispatchers.IO) {
+            concurrentRepo.deleteMemory(memoryA.id)
+        }
+
+        // Allow rebuild to proceed
+        canProceedRebuild.complete(Unit)
+
+        // Wait for both
+        rebuildJob.join()
+        deleteJob.join()
+
+        // Assertions:
+        // 1. canonical Memory absent
+        val canonical = database.memoryDao().getMemoryById("mem-concurrent-del-1")
+        assertNull("Canonical memory must be deleted", canonical)
+
+        // 2. FTS Memory absent (not resurrected by rebuild!)
+        assertEquals(0, database.searchDao().getFtsCount())
+        val results = concurrentSearchEngine.search(SearchQuery(query = "target to delete concurrent gamma"))
+        assertEquals(0, results.size)
+
+        // 3. dirty = false
+        assertFalse("Search index must not be dirty", concurrentRepo.isIndexRebuildNeeded())
+        assertEquals(false, database.searchIndexStateDao().isDirty())
     }
 }
