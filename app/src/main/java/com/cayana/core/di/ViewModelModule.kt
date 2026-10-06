@@ -11,7 +11,6 @@ val viewModelModule = module {
         HomeViewModel(
             memoryRepository = get(),
             searchEngine = getOrNull(),
-            calendarActionDao = getOrNull(),
             sourceValidator = getOrNull()
         )
     }

@@ -23,8 +23,18 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.cayana.memory.data.CayanaDatabase
+import com.cayana.memory.repository.RoomMemoryRepository
+import com.cayana.calendar.data.CalendarActionEntity
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class RecentActivityTest {
 
     private val testDispatcher = StandardTestDispatcher()
@@ -218,5 +228,62 @@ class RecentActivityTest {
         assertNull("selectedDetailMemory must be cleared when deleted", viewModel.uiState.value.selectedDetailMemory)
 
         collectJob.cancel()
+    }
+
+    @Test
+    fun deleteMemoryPreservesCalendarActionAndExternalEvent() = testScope.runTest {
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            CayanaDatabase::class.java
+        ).allowMainThreadQueries().build()
+
+        val roomRepo = RoomMemoryRepository(
+            memoryDao = db.memoryDao(),
+            searchDao = db.searchDao(),
+            searchIndexStateDao = db.searchIndexStateDao()
+        )
+        val roomViewModel = HomeViewModel(memoryRepository = roomRepo)
+
+        val memoryId = "mem-cal-preserved"
+        val memory = MemoryItem(
+            id = memoryId,
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Doctor Appointment",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        roomRepo.saveMemory(memory)
+
+        val calendarAction = CalendarActionEntity(
+            id = "action-preserved-1",
+            memoryId = memoryId,
+            calendarId = 1L,
+            calendarEventId = 99999L,
+            actionType = "INSERT_EVENT",
+            createdAt = 1000L,
+            status = "COMPLETED",
+            title = "Doctor Appointment",
+            startAt = 2000L,
+            endAt = 3000L
+        )
+        db.calendarActionDao().insert(calendarAction)
+
+        // Delete memory via HomeViewModel
+        roomViewModel.deleteMemory(memoryId)
+        advanceUntilIdle()
+
+        // Memory must be deleted
+        val deletedMemory = roomRepo.getMemoryById(memoryId).first()
+        assertNull("Memory must be deleted", deletedMemory)
+
+        // CalendarAction and external event id MUST be preserved
+        val preservedAction = db.calendarActionDao().getById("action-preserved-1")
+        assertNotNull("Calendar action audit must NOT be deleted when memory is deleted", preservedAction)
+        assertEquals(99999L, preservedAction?.calendarEventId)
+        assertEquals("COMPLETED", preservedAction?.status)
+
+        db.close()
     }
 }

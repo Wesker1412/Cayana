@@ -27,7 +27,6 @@ import kotlinx.coroutines.launch
 class HomeViewModel(
     private val memoryRepository: MemoryRepository,
     private val searchEngine: MemorySearchEngine? = null,
-    private val calendarActionDao: CalendarActionDao? = null,
     private val sourceValidator: SourceExistenceValidator? = null
 ) : ViewModel() {
 
@@ -126,9 +125,6 @@ class HomeViewModel(
     fun deleteMemory(id: String) {
         viewModelScope.launch {
             memoryRepository.deleteMemory(id)
-            try {
-                calendarActionDao?.deleteByMemoryId(id)
-            } catch (_: Exception) {}
             if (selectedDetailMemory.value?.id == id) {
                 selectedDetailMemory.value = null
             }

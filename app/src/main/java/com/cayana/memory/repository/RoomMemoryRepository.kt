@@ -8,21 +8,28 @@ import com.cayana.memory.data.MemoryEntity
 import com.cayana.memory.model.MemoryItem
 import com.cayana.search.MemorySearchDocumentBuilder
 import com.cayana.search.data.SearchDao
+import com.cayana.search.data.SearchIndexStateDao
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class RoomMemoryRepository(
     private val memoryDao: MemoryDao,
     private val searchDao: SearchDao? = null,
+    private val searchIndexStateDao: SearchIndexStateDao? = null,
     private val dispatchers: CoroutineDispatchers = com.cayana.core.common.AppDispatchers()
 ) : MemoryRepository {
 
     @Volatile
     private var indexNeedsRebuild: Boolean = false
 
-    override fun isIndexRebuildNeeded(): Boolean = indexNeedsRebuild
+    override fun isIndexRebuildNeeded(): Boolean {
+        return searchIndexStateDao?.let { dao ->
+            runBlocking { dao.isDirty() ?: false }
+        } ?: indexNeedsRebuild
+    }
 
     override fun getAllMemories(): Flow<List<MemoryItem>> {
         return memoryDao.getAllMemoriesFlow()
@@ -43,26 +50,32 @@ class RoomMemoryRepository(
     override suspend fun saveMemory(item: MemoryItem): Unit = withContext(dispatchers.io) {
         val entity = MemoryEntity.fromDomain(item)
         memoryDao.insertOrUpdate(entity)
+        searchIndexStateDao?.markDirty()
+        indexNeedsRebuild = true
 
-        // Update derived search index safely without failing memory ingestion
+        // Update derived search index safely with replaceFts
         try {
             searchDao?.let { sDao ->
                 val ftsEntity = MemorySearchDocumentBuilder.buildDocument(item)
-                sDao.insertFts(ftsEntity)
+                sDao.replaceFts(ftsEntity)
             }
+            searchIndexStateDao?.clearDirtyIfNoPending()
+            indexNeedsRebuild = searchIndexStateDao?.isDirty() ?: false
         } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to update FTS index for memory: ${e.message}")
-            indexNeedsRebuild = true
+            CayanaLogger.w("SearchIndex", "Failed to replace FTS: ${e.javaClass.simpleName}")
         }
     }
 
     override suspend fun deleteMemory(id: String): Unit = withContext(dispatchers.io) {
         memoryDao.deleteById(id)
+        searchIndexStateDao?.markDirty()
+        indexNeedsRebuild = true
         try {
             searchDao?.deleteFtsByMemoryId(id)
+            searchIndexStateDao?.clearDirtyIfNoPending()
+            indexNeedsRebuild = searchIndexStateDao?.isDirty() ?: false
         } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to delete FTS entry: ${e.message}")
-            indexNeedsRebuild = true
+            CayanaLogger.w("SearchIndex", "Failed to delete FTS entry: ${e.javaClass.simpleName}")
         }
     }
 
@@ -77,14 +90,18 @@ class RoomMemoryRepository(
         try {
             sDao.clearFts()
             val allEntities = memoryDao.getAllMemoriesDirect()
-            val ftsList = allEntities.map { entity ->
-                val metadata = Converters.parseMetadata(entity.metadataJson)
-                MemorySearchDocumentBuilder.buildDocument(entity, metadata)
+            // Bounded batches of 50
+            allEntities.chunked(50).forEach { batch ->
+                val ftsList = batch.map { entity ->
+                    val metadata = Converters.parseMetadata(entity.metadataJson)
+                    MemorySearchDocumentBuilder.buildDocument(entity, metadata)
+                }
+                sDao.insertAllFts(ftsList)
             }
-            sDao.insertAllFts(ftsList)
+            searchIndexStateDao?.forceClearDirty()
             indexNeedsRebuild = false
         } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to rebuild search index: ${e.message}")
+            CayanaLogger.w("SearchIndex", "Failed to rebuild search index: ${e.javaClass.simpleName}")
             indexNeedsRebuild = true
         }
         Unit
@@ -136,8 +153,10 @@ class RoomMemoryRepository(
         memoryDao.clearAll()
         try {
             searchDao?.clearFts()
+            searchIndexStateDao?.forceClearDirty()
+            indexNeedsRebuild = false
         } catch (e: Exception) {
-            CayanaLogger.w("SearchIndex", "Failed to clear FTS index: ${e.message}")
+            CayanaLogger.w("SearchIndex", "Failed to clear FTS index: ${e.javaClass.simpleName}")
         }
         Unit
     }

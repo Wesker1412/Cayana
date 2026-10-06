@@ -11,8 +11,13 @@ import com.cayana.processing.OcrEngine
 import com.cayana.processing.ProcessingState
 import com.cayana.search.MemorySearchDocumentBuilder
 import com.cayana.source.SourceType
+import com.cayana.source.share.data.ShareReceiptDao
+import com.cayana.source.share.data.ShareReceiptEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URI
@@ -24,11 +29,14 @@ import java.util.concurrent.ConcurrentHashMap
 class ShareProcessor(
     private val context: Context,
     private val memoryRepository: MemoryRepository,
-    private val ocrEngine: OcrEngine
+    private val ocrEngine: OcrEngine,
+    private val shareReceiptDao: ShareReceiptDao? = null
 ) {
 
-    // Dedup cache: fingerprint -> (timestamp, memoryIds)
-    private val recentShares = ConcurrentHashMap<String, Pair<Long, List<String>>>()
+    // In-process serialization per fingerprint
+    private val fingerprintLocks = ConcurrentHashMap<String, Mutex>()
+    // Fallback RAM cache when shareReceiptDao is null (e.g. tests without DB)
+    private val ramShares = ConcurrentHashMap<String, Pair<Long, List<String>>>()
 
     suspend fun processIntent(intent: Intent): ShareIngestResult = withContext(Dispatchers.IO) {
         val action = intent.action
@@ -51,92 +59,135 @@ class ShareProcessor(
             return@withContext ShareIngestResult.Ignored("Empty content")
         }
 
-        // Check Dedup
+        // Deduplication & atomic claim per fingerprint
         val fingerprint = computeFingerprint(action, rawMimeType, textExtra, streamUris)
-        val now = System.currentTimeMillis()
-        val cached = recentShares[fingerprint]
-        if (cached != null && (now - cached.first) < ShareIngestConfig.DEDUP_WINDOW_MS) {
-            CayanaLogger.i("ShareProcessor", "Duplicate share intent detected within dedup window")
-            return@withContext ShareIngestResult.Duplicate(cached.second)
-        }
+        val lock = fingerprintLocks.computeIfAbsent(fingerprint) { Mutex() }
 
-        val savedMemories = mutableListOf<MemoryItem>()
-        var hasUnreadableContent = false
+        lock.withLock {
+            val now = System.currentTimeMillis()
+            val sessionId: String
 
-        // 1. Process Text / URL
-        if (!textExtra.isNullOrBlank()) {
-            val memory = processTextOrUrl(textExtra, rawMimeType)
-            memoryRepository.saveMemory(memory)
-            savedMemories.add(memory)
-            CayanaLogger.i("ShareProcessor", "Saved share text memory: id=${memory.id}, type=${memory.sourceType}")
-        }
-
-        // 2. Process Streams (bounded by MAX_ITEM_COUNT)
-        val boundedUris = streamUris.take(ShareIngestConfig.MAX_ITEM_COUNT)
-        for (uri in boundedUris) {
-            // Validate scheme: reject file:// and unsupported schemes
-            val scheme = uri.scheme?.lowercase(Locale.ROOT)
-            if (scheme != "content" && scheme != "android.resource") {
-                CayanaLogger.w("ShareProcessor", "Rejecting URI with unsafe scheme: $scheme")
-                hasUnreadableContent = true
-                continue
-            }
-
-            // Try persisting permission if allowed
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: SecurityException) {}
-
-            val resolvedMime = context.contentResolver.getType(uri)
-            val mime = if (resolvedMime != null && !resolvedMime.startsWith("vnd.android.cursor")) {
-                resolvedMime
+            if (shareReceiptDao != null) {
+                shareReceiptDao.deleteExpired(now)
+                val existing = shareReceiptDao.getReceipt(fingerprint)
+                if (existing != null && now < existing.expiresAt) {
+                    if (existing.status == "COMPLETED") {
+                        CayanaLogger.i("ShareProcessor", "Duplicate share intent detected within dedup window")
+                        val cachedIds = parseItemIdsJson(existing.itemIdsJson)
+                        return@withContext ShareIngestResult.Duplicate(cachedIds)
+                    } else {
+                        // In-flight or process-death recovery: resume same session
+                        CayanaLogger.i("ShareProcessor", "Resuming in-flight share session")
+                        sessionId = existing.sessionId
+                    }
+                } else {
+                    sessionId = UUID.randomUUID().toString()
+                    val newReceipt = ShareReceiptEntity(
+                        fingerprint = fingerprint,
+                        sessionId = sessionId,
+                        createdAt = now,
+                        expiresAt = now + ShareIngestConfig.DEDUP_WINDOW_MS,
+                        status = "PROCESSING",
+                        itemIdsJson = "[]"
+                    )
+                    shareReceiptDao.upsertReceipt(newReceipt)
+                }
             } else {
-                rawMimeType
+                val cached = ramShares[fingerprint]
+                if (cached != null && (now - cached.first) < ShareIngestConfig.DEDUP_WINDOW_MS) {
+                    CayanaLogger.i("ShareProcessor", "Duplicate share intent detected within dedup window")
+                    return@withContext ShareIngestResult.Duplicate(cached.second)
+                }
+                sessionId = UUID.randomUUID().toString()
             }
 
-            when {
-                mime.startsWith("image/") -> {
-                    val result = processImageUri(uri, mime)
-                    if (result != null) {
-                        savedMemories.add(result)
-                    } else {
-                        hasUnreadableContent = true
-                    }
+            val savedMemories = mutableListOf<MemoryItem>()
+            var hasUnreadableContent = false
+
+            // 1. Process Text / URL
+            if (!textExtra.isNullOrBlank()) {
+                val memory = processTextOrUrl(textExtra, rawMimeType, sessionId)
+                memoryRepository.saveMemory(memory)
+                savedMemories.add(memory)
+                CayanaLogger.i("ShareProcessor", "Saved share text memory: id=${memory.id}, type=${memory.sourceType}")
+            }
+
+            // 2. Process Streams (bounded by MAX_ITEM_COUNT)
+            val boundedUris = streamUris.take(ShareIngestConfig.MAX_ITEM_COUNT)
+            for ((index, uri) in boundedUris.withIndex()) {
+                // Validate scheme: reject file:// and unsupported schemes
+                val scheme = uri.scheme?.lowercase(Locale.ROOT)
+                if (scheme != "content" && scheme != "android.resource") {
+                    CayanaLogger.w("ShareProcessor", "Rejecting URI with unsafe scheme: $scheme")
+                    hasUnreadableContent = true
+                    continue
                 }
-                mime == "application/pdf" || mime.contains("pdf") -> {
-                    val result = processPdfUri(uri, mime)
-                    if (result != null) {
-                        savedMemories.add(result)
-                    } else {
-                        hasUnreadableContent = true
-                    }
+
+                // Try persisting permission if allowed
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {}
+
+                val resolvedMime = try {
+                    context.contentResolver.getType(uri)
+                } catch (_: Exception) {
+                    null
                 }
-                else -> {
-                    // Other document types
-                    val result = processGenericDocumentUri(uri, mime)
-                    if (result != null) {
-                        savedMemories.add(result)
-                    } else {
-                        hasUnreadableContent = true
+                val mime = if (resolvedMime != null && !resolvedMime.startsWith("vnd.android.cursor")) {
+                    resolvedMime
+                } else {
+                    rawMimeType
+                }
+
+                when {
+                    mime.startsWith("image/") -> {
+                        val result = processImageUri(uri, mime, sessionId, index)
+                        if (result != null) {
+                            savedMemories.add(result)
+                        } else {
+                            hasUnreadableContent = true
+                        }
+                    }
+                    mime == "application/pdf" || mime.contains("pdf") -> {
+                        val result = processPdfUri(uri, mime, sessionId, index)
+                        if (result != null) {
+                            savedMemories.add(result)
+                        } else {
+                            hasUnreadableContent = true
+                        }
+                    }
+                    else -> {
+                        // Other document types
+                        val result = processGenericDocumentUri(uri, mime, sessionId, index)
+                        if (result != null) {
+                            savedMemories.add(result)
+                        } else {
+                            hasUnreadableContent = true
+                        }
                     }
                 }
             }
-        }
 
-        if (savedMemories.isEmpty()) {
-            return@withContext ShareIngestResult.Ignored("No valid memories created")
-        }
+            if (savedMemories.isEmpty()) {
+                return@withContext ShareIngestResult.Ignored("No valid memories created")
+            }
 
-        val memoryIds = savedMemories.map { it.id }
-        recentShares[fingerprint] = Pair(now, memoryIds)
+            val memoryIds = savedMemories.map { it.id }
+            val itemIdsJson = JSONArray(memoryIds).toString()
+            if (shareReceiptDao != null) {
+                shareReceiptDao.updateStatus(fingerprint, "COMPLETED", itemIdsJson)
+            } else {
+                ramShares[fingerprint] = Pair(now, memoryIds)
+            }
 
-        return@withContext if (hasUnreadableContent) {
-            ShareIngestResult.PartialSuccess(savedMemories)
-        } else {
-            ShareIngestResult.Success(savedMemories)
+            return@withContext if (hasUnreadableContent) {
+                ShareIngestResult.PartialSuccess(savedMemories)
+            } else {
+                ShareIngestResult.Success(savedMemories)
+            }
         }
     }
 
@@ -163,9 +214,10 @@ class ShareProcessor(
         return uris
     }
 
-    private fun processTextOrUrl(text: String, originalMime: String): MemoryItem {
+    private fun processTextOrUrl(text: String, originalMime: String, sessionId: String): MemoryItem {
         val extractedUrl = extractUrl(text)
         val now = System.currentTimeMillis()
+        val memoryId = UUID.nameUUIDFromBytes("share:$sessionId:text".toByteArray(Charsets.UTF_8)).toString()
 
         return if (extractedUrl != null) {
             val canonicalUrl = normalizeUrl(extractedUrl)
@@ -174,7 +226,7 @@ class ShareProcessor(
             val displayTitle = hostLabel ?: host ?: "Shared Link"
 
             MemoryItem(
-                id = UUID.randomUUID().toString(),
+                id = memoryId,
                 sourceType = SourceType.SHARED_URL,
                 createdAt = now,
                 capturedAt = now,
@@ -196,7 +248,7 @@ class ShareProcessor(
             val displayTitle = if (firstLine.length > 30) firstLine.take(30) + "..." else firstLine
 
             MemoryItem(
-                id = UUID.randomUUID().toString(),
+                id = memoryId,
                 sourceType = SourceType.SHARED_TEXT,
                 createdAt = now,
                 capturedAt = now,
@@ -213,10 +265,10 @@ class ShareProcessor(
         }
     }
 
-    private suspend fun processImageUri(uri: Uri, mime: String): MemoryItem? {
+    private suspend fun processImageUri(uri: Uri, mime: String, sessionId: String, index: Int): MemoryItem? {
         val now = System.currentTimeMillis()
         val displayName = queryDisplayName(uri) ?: "Shared Image"
-        val memoryId = UUID.randomUUID().toString()
+        val memoryId = UUID.nameUUIDFromBytes("share:$sessionId:stream:$index".toByteArray(Charsets.UTF_8)).toString()
 
         // 1. Initial durable Memory
         var memory = MemoryItem(
@@ -243,6 +295,7 @@ class ShareProcessor(
 
         var isOversized = false
         var copySuccess = false
+        var streamErrorType: String? = null
 
         try {
             val inputStream = context.contentResolver.openInputStream(uri)
@@ -263,9 +316,15 @@ class ShareProcessor(
                     }
                 }
                 copySuccess = !isOversized
+            } else {
+                streamErrorType = "STREAM_READ_FAILED"
             }
+        } catch (e: SecurityException) {
+            CayanaLogger.w("ShareProcessor", "SecurityException copying image stream: ${e.javaClass.simpleName}")
+            streamErrorType = "URI_PERMISSION_LOST"
         } catch (e: Exception) {
-            CayanaLogger.w("ShareProcessor", "Failed to copy image stream: ${e.message}")
+            CayanaLogger.w("ShareProcessor", "Failed to copy image stream: ${e.javaClass.simpleName}")
+            streamErrorType = "STREAM_READ_FAILED"
         }
 
         if (isOversized) {
@@ -279,11 +338,12 @@ class ShareProcessor(
             return memory
         }
 
-        if (!copySuccess || !tempFile.exists()) {
+        if (!copySuccess || !tempFile.exists() || streamErrorType != null) {
             tempFile.delete()
+            val err = streamErrorType ?: "STREAM_READ_FAILED"
             memory = memory.copy(
                 processingState = ProcessingState.FAILED_PERMANENT,
-                metadata = memory.metadata + ("error" to "STREAM_READ_FAILED")
+                metadata = memory.metadata + ("error" to err)
             )
             memoryRepository.saveMemory(memory)
             return memory
@@ -308,17 +368,17 @@ class ShareProcessor(
                 is com.cayana.core.common.Result.Error -> {
                     memory.copy(
                         processingState = ProcessingState.FAILED_RETRYABLE,
-                        metadata = memory.metadata + ("error" to (ocrResult.exception.message ?: "OCR_ERROR"))
+                        metadata = memory.metadata + ("error" to "OCR_FAILED")
                     )
                 }
                 else -> memory
             }
             memoryRepository.saveMemory(memory)
         } catch (e: Exception) {
-            CayanaLogger.w("ShareProcessor", "OCR failed on shared image: ${e.message}")
+            CayanaLogger.w("ShareProcessor", "OCR failed on shared image: ${e.javaClass.simpleName}")
             memory = memory.copy(
                 processingState = ProcessingState.FAILED_RETRYABLE,
-                metadata = memory.metadata + ("error" to (e.message ?: "OCR_EXCEPTION"))
+                metadata = memory.metadata + ("error" to "OCR_FAILED")
             )
             memoryRepository.saveMemory(memory)
         } finally {
@@ -329,13 +389,14 @@ class ShareProcessor(
         return memory
     }
 
-    private suspend fun processPdfUri(uri: Uri, mime: String): MemoryItem? {
+    private suspend fun processPdfUri(uri: Uri, mime: String, sessionId: String, index: Int): MemoryItem? {
         val now = System.currentTimeMillis()
         val displayName = queryDisplayName(uri) ?: "Shared Document.pdf"
         val size = queryFileSize(uri)
+        val memoryId = UUID.nameUUIDFromBytes("share:$sessionId:stream:$index".toByteArray(Charsets.UTF_8)).toString()
 
         val memory = MemoryItem(
-            id = UUID.randomUUID().toString(),
+            id = memoryId,
             sourceType = SourceType.SHARED_DOCUMENT,
             createdAt = now,
             capturedAt = now,
@@ -356,13 +417,14 @@ class ShareProcessor(
         return memory
     }
 
-    private suspend fun processGenericDocumentUri(uri: Uri, mime: String): MemoryItem? {
+    private suspend fun processGenericDocumentUri(uri: Uri, mime: String, sessionId: String, index: Int): MemoryItem? {
         val now = System.currentTimeMillis()
         val displayName = queryDisplayName(uri) ?: "Shared Document"
         val size = queryFileSize(uri)
+        val memoryId = UUID.nameUUIDFromBytes("share:$sessionId:stream:$index".toByteArray(Charsets.UTF_8)).toString()
 
         val memory = MemoryItem(
-            id = UUID.randomUUID().toString(),
+            id = memoryId,
             sourceType = SourceType.SHARED_DOCUMENT,
             createdAt = now,
             capturedAt = now,
@@ -446,5 +508,14 @@ class ShareProcessor(
         digest.update((text ?: "").toByteArray())
         streamUris.forEach { digest.update(it.toString().toByteArray()) }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun parseItemIdsJson(json: String): List<String> {
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { array.getString(it) }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 }

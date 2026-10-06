@@ -14,12 +14,22 @@ interface MemorySearchEngine {
 
 class DefaultMemorySearchEngine(
     private val memoryRepository: MemoryRepository,
-    private val searchDao: SearchDao? = null
+    private val searchDao: SearchDao? = null,
+    private val searchIndexStateDao: com.cayana.search.data.SearchIndexStateDao? = null
 ) : MemorySearchEngine {
 
     override suspend fun search(query: SearchQuery): List<SearchResult> {
         val rawInput = query.query.trim()
         if (rawInput.isBlank()) return emptyList()
+
+        // If search index is marked dirty, perform repair
+        if (searchIndexStateDao?.isDirty() == true || memoryRepository.isIndexRebuildNeeded()) {
+            try {
+                memoryRepository.rebuildSearchIndex()
+            } catch (e: Exception) {
+                CayanaLogger.w("SearchEngine", "Index repair trigger failed: ${e.javaClass.simpleName}")
+            }
+        }
 
         // 1. Sanitize query and generate FTS tokens
         val ftsExpression = buildFtsMatchExpression(rawInput)
@@ -31,7 +41,7 @@ class DefaultMemorySearchEngine(
                 val ftsMatches = searchDao.searchMemoriesMatch(ftsExpression)
                 candidateItems.addAll(ftsMatches.map { it.toDomain() })
             } catch (e: Exception) {
-                CayanaLogger.w("SearchEngine", "FTS match query failed: ${e.message}")
+                CayanaLogger.w("SearchEngine", "FTS match query failed: ${e.javaClass.simpleName}")
             }
         }
 
@@ -41,7 +51,7 @@ class DefaultMemorySearchEngine(
                 val fallbackMatches = memoryRepository.searchMemories(rawInput).first()
                 candidateItems.addAll(fallbackMatches)
             } catch (e: Exception) {
-                CayanaLogger.w("SearchEngine", "Fallback search failed: ${e.message}")
+                CayanaLogger.w("SearchEngine", "Fallback search failed: ${e.javaClass.simpleName}")
             }
         }
 

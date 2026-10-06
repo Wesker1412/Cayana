@@ -55,6 +55,9 @@ class CayanaApplication : Application() {
             try {
                 recordingCoordinator.reconcileDeletedRecordings()
             } catch (_: Exception) {}
+            try {
+                com.cayana.search.SearchIndexRepairWorker.scheduleIfDirty(this@CayanaApplication)
+            } catch (_: Exception) {}
         }
     }
 

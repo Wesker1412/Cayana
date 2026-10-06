@@ -164,7 +164,8 @@ val appModule = module {
         com.cayana.source.share.ShareProcessor(
             context = androidContext(),
             memoryRepository = get(),
-            ocrEngine = get()
+            ocrEngine = get(),
+            shareReceiptDao = get()
         )
     }
 }

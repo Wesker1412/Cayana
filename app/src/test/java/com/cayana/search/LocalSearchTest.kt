@@ -36,12 +36,14 @@ class LocalSearchTest {
 
         repository = RoomMemoryRepository(
             memoryDao = database.memoryDao(),
-            searchDao = database.searchDao()
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
         )
 
         searchEngine = DefaultMemorySearchEngine(
             memoryRepository = repository,
-            searchDao = database.searchDao()
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
         )
     }
 
@@ -405,5 +407,170 @@ class LocalSearchTest {
         // Title match has score 100 vs body match score 40
         assertEquals("title-match", results[0].memory.id)
         assertEquals("body-match", results[1].memory.id)
+    }
+
+    @Test
+    fun sameMemoryHasExactlyOneFtsDocument() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-single-fts",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Version 1",
+            rawText = "Version 1 content",
+            normalizedText = "Version 1 content",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+        assertEquals(1, database.searchDao().getFtsCount())
+
+        // Save updated version of the exact same memory
+        val updatedMemory = memory.copy(
+            title = "Version 2",
+            rawText = "Version 2 content",
+            normalizedText = "Version 2 content"
+        )
+        repository.saveMemory(updatedMemory)
+        assertEquals(1, database.searchDao().getFtsCount())
+    }
+
+    @Test
+    fun updatedMemoryOldTextNoLongerSearchable() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-old-text-test",
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "OldSecretKeyword Title",
+            rawText = "OldSecretKeyword Body",
+            normalizedText = "OldSecretKeyword Body",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+        var results = searchEngine.search(SearchQuery(query = "OldSecretKeyword"))
+        assertEquals(1, results.size)
+
+        // Update with new content
+        val updated = memory.copy(
+            title = "BrandNewTopic Title",
+            rawText = "BrandNewTopic Body",
+            normalizedText = "BrandNewTopic Body"
+        )
+        repository.saveMemory(updated)
+
+        // Old keyword should return 0 results
+        results = searchEngine.search(SearchQuery(query = "OldSecretKeyword"))
+        assertEquals(0, results.size)
+
+        // New keyword should return 1 result
+        results = searchEngine.search(SearchQuery(query = "BrandNewTopic"))
+        assertEquals(1, results.size)
+    }
+
+    @Test
+    fun updatedTranscriptOldTranscriptNoLongerSearchable() = runBlocking {
+        val memory = MemoryItem(
+            id = "mem-recording-transcript-test",
+            sourceType = SourceType.RECORDING,
+            createdAt = 2000L,
+            capturedAt = 2000L,
+            title = "Voice Memo",
+            rawText = "OriginalTranscript Alpha",
+            normalizedText = "OriginalTranscript Alpha",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+        var results = searchEngine.search(SearchQuery(query = "OriginalTranscript"))
+        assertEquals(1, results.size)
+
+        // Update transcript
+        val updated = memory.copy(
+            rawText = "UpdatedTranscript Beta",
+            normalizedText = "UpdatedTranscript Beta"
+        )
+        repository.saveMemory(updated)
+
+        results = searchEngine.search(SearchQuery(query = "OriginalTranscript"))
+        assertEquals(0, results.size)
+
+        results = searchEngine.search(SearchQuery(query = "UpdatedTranscript"))
+        assertEquals(1, results.size)
+    }
+
+    @Test
+    fun indexDirtySurvivesRepositoryRecreation() = runBlocking {
+        // Mark dirty in database
+        database.searchIndexStateDao().markDirty()
+
+        // Verify old repo knows it's dirty
+        assertTrue(repository.isIndexRebuildNeeded())
+
+        // Simulate process death / new repository instance with same database
+        val newRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        // New repo must also recognize dirty flag survived process death
+        assertTrue(newRepo.isIndexRebuildNeeded())
+    }
+
+    @Test
+    fun indexRepairAfterProcessDeathRestoresUrlSearch() = runBlocking {
+        // Insert memory directly into canonical memory table, but NOT into FTS
+        val memory = MemoryItem(
+            id = "url-mem-crash",
+            sourceType = SourceType.SHARED_URL,
+            createdAt = 3000L,
+            capturedAt = 3000L,
+            title = "Kotlin Docs",
+            rawText = "https://kotlinlang.org/docs/home.html",
+            normalizedText = "https://kotlinlang.org/docs/home.html",
+            sourceUrl = "https://kotlinlang.org/docs/home.html",
+            sourceExists = true,
+            metadata = mapOf("host" to "kotlinlang.org", "canonicalUrl" to "https://kotlinlang.org/docs/home.html"),
+            processingState = ProcessingState.COMPLETED
+        )
+        database.memoryDao().insertOrUpdate(
+            com.cayana.memory.data.MemoryEntity(
+                id = memory.id,
+                sourceType = memory.sourceType.name,
+                createdAt = memory.createdAt,
+                capturedAt = memory.capturedAt,
+                title = memory.title,
+                rawText = memory.rawText,
+                normalizedText = memory.normalizedText,
+                sourceUri = memory.sourceUri,
+                sourceUrl = memory.sourceUrl,
+                sourceExists = memory.sourceExists,
+                metadataJson = com.cayana.memory.data.Converters.serializeMetadata(memory.metadata),
+                entitiesJson = "[]",
+                eventCandidatesJson = "[]",
+                processingState = memory.processingState.name
+            )
+        )
+        database.searchIndexStateDao().markDirty()
+
+        val freshSearchEngine = DefaultMemorySearchEngine(
+            memoryRepository = repository,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        // Before repair, search shouldn't find it
+        assertEquals(0, database.searchDao().getFtsCount())
+
+        // Rebuild / repair index
+        repository.rebuildSearchIndex()
+
+        // Verify index is no longer dirty and search succeeds
+        assertFalse(repository.isIndexRebuildNeeded())
+        val searchResults = freshSearchEngine.search(SearchQuery(query = "kotlinlang"))
+        assertEquals(1, searchResults.size)
+        assertEquals("url-mem-crash", searchResults.first().memory.id)
     }
 }

@@ -150,4 +150,101 @@ class Stage5MigrationTest {
 
         inMemoryDb.close()
     }
+
+    @Test
+    fun migrate5To6PreservesMemories() {
+        var db = helper.createDatabase(TEST_DB, 5).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('item-v5-1', 'SHARED_URL', 1500, 1500, 'GitHub Repo', 'https://github.com/example/repo', 'https://github.com/example/repo', NULL, 'https://github.com/example/repo', 1, '{\"host\":\"github.com\"}', '[]', '[]', 'COMPLETED')"
+            )
+            close()
+        }
+
+        // Run migration 5 -> 6
+        db = helper.runMigrationsAndValidate(TEST_DB, 6, true, CayanaDatabase.MIGRATION_5_6)
+
+        val cursor = db.query("SELECT id, title, rawText, sourceUrl, sourceType FROM memories WHERE id = 'item-v5-1'")
+        assertTrue("Migrated memory row must exist in v6", cursor.moveToFirst())
+        assertEquals("item-v5-1", cursor.getString(0))
+        assertEquals("GitHub Repo", cursor.getString(1))
+        assertEquals("https://github.com/example/repo", cursor.getString(2))
+        assertEquals("https://github.com/example/repo", cursor.getString(3))
+        assertEquals("SHARED_URL", cursor.getString(4))
+        cursor.close()
+    }
+
+    @Test
+    fun migrate5To6PreservesCalendarActions() {
+        var db = helper.createDatabase(TEST_DB, 5).apply {
+            execSQL(
+                "INSERT INTO calendar_actions (id, memoryId, calendarId, calendarEventId, actionType, createdAt, status, title, startAt, endAt, location, isAllDay, zoneId) " +
+                "VALUES ('cal-action-1', 'mem-101', 1, 1234, 'INSERT_EVENT', 5000, 'COMPLETED', 'Team Sync', 6000, 7000, 'Room 101', 0, 'Asia/Taipei')"
+            )
+            close()
+        }
+
+        // Run migration 5 -> 6
+        db = helper.runMigrationsAndValidate(TEST_DB, 6, true, CayanaDatabase.MIGRATION_5_6)
+
+        val cursor = db.query("SELECT id, memoryId, calendarEventId, title, location FROM calendar_actions WHERE id = 'cal-action-1'")
+        assertTrue("Calendar action row must be preserved in v6", cursor.moveToFirst())
+        assertEquals("cal-action-1", cursor.getString(0))
+        assertEquals("mem-101", cursor.getString(1))
+        assertEquals(1234L, cursor.getLong(2))
+        assertEquals("Team Sync", cursor.getString(3))
+        assertEquals("Room 101", cursor.getString(4))
+        cursor.close()
+    }
+
+    @Test
+    fun migrate5To6CollapsesDuplicateFtsDocuments() {
+        var db = helper.createDatabase(TEST_DB, 5).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('mem-dup-1', 'SHARED_TEXT', 1000, 1000, 'Single Canonical', 'Test Body', 'Test Body', NULL, NULL, 1, '{}', '[]', '[]', 'COMPLETED')"
+            )
+            // Simulate duplicate FTS entries that could have happened before v6
+            execSQL("INSERT INTO memories_fts (memoryId, title, rawText, normalizedText, sourceType, sourceUrl, host, displayName, searchTokens) VALUES ('mem-dup-1', 'Old Title', 'Old Text', 'Old Text', 'SHARED_TEXT', '', '', '', 'Old')")
+            execSQL("INSERT INTO memories_fts (memoryId, title, rawText, normalizedText, sourceType, sourceUrl, host, displayName, searchTokens) VALUES ('mem-dup-1', 'Single Canonical', 'Test Body', 'Test Body', 'SHARED_TEXT', '', '', '', 'Single Canonical Test Body')")
+            close()
+        }
+
+        // Run migration 5 -> 6
+        db = helper.runMigrationsAndValidate(TEST_DB, 6, true, CayanaDatabase.MIGRATION_5_6)
+
+        val cursor = db.query("SELECT COUNT(*) FROM memories_fts WHERE memoryId = 'mem-dup-1'")
+        assertTrue(cursor.moveToFirst())
+        assertEquals("Duplicate FTS documents must be collapsed to exactly 1 canonical document", 1, cursor.getInt(0))
+        cursor.close()
+    }
+
+    @Test
+    fun migrate5To6CreatesShareReceiptState() {
+        var db = helper.createDatabase(TEST_DB, 5).apply {
+            close()
+        }
+
+        // Run migration 5 -> 6
+        db = helper.runMigrationsAndValidate(TEST_DB, 6, true, CayanaDatabase.MIGRATION_5_6)
+
+        // Verify share_receipts exists and is writable
+        db.execSQL(
+            "INSERT INTO share_receipts (fingerprint, sessionId, createdAt, expiresAt, status, itemIdsJson) " +
+            "VALUES ('fp-test-1', 'session-1', 1000, 2000, 'PROCESSING', '[]')"
+        )
+        val receiptCursor = db.query("SELECT fingerprint, sessionId, status FROM share_receipts WHERE fingerprint = 'fp-test-1'")
+        assertTrue("share_receipts table must exist and store records", receiptCursor.moveToFirst())
+        assertEquals("fp-test-1", receiptCursor.getString(0))
+        assertEquals("session-1", receiptCursor.getString(1))
+        assertEquals("PROCESSING", receiptCursor.getString(2))
+        receiptCursor.close()
+
+        // Verify search_index_state table exists and has default row
+        val stateCursor = db.query("SELECT id, isDirty, pendingRepairs FROM search_index_state WHERE id = 1")
+        assertTrue("search_index_state must have default initial row", stateCursor.moveToFirst())
+        assertEquals(1, stateCursor.getInt(0))
+        assertEquals(0, stateCursor.getInt(1))
+        stateCursor.close()
+    }
 }

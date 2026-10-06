@@ -8,11 +8,19 @@ import com.cayana.memory.data.MemoryEntity
 import com.cayana.memory.data.MemoryFtsEntity
 import kotlinx.coroutines.flow.Flow
 
+import androidx.room.Transaction
+
 @Dao
 interface SearchDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFts(entity: MemoryFtsEntity)
+
+    @Transaction
+    suspend fun replaceFts(document: MemoryFtsEntity) {
+        deleteFtsByMemoryId(document.memoryId)
+        insertFts(document)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllFts(entities: List<MemoryFtsEntity>)

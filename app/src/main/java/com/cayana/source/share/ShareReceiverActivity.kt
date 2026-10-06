@@ -1,5 +1,6 @@
 package com.cayana.source.share
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -14,13 +15,20 @@ class ShareReceiverActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         val targetIntent = intent
         if (targetIntent == null) {
             finish()
             return
         }
+        handleIntent(targetIntent)
+    }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(targetIntent: Intent) {
         lifecycleScope.launch {
             try {
                 val result = shareProcessor.processIntent(targetIntent)
@@ -39,7 +47,7 @@ class ShareReceiverActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
-                CayanaLogger.w("ShareReceiver", "Error processing share intent: ${e.message}")
+                CayanaLogger.w("ShareReceiver", "Error processing share intent: ${e.javaClass.simpleName}")
             } finally {
                 finish()
             }

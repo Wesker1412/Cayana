@@ -25,6 +25,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import androidx.room.Room
+import com.cayana.memory.data.CayanaDatabase
+import com.cayana.source.share.data.ShareReceiptEntity
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
@@ -257,5 +262,166 @@ class ShareIngestTest {
         val memories = repository.getAllMemories().first()
         assertEquals(2, memories.size)
         assertTrue(memories.all { it.sourceUrl == url })
+    }
+
+    @Test
+    fun shareProcessorRecreatedWithinDedupWindowReturnsDuplicate() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.shareReceiptDao()
+        val proc1 = ShareProcessor(context, repository, fakeOcrEngine, dao)
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Durable dedup across process restart")
+        }
+
+        val res1 = proc1.processIntent(intent)
+        assertTrue(res1 is ShareIngestResult.Success)
+
+        // Simulate process recreation: proc2 is a new instance with same DB
+        val proc2 = ShareProcessor(context, repository, fakeOcrEngine, dao)
+        val res2 = proc2.processIntent(intent)
+        assertTrue("Durable receipt must cause new processor instance to return Duplicate", res2 is ShareIngestResult.Duplicate)
+
+        // Verify only 1 memory exists in repo
+        val memories = repository.getAllMemories().first()
+        assertEquals(1, memories.size)
+        db.close()
+    }
+
+    @Test
+    fun shareProcessDiesAfterFirstItemResumesSameSession() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.shareReceiptDao()
+
+        val text = "Resumable session item"
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+
+        // Compute fingerprint
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(Intent.ACTION_SEND.toByteArray())
+        digest.update("text/plain".toByteArray())
+        digest.update(text.toByteArray())
+        val fp = digest.digest().joinToString("") { "%02x".format(it) }
+
+        val testSessionId = "resumed-session-42"
+        val deterministicId = java.util.UUID.nameUUIDFromBytes("share:$testSessionId:text".toByteArray(Charsets.UTF_8)).toString()
+
+        // Seed a PROCESSING receipt (as if process died halfway)
+        val now = System.currentTimeMillis()
+        dao.upsertReceipt(
+            ShareReceiptEntity(
+                fingerprint = fp,
+                sessionId = testSessionId,
+                createdAt = now,
+                expiresAt = now + 60_000,
+                status = "PROCESSING",
+                itemIdsJson = "[]"
+            )
+        )
+
+        // Also seed an incomplete / preliminary memory with the deterministic id
+        val initialMemory = MemoryItem(
+            id = deterministicId,
+            sourceType = SourceType.SHARED_TEXT,
+            createdAt = now - 500,
+            capturedAt = now - 500,
+            title = "Old Incomplete Title",
+            rawText = text,
+            normalizedText = text,
+            sourceExists = true,
+            processingState = ProcessingState.PENDING
+        )
+        repository.saveMemory(initialMemory)
+
+        // Re-deliver intent to processor
+        val proc = ShareProcessor(context, repository, fakeOcrEngine, dao)
+        val res = proc.processIntent(intent)
+        assertTrue(res is ShareIngestResult.Success)
+
+        // Receipt must now be COMPLETED
+        val receipt = dao.getReceipt(fp)
+        assertNotNull(receipt)
+        assertEquals("COMPLETED", receipt?.status)
+        assertEquals(testSessionId, receipt?.sessionId)
+
+        // Repository should still have exactly 1 memory, updated to COMPLETED with deterministic ID
+        val memories = repository.getAllMemories().first()
+        assertEquals(1, memories.size)
+        val memory = memories.first()
+        assertEquals(deterministicId, memory.id)
+        assertEquals(ProcessingState.COMPLETED, memory.processingState)
+
+        db.close()
+    }
+
+    @Test
+    fun twoIdenticalSharesConcurrentProduceOneCapture() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.shareReceiptDao()
+        val proc = ShareProcessor(context, repository, fakeOcrEngine, dao)
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Concurrent share test text")
+        }
+
+        // Launch two concurrent ingest attempts
+        val deferred1 = async(Dispatchers.IO) { proc.processIntent(intent) }
+        val deferred2 = async(Dispatchers.IO) { proc.processIntent(intent) }
+
+        val result1 = deferred1.await()
+        val result2 = deferred2.await()
+
+        val results = listOf(result1, result2)
+        val successCount = results.count { it is ShareIngestResult.Success }
+        val duplicateCount = results.count { it is ShareIngestResult.Duplicate }
+
+        assertEquals("Exactly one concurrent execution must succeed", 1, successCount)
+        assertEquals("The other concurrent execution must be Duplicate", 1, duplicateCount)
+
+        val memories = repository.getAllMemories().first()
+        assertEquals("Only one canonical memory item created", 1, memories.size)
+
+        db.close()
+    }
+
+    @Test
+    fun sameShareAfterExpiryAllowed() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.shareReceiptDao()
+        val proc = ShareProcessor(context, repository, fakeOcrEngine, dao)
+
+        val text = "Expired share allowed again"
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+
+        // First share succeeds
+        val res1 = proc.processIntent(intent)
+        assertTrue(res1 is ShareIngestResult.Success)
+
+        // Manually expire the receipt in DB
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(Intent.ACTION_SEND.toByteArray())
+        digest.update("text/plain".toByteArray())
+        digest.update(text.toByteArray())
+        val fp = digest.digest().joinToString("") { "%02x".format(it) }
+
+        val receipt = dao.getReceipt(fp)!!
+        dao.upsertReceipt(receipt.copy(expiresAt = System.currentTimeMillis() - 10_000))
+
+        // Same intent delivered after expiry must be treated as a fresh capture
+        val res2 = proc.processIntent(intent)
+        assertTrue("Sharing after dedup window expiry must succeed as a new capture", res2 is ShareIngestResult.Success)
+
+        val memories = repository.getAllMemories().first()
+        assertEquals(2, memories.size)
+
+        db.close()
     }
 }
