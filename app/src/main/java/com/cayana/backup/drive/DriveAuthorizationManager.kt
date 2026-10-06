@@ -41,6 +41,7 @@ interface DriveAuthorizationManager {
 
 class GoogleDriveAuthorizationManager(
     private val context: Context,
+    private val revokeUrlBase: String = "https://oauth2.googleapis.com/revoke",
     private val authClientProvider: () -> AuthorizationClient = { Identity.getAuthorizationClient(context) }
 ) : DriveAuthorizationManager {
 
@@ -110,10 +111,14 @@ class GoogleDriveAuthorizationManager(
                 if (!token.isNullOrBlank() && hasAppData) {
                     inMemoryAccessToken = token
                     _authStatus.value = DriveAuthStatus.CONNECTED
+                    Result.Success(null)
+                } else {
+                    _authStatus.value = DriveAuthStatus.AUTH_REQUIRED
+                    Result.Error(DriveAuthRequiredException("取得的 Access Token 為空或未被授予 drive.appdata 權限。"))
                 }
-                Result.Success(null)
             }
         } catch (e: Exception) {
+            _authStatus.value = DriveAuthStatus.AUTH_REQUIRED
             Result.Error(e)
         }
     }
@@ -159,24 +164,33 @@ class GoogleDriveAuthorizationManager(
     }
 
     override suspend fun revokeAuthorization(): Result<Unit> = withContext(Dispatchers.IO) {
-        val token = inMemoryAccessToken
-        try {
-            if (!token.isNullOrBlank()) {
-                val url = URL("https://oauth2.googleapis.com/revoke?token=$token")
-                val conn = (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 10000
-                    readTimeout = 10000
-                    doOutput = true
-                }
-                val responseCode = conn.responseCode
-                if (responseCode !in 200..299 && responseCode != 400) {
-                    return@withContext Result.Error(IOException("Google 權限撤銷失敗：HTTP $responseCode"))
-                }
-                try {
-                    GoogleAuthUtil.clearToken(context, token)
-                } catch (_: Exception) {}
+        val tokenToRevoke = inMemoryAccessToken ?: run {
+            // Attempt silent authorize / token obtain if token not in memory (e.g. process restart)
+            when (val tokenResult = getAccessToken()) {
+                is Result.Success -> tokenResult.data
+                is Result.Error -> return@withContext Result.Error(tokenResult.exception)
+                Result.Loading -> return@withContext Result.Error(IOException("Token loading"))
             }
+        }
+
+        try {
+            val url = URL("$revokeUrlBase?token=$tokenToRevoke")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10000
+                readTimeout = 10000
+                doOutput = true
+            }
+            val responseCode = conn.responseCode
+            // HTTP 200 is success. HTTP 400 is error and MUST NOT be treated as success!
+            if (responseCode != 200) {
+                val err = conn.errorStream?.bufferedReader()?.readText() ?: ""
+                return@withContext Result.Error(IOException("Google 權限撤銷失敗：HTTP $responseCode - $err"))
+            }
+            try {
+                GoogleAuthUtil.clearToken(context, tokenToRevoke)
+            } catch (_: Exception) {}
+
             inMemoryAccessToken = null
             _authStatus.value = DriveAuthStatus.DISCONNECTED
             Result.Success(Unit)
@@ -229,7 +243,17 @@ open class FakeDriveAuthorizationManager(
     }
 
     override suspend fun getAuthorizationIntentSender(): Result<IntentSender?> {
-        return Result.Success(null)
+        if (requireResolution) {
+            return Result.Success(null)
+        }
+        val token = fakeAccessToken
+        return if (!token.isNullOrBlank()) {
+            _authStatus.value = DriveAuthStatus.CONNECTED
+            Result.Success(null)
+        } else {
+            _authStatus.value = DriveAuthStatus.AUTH_REQUIRED
+            Result.Error(DriveAuthRequiredException("未登入或無有效權杖"))
+        }
     }
 
     override suspend fun handleAuthorizationResult(data: Intent?): Result<Unit> {
@@ -265,10 +289,18 @@ open class FakeDriveAuthorizationManager(
     }
 
     override suspend fun revokeAuthorization(): Result<Unit> {
-        if (shouldRevokeFail) {
-            return Result.Error(IOException("Revocation simulated failure"))
+        val tokenToRevoke = fakeAccessToken ?: run {
+            when (val res = getAccessToken()) {
+                is Result.Success -> res.data
+                is Result.Error -> return res
+                Result.Loading -> return Result.Error(IOException("Token loading"))
+            }
         }
-        lastRevokedToken = fakeAccessToken
+
+        if (shouldRevokeFail) {
+            return Result.Error(IOException("Google 權限撤銷失敗：HTTP 400"))
+        }
+        lastRevokedToken = tokenToRevoke
         fakeAccessToken = null
         _authStatus.value = DriveAuthStatus.DISCONNECTED
         return Result.Success(Unit)

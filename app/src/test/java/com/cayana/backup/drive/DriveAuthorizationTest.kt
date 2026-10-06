@@ -219,4 +219,106 @@ class DriveAuthorizationTest {
         assertTrue(failResult is Result.Error)
         assertEquals("Status must not be marked DISCONNECTED if revocation fails", DriveAuthStatus.CONNECTED, fakeAuth.authStatus.value)
     }
+
+    @Test
+    fun disconnectAfterProcessRestartStillRevokesAuthorization() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val grantToken = "ya29.simulated_grant_token_after_process_restart"
+        val mockAuthResult = createAuthorizationResult(
+            accessToken = grantToken,
+            grantedScopes = listOf(BackupConfig.DRIVE_SCOPE)
+        )
+        val mockClient = Proxy.newProxyInstance(
+            AuthorizationClient::class.java.classLoader,
+            arrayOf(AuthorizationClient::class.java)
+        ) { _, method, _ ->
+            when (method.name) {
+                "authorize" -> com.google.android.gms.tasks.Tasks.forResult(mockAuthResult)
+                else -> null
+            }
+        } as AuthorizationClient
+
+        MockHttpServer().use { server ->
+            val revokedTokenReceived = java.util.concurrent.atomic.AtomicReference<String>()
+            server.on({ method, path -> method == "POST" && path.startsWith("/revoke") }) { req ->
+                val match = Regex("""token=([^&]+)""").find(req.path)
+                revokedTokenReceived.set(match?.groupValues?.get(1))
+                MockResponse(200, emptyMap(), "{}")
+            }
+
+            val authManager = GoogleDriveAuthorizationManager(
+                context = context,
+                authClientProvider = { mockClient },
+                revokeUrlBase = "http://127.0.0.1:${server.port}/revoke"
+            )
+
+            // inMemoryAccessToken is null initially
+            val revokeResult = authManager.revokeAuthorization()
+            assertTrue("Revocation must succeed", revokeResult is Result.Success)
+            assertEquals(DriveAuthStatus.DISCONNECTED, authManager.authStatus.value)
+            assertEquals("Silent authorization must obtain grant token and pass to revoke endpoint", grantToken, revokedTokenReceived.get())
+        }
+    }
+
+    @Test
+    fun revokeHttp400DoesNotReportDisconnected() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val grantToken = "ya29.token_for_failing_revoke"
+        val mockAuthResult = createAuthorizationResult(
+            accessToken = grantToken,
+            grantedScopes = listOf(BackupConfig.DRIVE_SCOPE)
+        )
+        val mockClient = Proxy.newProxyInstance(
+            AuthorizationClient::class.java.classLoader,
+            arrayOf(AuthorizationClient::class.java)
+        ) { _, method, _ ->
+            when (method.name) {
+                "authorize" -> com.google.android.gms.tasks.Tasks.forResult(mockAuthResult)
+                else -> null
+            }
+        } as AuthorizationClient
+
+        MockHttpServer().use { server ->
+            server.on({ method, path -> method == "POST" && path.startsWith("/revoke") }) { _ ->
+                MockResponse(400, emptyMap(), "{\"error\":\"invalid_request\"}")
+            }
+
+            val authManager = GoogleDriveAuthorizationManager(
+                context = context,
+                authClientProvider = { mockClient },
+                revokeUrlBase = "http://127.0.0.1:${server.port}/revoke"
+            )
+
+            val revokeResult = authManager.revokeAuthorization()
+            assertTrue("Revocation with HTTP 400 must return Error", revokeResult is Result.Error)
+            assertFalse(
+                "Status must never be marked DISCONNECTED if revoke returned HTTP 400",
+                authManager.authStatus.value == DriveAuthStatus.DISCONNECTED
+            )
+        }
+    }
+
+    @Test
+    fun silentAuthorizationWithoutTokenOrScopeFailsAndDoesNotConnect() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val emptyTokenResult = createAuthorizationResult(
+            accessToken = "",
+            grantedScopes = listOf(BackupConfig.DRIVE_SCOPE)
+        )
+        val mockClient = Proxy.newProxyInstance(
+            AuthorizationClient::class.java.classLoader,
+            arrayOf(AuthorizationClient::class.java)
+        ) { _, method, _ ->
+            when (method.name) {
+                "authorize" -> com.google.android.gms.tasks.Tasks.forResult(emptyTokenResult)
+                else -> null
+            }
+        } as AuthorizationClient
+
+        val authManager = GoogleDriveAuthorizationManager(context) { mockClient }
+        val intentSenderResult = authManager.getAuthorizationIntentSender()
+
+        assertTrue("Intent sender query without valid token must return Error", intentSenderResult is Result.Error)
+        assertEquals(DriveAuthStatus.AUTH_REQUIRED, authManager.authStatus.value)
+    }
 }

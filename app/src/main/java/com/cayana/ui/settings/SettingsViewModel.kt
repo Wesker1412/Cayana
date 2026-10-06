@@ -353,7 +353,7 @@ class SettingsViewModel(
         }
     }
 
-    fun confirmRecoveryKey(confirmationInput: String? = null): Boolean {
+    fun confirmRecoveryKey(confirmationInput: String): Boolean {
         val keyStr = _uiState.value.generatedRecoveryKey
         if (keyStr.isNullOrBlank()) {
             _uiState.update { it.copy(showRecoveryKeyDialog = false) }
@@ -361,17 +361,15 @@ class SettingsViewModel(
         }
 
         val chunks = keyStr.split("-")
-        if (confirmationInput != null) {
-            if (chunks.size < 2) {
-                _uiState.update { it.copy(recoveryKeyConfirmationError = "無效的金鑰格式") }
-                return false
-            }
-            val expected = chunks.takeLast(2).joinToString("").uppercase()
-            val cleanInput = confirmationInput.trim().replace("-", "").replace(" ", "").uppercase()
-            if (cleanInput != expected) {
-                _uiState.update { it.copy(recoveryKeyConfirmationError = "輸入的末兩組金鑰不符，請重新確認。") }
-                return false
-            }
+        if (chunks.size < 2) {
+            _uiState.update { it.copy(recoveryKeyConfirmationError = "無效的金鑰格式") }
+            return false
+        }
+        val expected = chunks.takeLast(2).joinToString("").uppercase()
+        val cleanInput = confirmationInput.trim().replace("-", "").replace(" ", "").uppercase()
+        if (cleanInput != expected) {
+            _uiState.update { it.copy(recoveryKeyConfirmationError = "輸入的末兩組金鑰不符，請重新確認。") }
+            return false
         }
 
         val keyBytes = runCatching { com.cayana.backup.crypto.RecoveryKeyManager.parseKey(keyStr) }.getOrNull()

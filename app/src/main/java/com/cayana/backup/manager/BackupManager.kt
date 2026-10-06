@@ -23,6 +23,9 @@ import com.cayana.memory.repository.MemoryRepository
 import com.cayana.source.SourceExistenceValidator
 import com.cayana.ui.settings.repository.SettingsRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.cayana.backup.snapshot.PortableCalendarActionHistory
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.CancellationException
@@ -45,10 +48,12 @@ class BackupManager(
     private val sourceExistenceValidator: SourceExistenceValidator
 ) {
 
+    private val backupOperationMutex = Mutex()
+
     /**
      * Executes client-side encrypted backup to Google Drive appDataFolder.
      */
-    suspend fun performBackup(): Result<DriveBackupMetadata> {
+    suspend fun performBackup(): Result<DriveBackupMetadata> = backupOperationMutex.withLock {
         // 1. Verify Drive Authorization
         when (val tokenResult = driveAuthManager.getAccessToken()) {
             is Result.Success -> Unit
@@ -64,8 +69,10 @@ class BackupManager(
             // 3. Consistent DB snapshot in single transaction
             val (memories, actions) = database.withTransaction {
                 val mems = memoryDao.getAllMemoriesDirect().map { it.toDomain() }
-                val acts = calendarActionDao.getAll()
-                Pair(mems, acts)
+                val liveActions = calendarActionDao.getAll().map { PortableCalendarActionHistory.fromLiveAction(it) }
+                val restoredHistory = restoredCalendarActionHistoryDao.getAll().map { PortableCalendarActionHistory.fromRestoredHistory(it) }
+                val combined = (liveActions + restoredHistory).distinctBy { it.originalActionId }
+                Pair(mems, combined)
             }
 
             // 4. Extract portable user settings
@@ -74,7 +81,7 @@ class BackupManager(
 
             // 5. Build logical archive
             val snapshotId = UUID.randomUUID()
-            val archiveBytes = BackupSnapshotBuilder.buildArchive(
+            val archiveBytes = BackupSnapshotBuilder.buildArchiveWithHistory(
                 snapshotId = snapshotId.toString(),
                 memories = memories,
                 calendarActions = actions,
@@ -136,7 +143,7 @@ class BackupManager(
         fileId: String,
         rawRecoveryKey: String,
         onConfirmReplaceLocal: suspend () -> Boolean = { true }
-    ): Result<RestoreSummary> {
+    ): Result<RestoreSummary> = backupOperationMutex.withLock {
         // 1. Validate recovery key syntax & checksum
         val rootKey = try {
             RecoveryKeyManager.parseKey(rawRecoveryKey)

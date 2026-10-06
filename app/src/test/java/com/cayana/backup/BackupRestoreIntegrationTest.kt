@@ -21,6 +21,7 @@ import com.cayana.source.SourceExistenceValidator
 import com.cayana.source.SourceType
 import com.cayana.ui.settings.repository.InMemorySettingsRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -477,5 +478,168 @@ class BackupRestoreIntegrationTest {
             "When checkSourceExistence confirms Missing, sourceExists must be marked false",
             restoredMem!!.sourceExists
         )
+    }
+
+    @Test
+    fun deviceAToBToCPreservesCalendarHistory() = runBlocking {
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+        val formattedKey = RecoveryKeyManager.formatKey(rootKey)
+
+        // Device A: Insert live action X
+        val now = System.currentTimeMillis()
+        val actionX = CalendarActionEntity(
+            id = "action-X-123",
+            memoryId = "mem-1",
+            calendarId = 10L,
+            calendarEventId = 9999L,
+            actionType = "CREATE",
+            createdAt = now,
+            status = "CONFIRMED",
+            title = "Trip to Tokyo",
+            startAt = now + 100000,
+            endAt = now + 200000,
+            location = "Tokyo Station",
+            isAllDay = false,
+            zoneId = "Asia/Tokyo"
+        )
+        database.calendarActionDao().insert(actionX)
+        assertEquals(1, database.calendarActionDao().getAll().size)
+        assertEquals(0, database.restoredCalendarActionHistoryDao().getAll().size)
+
+        // Backup A
+        val backupResultA = backupManager.performBackup()
+        assertTrue(backupResultA is Result.Success)
+        val fileIdA = (backupResultA as Result.Success).data.fileId
+
+        // Device B: Restore A
+        database.calendarActionDao().clearAll()
+        database.restoredCalendarActionHistoryDao().clearAll()
+        database.memoryDao().clearAll()
+
+        val restoreResultB = backupManager.restoreBackup(fileIdA, formattedKey)
+        assertTrue(restoreResultB is Result.Success)
+
+        // Verify Device B state: live actions = 0, restored history = 1
+        val liveOnB = database.calendarActionDao().getAll()
+        val historyOnB = database.restoredCalendarActionHistoryDao().getAll()
+        assertEquals("Live calendar actions on Device B must be 0", 0, liveOnB.size)
+        assertEquals("Restored calendar history on Device B must be 1", 1, historyOnB.size)
+        val historicalItemOnB = historyOnB.first()
+        assertEquals("originalActionId must be preserved", "action-X-123", historicalItemOnB.originalActionId)
+        assertEquals("restored_action-X-123", historicalItemOnB.id)
+
+        // Device B: Backup B
+        val backupResultB = backupManager.performBackup()
+        assertTrue(backupResultB is Result.Success)
+        val fileIdB = (backupResultB as Result.Success).data.fileId
+
+        // Device C: Restore B
+        database.calendarActionDao().clearAll()
+        database.restoredCalendarActionHistoryDao().clearAll()
+        database.memoryDao().clearAll()
+
+        val restoreResultC = backupManager.restoreBackup(fileIdB, formattedKey)
+        assertTrue(restoreResultC is Result.Success)
+
+        // Verify Device C state: live actions = 0, restored history = 1 with stable originalActionId
+        val liveOnC = database.calendarActionDao().getAll()
+        val historyOnC = database.restoredCalendarActionHistoryDao().getAll()
+        assertEquals("Live calendar actions on Device C must be 0", 0, liveOnC.size)
+        assertEquals("Restored calendar history on Device C must be 1", 1, historyOnC.size)
+        val historicalItemOnC = historyOnC.first()
+        assertEquals("originalActionId must remain unchanged across multi-hop backup/restore", "action-X-123", historicalItemOnC.originalActionId)
+        // Verify no nested 'restored_restored_...' identity drift!
+        assertEquals("restored_action-X-123", historicalItemOnC.id)
+    }
+
+    @Test
+    fun manualAndAutoBackupCannotOwnResumableStateConcurrently() = runBlocking {
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+
+        val backup1Started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val backup1AllowFinish = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val concurrentExecutionDetected = java.util.concurrent.atomic.AtomicBoolean(false)
+        val activeBackupsCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+        driveClient.onUploadStarted = {
+            val count = activeBackupsCount.incrementAndGet()
+            if (count > 1) {
+                concurrentExecutionDetected.set(true)
+            }
+            backup1Started.complete(Unit)
+            backup1AllowFinish.await()
+            activeBackupsCount.decrementAndGet()
+        }
+
+        val job1 = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            backupManager.performBackup()
+        }
+
+        backup1Started.await()
+
+        // Attempt second concurrent backup (e.g. AutoBackup while manual backup is executing)
+        val job2 = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            backupManager.performBackup()
+        }
+
+        // Give job2 opportunity to execute if not locked
+        kotlinx.coroutines.delay(100)
+        assertFalse("Two backup operations must never run concurrently", concurrentExecutionDetected.get())
+        assertEquals(1, activeBackupsCount.get())
+
+        // Allow job1 to finish
+        backup1AllowFinish.complete(Unit)
+        job1.join()
+        job2.join()
+
+        assertFalse("Concurrent backup execution was prevented", concurrentExecutionDetected.get())
+    }
+
+    @Test
+    fun restoreCannotRunDuringBackup() = runBlocking {
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+        val formattedKey = RecoveryKeyManager.formatKey(rootKey)
+
+        // Seed an initial backup file on Drive for restore
+        val seedBackup = backupManager.performBackup()
+        val fileId = (seedBackup as Result.Success).data.fileId
+
+        val backupStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val backupAllowFinish = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val restoreEnteredWhileBackupRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+        val isBackupRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        driveClient.onUploadStarted = {
+            isBackupRunning.set(true)
+            backupStarted.complete(Unit)
+            backupAllowFinish.await()
+            isBackupRunning.set(false)
+        }
+
+        val backupJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            backupManager.performBackup()
+        }
+
+        backupStarted.await()
+
+        // Try restoring while backup holds lock
+        val restoreJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            backupManager.restoreBackup(fileId, formattedKey)
+            if (isBackupRunning.get()) {
+                restoreEnteredWhileBackupRunning.set(true)
+            }
+        }
+
+        kotlinx.coroutines.delay(100)
+        assertFalse("Restore must not run while backup is active", restoreEnteredWhileBackupRunning.get())
+
+        backupAllowFinish.complete(Unit)
+        backupJob.join()
+        restoreJob.join()
+
+        assertFalse("Restore completed safely after backup released lock", restoreEnteredWhileBackupRunning.get())
     }
 }

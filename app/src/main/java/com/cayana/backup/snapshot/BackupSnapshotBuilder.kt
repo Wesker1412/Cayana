@@ -22,6 +22,24 @@ object BackupSnapshotBuilder {
         appVersion: String = "0.1.0",
         schemaVersion: Int = 7
     ): ByteArray {
+        return buildArchiveWithHistory(
+            snapshotId = snapshotId,
+            memories = memories,
+            calendarActions = calendarActions.map { PortableCalendarActionHistory.fromLiveAction(it) },
+            portableSettings = portableSettings,
+            appVersion = appVersion,
+            schemaVersion = schemaVersion
+        )
+    }
+
+    fun buildArchiveWithHistory(
+        snapshotId: String,
+        memories: List<MemoryItem>,
+        calendarActions: List<PortableCalendarActionHistory>,
+        portableSettings: PortableUserSettings,
+        appVersion: String = "0.1.0",
+        schemaVersion: Int = 7
+    ): ByteArray {
         val memoriesBytes = buildMemoriesJsonl(memories)
         val actionsBytes = buildCalendarActionsJsonl(calendarActions)
         val settingsBytes = portableSettings.toJson().toString().toByteArray(Charsets.UTF_8)
@@ -88,11 +106,12 @@ object BackupSnapshotBuilder {
         return sb.toString().toByteArray(Charsets.UTF_8)
     }
 
-    private fun buildCalendarActionsJsonl(actions: List<CalendarActionEntity>): ByteArray {
+    private fun buildCalendarActionsJsonl(actions: List<PortableCalendarActionHistory>): ByteArray {
         val sb = StringBuilder()
         for (action in actions) {
             val obj = JSONObject()
-            obj.put("id", action.id)
+            obj.put("originalActionId", action.originalActionId)
+            obj.put("id", action.originalActionId)
             obj.put("memoryId", action.memoryId)
             obj.put("calendarId", action.calendarId)
             if (action.calendarEventId != null) {

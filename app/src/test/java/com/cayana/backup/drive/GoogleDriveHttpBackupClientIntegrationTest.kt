@@ -25,139 +25,6 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class GoogleDriveHttpBackupClientIntegrationTest {
 
-    data class MockRequest(
-        val method: String,
-        val path: String,
-        val headers: Map<String, String>,
-        val body: ByteArray
-    )
-
-    data class MockResponse(
-        val statusCode: Int,
-        val headers: Map<String, String> = emptyMap(),
-        val bodyString: String = ""
-    )
-
-    class MockHttpServer : AutoCloseable {
-        private val serverSocket = ServerSocket(0)
-        val port: Int = serverSocket.localPort
-        @Volatile private var isRunning = true
-        private val handlers = CopyOnWriteArrayList<Pair<(String, String) -> Boolean, (MockRequest) -> MockResponse>>()
-
-        init {
-            Thread {
-                while (isRunning) {
-                    try {
-                        val socket = serverSocket.accept()
-                        Thread { handleConnection(socket) }.apply { isDaemon = true; start() }
-                    } catch (_: Exception) {
-                        break
-                    }
-                }
-            }.apply { isDaemon = true; start() }
-        }
-
-        fun on(matcher: (method: String, path: String) -> Boolean, handler: (MockRequest) -> MockResponse) {
-            handlers.add(matcher to handler)
-        }
-
-        private fun handleConnection(socket: Socket) {
-            try {
-                socket.use { s ->
-                    s.soTimeout = 5000
-                    val input = s.getInputStream()
-                    val output = s.getOutputStream()
-
-                    val headerBytes = ByteArrayOutputStream()
-                    var prev1 = -1
-                    var prev2 = -1
-                    var prev3 = -1
-                    while (true) {
-                        val b = input.read()
-                        if (b == -1) break
-                        headerBytes.write(b)
-                        if (prev3 == '\r'.code && prev2 == '\n'.code && prev1 == '\r'.code && b == '\n'.code) {
-                            break
-                        }
-                        prev3 = prev2
-                        prev2 = prev1
-                        prev1 = b
-                    }
-
-                    val headerText = headerBytes.toString("ISO-8859-1")
-                    val lines = headerText.lines()
-                    if (lines.isEmpty() || lines[0].isBlank()) return
-                    val reqParts = lines[0].split(" ")
-                    val method = reqParts[0]
-                    val path = reqParts[1]
-
-                    val headers = mutableMapOf<String, String>()
-                    var contentLength = 0
-                    for (i in 1 until lines.size) {
-                        val line = lines[i]
-                        val colon = line.indexOf(':')
-                        if (colon > 0) {
-                            val k = line.substring(0, colon).trim().lowercase()
-                            val v = line.substring(colon + 1).trim()
-                            headers[k] = v
-                            if (k == "content-length") {
-                                contentLength = v.toIntOrNull() ?: 0
-                            }
-                        }
-                    }
-
-                    val bodyBytes = if (contentLength > 0) {
-                        val buf = ByteArray(contentLength)
-                        var readBytes = 0
-                        while (readBytes < contentLength) {
-                            val r = input.read(buf, readBytes, contentLength - readBytes)
-                            if (r == -1) break
-                            readBytes += r
-                        }
-                        buf
-                    } else ByteArray(0)
-
-                    val request = MockRequest(method, path, headers, bodyBytes)
-                    val matchedHandler = handlers.firstOrNull { it.first(method, path) }?.second
-                    val response = matchedHandler?.invoke(request) ?: MockResponse(404, emptyMap(), "Not Found")
-
-                    val statusReason = when (response.statusCode) {
-                        200 -> "OK"
-                        201 -> "Created"
-                        308 -> "Resume Incomplete"
-                        400 -> "Bad Request"
-                        401 -> "Unauthorized"
-                        404 -> "Not Found"
-                        500 -> "Internal Server Error"
-                        503 -> "Service Unavailable"
-                        else -> "Status"
-                    }
-
-                    val respBodyBytes = response.bodyString.toByteArray(Charsets.UTF_8)
-                    val sb = StringBuilder()
-                    sb.append("HTTP/1.1 ${response.statusCode} $statusReason\r\n")
-                    response.headers.forEach { (k, v) ->
-                        sb.append("$k: $v\r\n")
-                    }
-                    sb.append("Content-Length: ${respBodyBytes.size}\r\n")
-                    sb.append("Connection: close\r\n")
-                    sb.append("\r\n")
-
-                    output.write(sb.toString().toByteArray(Charsets.ISO_8859_1))
-                    if (respBodyBytes.isNotEmpty()) {
-                        output.write(respBodyBytes)
-                    }
-                    output.flush()
-                }
-            } catch (_: Exception) {}
-        }
-
-        override fun close() {
-            isRunning = false
-            try { serverSocket.close() } catch (_: Exception) {}
-        }
-    }
-
     private lateinit var server: MockHttpServer
     private var serverPort: Int = 0
     private lateinit var tempDir: File
@@ -434,5 +301,109 @@ class GoogleDriveHttpBackupClientIntegrationTest {
 
         assertTrue(result is Result.Success)
         assertNull("Durable state file must be cleared on upload completion", stateStore.loadState())
+    }
+
+    @Test
+    fun serverAcceptsFirstChunkButClientDiesBeforePersistingOffset() = runTest {
+        val chunkSize = 1024 * 1024
+        val totalBytes = 2 * 1024 * 1024
+        val data = ByteArray(totalBytes) { 0x55 }
+        val sessionPath = "/upload/session/crash_after_first_chunk"
+        val fileName = "cayana-v1-crash.cynb"
+        val snapshotId = java.util.UUID.nameUUIDFromBytes(fileName.toByteArray()).toString()
+        val tempCiphertextFile = File(tempDir, "backup_encrypted_${snapshotId}.tmp")
+        tempCiphertextFile.writeBytes(data)
+
+        // Seed persisted state where process died before client could save confirmedBytes > 0
+        stateStore.saveState(
+            ResumableUploadState(
+                snapshotId = snapshotId,
+                encryptedTempFilePath = tempCiphertextFile.absolutePath,
+                sessionUri = "http://127.0.0.1:$serverPort$sessionPath",
+                totalBytes = totalBytes.toLong(),
+                confirmedBytes = 0L, // Client died before persisting offset
+                createdAt = System.currentTimeMillis()
+            )
+        )
+
+        val serverQueries = AtomicInteger(0)
+        val chunkRequests = CopyOnWriteArrayList<String>()
+
+        server.on({ method, path -> method == "PUT" && path == sessionPath }) { req ->
+            val rangeHeader = req.headers["content-range"] ?: ""
+            if (rangeHeader.startsWith("bytes */")) {
+                serverQueries.incrementAndGet()
+                // Server tells client: First chunk (0-1048575) was actually received by server
+                MockResponse(308, mapOf("Range" to "bytes=0-1048575"))
+            } else {
+                chunkRequests.add(rangeHeader)
+                val response = "{\"id\":\"file_crashed_offset_recovered\",\"name\":\"cayana-v1-crash.cynb\",\"size\":\"$totalBytes\",\"createdTime\":\"2026-10-07T00:00:00Z\"}"
+                MockResponse(200, emptyMap(), response)
+            }
+        }
+
+        // Recreate client
+        val client = createClient(chunkSize = chunkSize)
+        val result = client.uploadBackup("cayana-v1-crash.cynb", data)
+
+        assertTrue("Upload must succeed", result is Result.Success)
+        assertEquals(1, serverQueries.get())
+        assertEquals(1, chunkRequests.size)
+        // Client MUST NOT assume 0; it must start at 1048576!
+        assertEquals("bytes 1048576-2097151/$totalBytes", chunkRequests[0])
+    }
+
+    @Test
+    fun `308WithoutRangeDoesNotAdvanceOffset`() = runTest {
+        val chunkSize = 1024 * 1024
+        val totalBytes = 2 * 1024 * 1024
+        val data = ByteArray(totalBytes) { 0x66 }
+
+        val sessionPath = "/upload/session/no_range_test"
+        server.on({ method, path -> method == "POST" && path.startsWith("/upload/drive/v3/files") }) { _ ->
+            MockResponse(200, mapOf("Location" to "http://127.0.0.1:$serverPort$sessionPath"), "")
+        }
+
+        val putCalls = AtomicInteger(0)
+        val receivedRanges = CopyOnWriteArrayList<String>()
+
+        server.on({ method, path -> method == "PUT" && path == sessionPath }) { req ->
+            val call = putCalls.incrementAndGet()
+            val contentRange = req.headers["content-range"] ?: ""
+            receivedRanges.add(contentRange)
+
+            when (call) {
+                1 -> {
+                    // First chunk sent: returns 308 WITHOUT Range header
+                    MockResponse(308, emptyMap())
+                }
+                2 -> {
+                    // Status query sent: returns 308 without Range header as well
+                    MockResponse(308, emptyMap())
+                }
+                3 -> {
+                    // Next chunk sent: client must NOT have skipped bytes; it MUST re-send chunk 0
+                    assertEquals("bytes 0-1048575/$totalBytes", contentRange)
+                    MockResponse(308, mapOf("Range" to "bytes=0-1048575"))
+                }
+                4 -> {
+                    // Second chunk completes
+                    assertEquals("bytes 1048576-2097151/$totalBytes", contentRange)
+                    val response = "{\"id\":\"file_no_range_safe\",\"name\":\"cayana-v1-norange.cynb\",\"size\":\"$totalBytes\",\"createdTime\":\"2026-10-07T00:00:00Z\"}"
+                    MockResponse(200, emptyMap(), response)
+                }
+                else -> MockResponse(500)
+            }
+        }
+
+        val client = createClient(chunkSize = chunkSize)
+        val result = client.uploadBackup("cayana-v1-norange.cynb", data)
+
+        assertTrue(result is Result.Success)
+        assertEquals("file_no_range_safe", (result as Result.Success).data.fileId)
+        // Verify call sequence: chunk 0 -> query -> chunk 0 re-sent (no bytes skipped!)
+        assertEquals("bytes 0-1048575/$totalBytes", receivedRanges[0])
+        assertEquals("bytes */$totalBytes", receivedRanges[1])
+        assertEquals("bytes 0-1048575/$totalBytes", receivedRanges[2])
     }
 }

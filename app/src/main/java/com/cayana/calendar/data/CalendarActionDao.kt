@@ -49,4 +49,7 @@ interface CalendarActionDao {
 
     @Query("SELECT * FROM calendar_actions")
     suspend fun getAll(): List<CalendarActionEntity>
+
+    @Query("DELETE FROM calendar_actions")
+    suspend fun clearAll(): Int
 }

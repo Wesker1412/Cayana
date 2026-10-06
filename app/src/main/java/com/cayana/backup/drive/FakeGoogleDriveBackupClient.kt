@@ -16,6 +16,9 @@ class FakeGoogleDriveBackupClient : GoogleDriveBackupClient {
     var listFailure: Exception? = null
     var deleteFailure: Exception? = null
 
+    var onUploadStarted: (suspend () -> Unit)? = null
+    var onDownloadStarted: (suspend () -> Unit)? = null
+
     var simulateInterruptedResumableUpload: Boolean = false
     private var resumableInterruptionCount = 0
 
@@ -32,6 +35,7 @@ class FakeGoogleDriveBackupClient : GoogleDriveBackupClient {
         content: ByteArray,
         mimeType: String
     ): Result<DriveBackupMetadata> {
+        onUploadStarted?.invoke()
         uploadFailure?.let { return Result.Error(it) }
 
         if (simulateInterruptedResumableUpload && resumableInterruptionCount == 0) {

@@ -121,8 +121,9 @@ class SettingsViewModelBackupTest {
         assertNotNull("Generated key must not be null", state.generatedRecoveryKey)
         assertTrue(state.generatedRecoveryKey!!.contains("-"))
 
-        // Confirm key
-        viewModel.confirmRecoveryKey()
+        // Confirm key with required last two chunks
+        val lastTwo = state.generatedRecoveryKey!!.split("-").takeLast(2).joinToString("-")
+        viewModel.confirmRecoveryKey(lastTwo)
         testDispatcher.scheduler.advanceUntilIdle()
 
         assertFalse("Dialog should be dismissed after confirmation", viewModel.uiState.value.showRecoveryKeyDialog)

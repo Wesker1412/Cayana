@@ -235,6 +235,7 @@ class GoogleDriveHttpBackupClient(
                     state = null
                 }
 
+                val isResumed = (state != null)
                 var currentState: ResumableUploadState = state ?: run {
                     val sessionResult = initiateResumableSession(token, fileName, totalBytes)
                     if (sessionResult.first == 401) {
@@ -258,9 +259,9 @@ class GoogleDriveHttpBackupClient(
                     newState
                 }
 
-                // Query server status if resumed from saved state
+                // If persisted session exists, ALWAYS query server status regardless of confirmedBytes
                 var currentOffset = currentState.confirmedBytes
-                if (currentOffset > 0L) {
+                if (isResumed) {
                     val queryResult = querySessionStatus(currentState.sessionUri, totalBytes)
                     when {
                         queryResult.first == 200 || queryResult.first == 201 -> {
@@ -270,7 +271,7 @@ class GoogleDriveHttpBackupClient(
                             return@executeWithTokenRetry queryResult.first to Result.Success(metadata)
                         }
                         queryResult.first == 308 -> {
-                            currentOffset = queryResult.second
+                            currentOffset = queryResult.second ?: currentState.confirmedBytes
                             currentState = currentState.copy(confirmedBytes = currentOffset)
                             resumableStateStore.saveState(currentState)
                         }
@@ -329,7 +330,23 @@ class GoogleDriveHttpBackupClient(
 
                         if (code == 308) {
                             val rangeHeader = chunkConn.getHeaderField("Range")
-                            currentOffset = parseRangeHeader(rangeHeader, end)
+                            val parsedRange = parseRangeHeader(rangeHeader)
+                            if (parsedRange != null) {
+                                currentOffset = parsedRange
+                            } else {
+                                // 308 without Range: query session status or safely fall back to current chunk start
+                                val qResult = querySessionStatus(currentState.sessionUri, totalBytes)
+                                if (qResult.first == 308 && qResult.second != null) {
+                                    currentOffset = qResult.second!!
+                                } else if (qResult.first in 200..299) {
+                                    val metadata = parseMetadataFromJson(qResult.third, fileName, totalBytes)
+                                    tempCiphertextFile.delete()
+                                    resumableStateStore.clearState()
+                                    return@executeWithTokenRetry qResult.first to Result.Success(metadata)
+                                } else {
+                                    currentOffset = start
+                                }
+                            }
                             currentState = currentState.copy(confirmedBytes = currentOffset)
                             resumableStateStore.saveState(currentState)
                         } else if (code in 200..299) {
@@ -413,7 +430,7 @@ class GoogleDriveHttpBackupClient(
         return code to Result.Error(IOException("Failed to initiate resumable session: HTTP $code - $err"))
     }
 
-    private fun querySessionStatus(sessionUri: String, totalBytes: Long): Triple<Int, Long, String> {
+    private fun querySessionStatus(sessionUri: String, totalBytes: Long): Triple<Int, Long?, String> {
         val connection = (URL(sessionUri).openConnection() as HttpURLConnection).apply {
             requestMethod = "PUT"
             instanceFollowRedirects = false
@@ -430,19 +447,15 @@ class GoogleDriveHttpBackupClient(
         } else ""
 
         val rangeHeader = connection.getHeaderField("Range")
-        val nextOffset = parseRangeHeader(rangeHeader, 0L)
+        val nextOffset = parseRangeHeader(rangeHeader)
         return Triple(code, nextOffset, responseBody)
     }
 
-    private fun parseRangeHeader(rangeHeader: String?, defaultOffset: Long): Long {
-        if (rangeHeader.isNullOrBlank()) return defaultOffset
+    private fun parseRangeHeader(rangeHeader: String?): Long? {
+        if (rangeHeader.isNullOrBlank()) return null
         // Format: bytes=0-1048575
         val match = Regex("""bytes=\d+-(\d+)""").find(rangeHeader)
-        return if (match != null) {
-            match.groupValues[1].toLong() + 1
-        } else {
-            defaultOffset
-        }
+        return match?.groupValues?.get(1)?.toLongOrNull()?.plus(1)
     }
 
     private fun parseMetadataFromJson(jsonStr: String, fallbackName: String, fallbackSize: Long): DriveBackupMetadata {

@@ -223,7 +223,11 @@ object BackupSnapshotParser {
             val trimmed = line.trim()
             if (trimmed.isNotEmpty()) {
                 val obj = JSONObject(trimmed)
-                val originalId = obj.getString("id")
+                val originalId = if (obj.has("originalActionId") && !obj.isNull("originalActionId")) {
+                    obj.getString("originalActionId")
+                } else {
+                    obj.getString("id")
+                }
                 val memoryId = obj.getString("memoryId")
                 val calendarId = obj.getLong("calendarId")
                 val calendarEventId = if (obj.has("calendarEventId") && !obj.isNull("calendarEventId")) obj.getLong("calendarEventId") else null
