@@ -63,8 +63,10 @@ object RecoveryKeyManager {
 
         val decoded = try {
             decodeBase32(cleaned)
+        } catch (e: InvalidRecoveryKeyException) {
+            throw e
         } catch (e: Exception) {
-            throw InvalidRecoveryKeyException("無法解析復原金鑰編碼。", e)
+            throw InvalidRecoveryKeyException("無法解析復原金鑰編碼：${e.message}", e)
         }
 
         val expectedTotalLength = BackupConfig.ROOT_KEY_BYTES_LENGTH + CHECKSUM_BYTES_LENGTH

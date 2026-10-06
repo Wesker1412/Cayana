@@ -39,16 +39,20 @@ class BackupCryptoTest {
         val rootKey = RecoveryKeyManager.generateRootKey()
         val formatted = RecoveryKeyManager.formatKey(rootKey)
 
-        // Modify the last character
-        val lastChar = formatted.last()
-        val replacement = if (lastChar == 'A') 'B' else 'A'
-        val corrupted = formatted.dropLast(1) + replacement
+        // Modify the second to last character (which is pure checksum payload without padding bits)
+        val chars = formatted.toCharArray()
+        val targetIdx = chars.size - 2
+        chars[targetIdx] = if (chars[targetIdx] == 'A') 'B' else 'A'
+        val corrupted = String(chars)
 
         try {
             RecoveryKeyManager.parseKey(corrupted)
             fail("Expected InvalidRecoveryKeyException due to checksum mismatch")
         } catch (e: InvalidRecoveryKeyException) {
-            assertTrue(e.message?.contains("檢查碼") == true || e.message?.contains("無效") == true)
+            assertTrue(
+                "Expected error message indicating checksum mismatch or invalid key, got: ${e.message}",
+                e.message?.contains("檢查碼") == true || e.message?.contains("無效") == true
+            )
         }
     }
 
