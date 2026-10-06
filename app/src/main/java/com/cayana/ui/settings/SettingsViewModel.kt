@@ -353,43 +353,94 @@ class SettingsViewModel(
         }
     }
 
-    fun confirmRecoveryKey() {
+    fun confirmRecoveryKey(confirmationInput: String? = null): Boolean {
         val keyStr = _uiState.value.generatedRecoveryKey
-        if (!keyStr.isNullOrBlank()) {
-            val keyBytes = runCatching { com.cayana.backup.crypto.RecoveryKeyManager.parseKey(keyStr) }.getOrNull()
-            if (keyBytes != null) {
-                recoveryKeyStorage?.saveRecoveryKey(keyBytes)
-                viewModelScope.launch {
-                    settingsRepository.updateHasRecoveryKey(true)
-                }
+        if (keyStr.isNullOrBlank()) {
+            _uiState.update { it.copy(showRecoveryKeyDialog = false) }
+            return false
+        }
+
+        val chunks = keyStr.split("-")
+        if (confirmationInput != null) {
+            if (chunks.size < 2) {
+                _uiState.update { it.copy(recoveryKeyConfirmationError = "無效的金鑰格式") }
+                return false
+            }
+            val expected = chunks.takeLast(2).joinToString("").uppercase()
+            val cleanInput = confirmationInput.trim().replace("-", "").replace(" ", "").uppercase()
+            if (cleanInput != expected) {
+                _uiState.update { it.copy(recoveryKeyConfirmationError = "輸入的末兩組金鑰不符，請重新確認。") }
+                return false
             }
         }
-        _uiState.update { it.copy(showRecoveryKeyDialog = false, generatedRecoveryKey = null) }
+
+        val keyBytes = runCatching { com.cayana.backup.crypto.RecoveryKeyManager.parseKey(keyStr) }.getOrNull()
+        if (keyBytes != null) {
+            recoveryKeyStorage?.saveRecoveryKey(keyBytes)
+            viewModelScope.launch {
+                settingsRepository.updateHasRecoveryKey(true)
+            }
+            _uiState.update {
+                it.copy(
+                    showRecoveryKeyDialog = false,
+                    generatedRecoveryKey = null,
+                    recoveryKeyConfirmationError = null
+                )
+            }
+            return true
+        } else {
+            _uiState.update { it.copy(recoveryKeyConfirmationError = "金鑰校驗碼錯誤") }
+            return false
+        }
     }
 
     fun dismissRecoveryKeyDialog() {
-        _uiState.update { it.copy(showRecoveryKeyDialog = false) }
+        _uiState.update { it.copy(showRecoveryKeyDialog = false, recoveryKeyConfirmationError = null) }
     }
 
-    fun onDriveAuthorizationResult(success: Boolean) {
+    fun onDriveAuthorizationResult(success: Boolean, data: android.content.Intent? = null) {
         viewModelScope.launch {
-            if (success) {
-                driveAuthManager?.onAuthorizationSuccess("granted")
-                settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.CONNECTED)
+            if (success && data != null && driveAuthManager != null) {
+                val res = driveAuthManager.handleAuthorizationResult(data)
+                if (res is com.cayana.core.common.Result.Success) {
+                    settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.CONNECTED)
+                } else {
+                    settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.AUTH_REQUIRED)
+                }
+            } else if (success && driveAuthManager != null && data == null) {
+                val tokenRes = driveAuthManager.getAccessToken()
+                if (tokenRes is com.cayana.core.common.Result.Success) {
+                    settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.CONNECTED)
+                } else {
+                    settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.AUTH_REQUIRED)
+                }
             } else {
                 settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.AUTH_REQUIRED)
             }
         }
     }
 
-    fun disconnectDrive() {
+    fun disconnectDrive(context: android.content.Context? = null) {
         viewModelScope.launch {
-            driveAuthManager?.disconnect()
-            settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED)
+            val authManager = driveAuthManager
+            val res = authManager?.revokeAuthorization()
+            if (res == null || res is com.cayana.core.common.Result.Success) {
+                settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED)
+                settingsRepository.updateAutoBackupEnabled(false)
+                if (context != null) {
+                    com.cayana.backup.worker.AutoBackupWorker.cancel(context)
+                }
+            } else {
+                _uiState.update { it.copy(backupState = BackupUiState.Error("解除 Google 授權失敗，請確認網路連線。")) }
+            }
         }
     }
 
     fun toggleAutoBackup(enabled: Boolean, context: android.content.Context) {
+        if (enabled && !_uiState.value.settings.hasRecoveryKey) {
+            _uiState.update { it.copy(backupState = BackupUiState.Error("啟用自動備份前必須先確認並保存復原金鑰。")) }
+            return
+        }
         viewModelScope.launch {
             settingsRepository.updateAutoBackupEnabled(enabled)
             if (enabled) {

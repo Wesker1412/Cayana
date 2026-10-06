@@ -134,7 +134,7 @@ class SettingsViewModelBackupTest {
         // Setup root key and connect Drive
         val rootKey = RecoveryKeyManager.generateRootKey()
         recoveryKeyStorage.saveRecoveryKey(rootKey)
-        driveAuthManager.onAuthorizationSuccess("valid_token")
+        driveAuthManager.setAuthorizedToken("valid_token")
         settingsRepository.updateDriveAuthStatus(DriveAuthStatus.CONNECTED)
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -155,7 +155,7 @@ class SettingsViewModelBackupTest {
 
     @Test
     fun disconnectGoogleDriveClearsTokenAndUpdatesStatus() = runTest {
-        driveAuthManager.onAuthorizationSuccess("token")
+        driveAuthManager.setAuthorizedToken("token")
         settingsRepository.updateDriveAuthStatus(DriveAuthStatus.CONNECTED)
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -164,5 +164,53 @@ class SettingsViewModelBackupTest {
 
         assertEquals(DriveAuthStatus.DISCONNECTED, driveAuthManager.authStatus.value)
         assertEquals(DriveAuthStatus.DISCONNECTED, viewModel.uiState.value.settings.driveAuthStatus)
+    }
+
+    @Test
+    fun recoveryKeyConfirmationWithIncorrectLastTwoChunksFails() = runTest {
+        viewModel.startConnectDrive {}
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val generatedKey = viewModel.uiState.value.generatedRecoveryKey
+        assertNotNull(generatedKey)
+
+        // Attempt confirmation with wrong chunks
+        val confirmed = viewModel.confirmRecoveryKey("WRONG-CHUNKS")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertFalse("Confirmation should fail with mismatched chunks", confirmed)
+        assertTrue(viewModel.uiState.value.showRecoveryKeyDialog)
+        assertFalse(recoveryKeyStorage.hasRecoveryKey())
+        assertNotNull(viewModel.uiState.value.recoveryKeyConfirmationError)
+    }
+
+    @Test
+    fun recoveryKeyConfirmationWithCorrectLastTwoChunksSucceeds() = runTest {
+        viewModel.startConnectDrive {}
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val generatedKey = viewModel.uiState.value.generatedRecoveryKey!!
+        val chunks = generatedKey.split("-")
+        val lastTwo = chunks.takeLast(2).joinToString("-")
+
+        val confirmed = viewModel.confirmRecoveryKey(lastTwo)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue("Confirmation should succeed with correct last two chunks", confirmed)
+        assertFalse(viewModel.uiState.value.showRecoveryKeyDialog)
+        assertTrue(recoveryKeyStorage.hasRecoveryKey())
+        assertTrue(viewModel.uiState.value.settings.hasRecoveryKey)
+    }
+
+    @Test
+    fun cannotToggleAutoBackupWithoutConfirmedRecoveryKey() = runTest {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        assertFalse(viewModel.uiState.value.settings.hasRecoveryKey)
+
+        viewModel.toggleAutoBackup(true, context)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertFalse("Auto-backup must remain false if recovery key is not confirmed", viewModel.uiState.value.settings.autoBackupEnabled)
+        assertTrue(viewModel.uiState.value.backupState is BackupUiState.Error)
     }
 }

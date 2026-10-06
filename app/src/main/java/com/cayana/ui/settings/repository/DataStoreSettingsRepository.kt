@@ -427,4 +427,14 @@ class DataStoreSettingsRepository(
             preferences[KEY_HAS_RECOVERY_KEY] = hasKey
         }
     }
+
+    override suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings) {
+        dataStore.edit { preferences ->
+            preferences[KEY_ONBOARDING_COMPLETED] = portable.onboardingCompleted
+            preferences[KEY_ENABLED_SOURCES] = portable.enabledSources
+            preferences[KEY_NOTIFICATIONS_ENABLED] = portable.notificationsEnabled
+            preferences[KEY_PRIVATE_LOGGING] = portable.privateLoggingEnforced
+            preferences[KEY_LOCAL_FIRST] = portable.isLocalFirstOnly
+        }
+    }
 }

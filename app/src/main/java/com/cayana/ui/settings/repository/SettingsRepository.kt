@@ -94,6 +94,7 @@ interface SettingsRepository {
     suspend fun updateAutoBackupEnabled(enabled: Boolean)
     suspend fun updateLastBackupTimestamp(timestamp: Long)
     suspend fun updateHasRecoveryKey(hasKey: Boolean)
+    suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings)
 }
 
 /**
@@ -295,5 +296,24 @@ class InMemorySettingsRepository(
 
     override suspend fun updateHasRecoveryKey(hasKey: Boolean) {
         _settings.update { it.copy(hasRecoveryKey = hasKey) }
+    }
+
+    override suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings) {
+        _settings.update { current ->
+            val parsedSources = portable.enabledSources.mapNotNull { name ->
+                try {
+                    SourceType.valueOf(name)
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
+            }.toSet()
+            current.copy(
+                onboardingCompleted = portable.onboardingCompleted,
+                enabledSources = parsedSources,
+                notificationsEnabled = portable.notificationsEnabled,
+                privateLoggingEnforced = portable.privateLoggingEnforced,
+                isLocalFirstOnly = portable.isLocalFirstOnly
+            )
+        }
     }
 }

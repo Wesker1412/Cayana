@@ -324,4 +324,32 @@ class BackupSnapshotTest {
             assertTrue(e.message?.contains("校驗碼不符") == true || e.message?.contains("損壞") == true)
         }
     }
+
+    @Test
+    fun zipBombRejectedBeforeUnboundedAllocation() {
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            zos.putNextEntry(ZipEntry("memories.jsonl"))
+            // Write 52MB of zeroes in 64KB blocks. Highly compressible (takes only ~50KB in zip)
+            val chunk = ByteArray(64 * 1024)
+            val totalBlocks = (52 * 1024) / 64 // 52MB
+            for (i in 0 until totalBlocks) {
+                zos.write(chunk)
+            }
+            zos.closeEntry()
+        }
+
+        val zipBombBytes = baos.toByteArray()
+        assertTrue("Compressed zip bomb should be small (< 500KB)", zipBombBytes.size < 500 * 1024)
+
+        try {
+            BackupSnapshotParser.parseAndValidate(zipBombBytes)
+            fail("Expected BackupValidationException on zip bomb")
+        } catch (e: BackupValidationException) {
+            assertTrue(
+                "Exception message must mention entry size limit, was: ${e.message}",
+                e.message?.contains("超過限制") == true || e.message?.contains("超過安全限制") == true
+            )
+        }
+    }
 }

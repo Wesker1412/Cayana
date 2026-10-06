@@ -36,6 +36,7 @@ data class SettingsUiState(
     val backupState: BackupUiState = BackupUiState.Idle,
     val showRecoveryKeyDialog: Boolean = false,
     val generatedRecoveryKey: String? = null,
+    val recoveryKeyConfirmationError: String? = null,
     val showRestoreDialog: Boolean = false,
     val availableBackups: List<DriveBackupMetadata> = emptyList(),
     val isFetchingBackups: Boolean = false

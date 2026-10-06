@@ -70,6 +70,9 @@ class BackupRestoreIntegrationTest {
                 return uriString != null && uriString.contains("valid_on_this_device")
             }
             override fun checkSourceExistence(uriString: String?, sourceType: SourceType?): SourceExistence {
+                if (uriString?.contains("permission_unavailable") == true) {
+                    return SourceExistence.Unavailable(SecurityException("Permission revoked"))
+                }
                 return if (doesSourceExist(uriString)) SourceExistence.Exists else SourceExistence.Missing
             }
         }
@@ -345,5 +348,134 @@ class BackupRestoreIntegrationTest {
         assertEquals("mem-cal-1", hist.memoryId)
         assertEquals("看診預約", hist.title)
         assertEquals(777L, hist.originalCalendarEventId)
+    }
+
+    @Test
+    fun restoreAppliesPortableSettings() = runBlocking {
+        // Set portable settings on backup device
+        settingsRepository.setOnboardingCompleted(true)
+        settingsRepository.updateSourceEnabled(SourceType.PHOTO, true)
+        settingsRepository.updateNotificationsEnabled(false)
+
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+        val backupResult = backupManager.performBackup()
+        val fileId = (backupResult as Result.Success).data.fileId
+
+        // Reset settings on fresh restored device
+        settingsRepository.setOnboardingCompleted(false)
+        settingsRepository.updateSourceEnabled(SourceType.PHOTO, false)
+        settingsRepository.updateNotificationsEnabled(true)
+
+        // Restore
+        val restoreResult = backupManager.restoreBackup(fileId, RecoveryKeyManager.formatKey(rootKey))
+        assertTrue(restoreResult is Result.Success)
+
+        val restoredSettings = settingsRepository.getSettings().first()
+        assertTrue("Portable onboardingCompleted should be restored", restoredSettings.onboardingCompleted)
+        assertTrue("Portable enabledSources should include PHOTO", restoredSettings.enabledSources.contains(SourceType.PHOTO))
+        assertFalse("Portable notificationsEnabled should be false", restoredSettings.notificationsEnabled)
+    }
+
+    @Test
+    fun restoreDoesNotApplyDeviceSpecificSettings() = runBlocking {
+        // Set portable settings
+        settingsRepository.setOnboardingCompleted(true)
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+        val backupResult = backupManager.performBackup()
+        val fileId = (backupResult as Result.Success).data.fileId
+
+        // Set device-specific settings on target device
+        val localCalendarId = "local_device_calendar_123"
+        val localCalendarName = "Local Calendar"
+        val localSafUri = "content://com.android.externalstorage.documents/tree/local_folder"
+        settingsRepository.updateSelectedCalendar(localCalendarId, localCalendarName)
+        settingsRepository.updateDownloadsDirectoryUri(localSafUri)
+
+        // Restore
+        val restoreResult = backupManager.restoreBackup(fileId, RecoveryKeyManager.formatKey(rootKey))
+        assertTrue(restoreResult is Result.Success)
+
+        val currentSettings = settingsRepository.getSettings().first()
+        assertEquals("Device-specific selectedCalendarId must never be overwritten", localCalendarId, currentSettings.selectedCalendarId)
+        assertEquals("Device-specific selectedCalendarName must never be overwritten", localCalendarName, currentSettings.selectedCalendarName)
+        assertEquals("Device-specific downloadsDirectoryUri must never be overwritten", localSafUri, currentSettings.downloadsDirectoryUri)
+    }
+
+    @Test
+    fun restorePermissionUnavailableDoesNotMarkSourceMissing() = runBlocking {
+        val now = System.currentTimeMillis()
+        val mem = MemoryItem(
+            id = "mem-perm-test",
+            sourceType = SourceType.PHOTO,
+            createdAt = now,
+            capturedAt = now,
+            title = "Permission test",
+            rawText = "Photo needing permission",
+            normalizedText = "Photo needing permission",
+            sourceUri = "content://media/external/images/permission_unavailable_1",
+            sourceUrl = null,
+            sourceExists = true, // was true in backup
+            processingState = ProcessingState.COMPLETED
+        )
+        database.memoryDao().insertOrUpdate(MemoryEntity.fromDomain(mem))
+
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+        val backupResult = backupManager.performBackup()
+        val fileId = (backupResult as Result.Success).data.fileId
+
+        // Clear local database
+        database.memoryDao().clearAll()
+
+        // Restore
+        val restoreResult = backupManager.restoreBackup(fileId, RecoveryKeyManager.formatKey(rootKey))
+        assertTrue(restoreResult is Result.Success)
+
+        val restoredMem = database.memoryDao().getMemoryById("mem-perm-test")
+        assertNotNull(restoredMem)
+        assertTrue(
+            "When checkSourceExistence returns Unavailable, backed-up sourceExists (true) must be preserved",
+            restoredMem!!.sourceExists
+        )
+    }
+
+    @Test
+    fun restoreConfirmedMissingMarksSourceMissing() = runBlocking {
+        val now = System.currentTimeMillis()
+        val mem = MemoryItem(
+            id = "mem-missing-test",
+            sourceType = SourceType.PHOTO,
+            createdAt = now,
+            capturedAt = now,
+            title = "Missing test",
+            rawText = "Photo definitively deleted",
+            normalizedText = "Photo definitively deleted",
+            sourceUri = "content://media/external/images/definitely_missing_file",
+            sourceUrl = null,
+            sourceExists = true, // was true originally
+            processingState = ProcessingState.COMPLETED
+        )
+        database.memoryDao().insertOrUpdate(MemoryEntity.fromDomain(mem))
+
+        val rootKey = RecoveryKeyManager.generateRootKey()
+        recoveryKeyStorage.saveRecoveryKey(rootKey)
+        val backupResult = backupManager.performBackup()
+        val fileId = (backupResult as Result.Success).data.fileId
+
+        // Clear local database
+        database.memoryDao().clearAll()
+
+        // Restore
+        val restoreResult = backupManager.restoreBackup(fileId, RecoveryKeyManager.formatKey(rootKey))
+        assertTrue(restoreResult is Result.Success)
+
+        val restoredMem = database.memoryDao().getMemoryById("mem-missing-test")
+        assertNotNull(restoredMem)
+        assertFalse(
+            "When checkSourceExistence confirms Missing, sourceExists must be marked false",
+            restoredMem!!.sourceExists
+        )
     }
 }

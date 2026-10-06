@@ -101,7 +101,10 @@ fun SettingsScreen(
     val driveAuthLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        viewModel.onDriveAuthorizationResult(result.resultCode == Activity.RESULT_OK)
+        viewModel.onDriveAuthorizationResult(
+            result.resultCode == Activity.RESULT_OK,
+            result.data
+        )
     }
 
     var selectedBackupFileId by remember { mutableStateOf<String?>(null) }
@@ -605,6 +608,7 @@ fun SettingsScreen(
                             }
                             Switch(
                                 checked = uiState.settings.autoBackupEnabled,
+                                enabled = uiState.settings.hasRecoveryKey,
                                 onCheckedChange = { checked ->
                                     viewModel.toggleAutoBackup(checked, context)
                                 }
@@ -614,7 +618,7 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         TextButton(
-                            onClick = { viewModel.disconnectDrive() },
+                            onClick = { viewModel.disconnectDrive(context) },
                             modifier = Modifier.align(Alignment.End)
                         ) {
                             Text("中斷連接", color = MaterialTheme.colorScheme.error)
@@ -850,6 +854,7 @@ fun SettingsScreen(
     // ---------------------------------------------------------------
     if (uiState.showRecoveryKeyDialog && uiState.generatedRecoveryKey != null) {
         val keyText = uiState.generatedRecoveryKey ?: ""
+        var confirmationInput by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { viewModel.dismissRecoveryKeyDialog() },
             title = { Text("Cayana 備份復原金鑰") },
@@ -887,13 +892,43 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("複製金鑰")
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "請輸入此金鑰的最後兩組代碼以確認您已確實記錄：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = confirmationInput,
+                        onValueChange = { confirmationInput = it },
+                        label = { Text("輸入末兩組代碼 (例如末 10 碼)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        isError = uiState.recoveryKeyConfirmationError != null
+                    )
+                    if (uiState.recoveryKeyConfirmationError != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = uiState.recoveryKeyConfirmationError ?: "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
-                    onClick = { viewModel.confirmRecoveryKey() }
+                    onClick = { viewModel.confirmRecoveryKey(confirmationInput) },
+                    enabled = confirmationInput.isNotBlank()
                 ) {
-                    Text("我已妥善保存金鑰")
+                    Text("確認並啟用金鑰")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissRecoveryKeyDialog() }) {
+                    Text("取消")
                 }
             }
         )

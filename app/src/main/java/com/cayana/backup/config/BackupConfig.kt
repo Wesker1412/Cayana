@@ -14,6 +14,7 @@ object BackupConfig {
     // Security & resource bounds
     const val MAX_ENCRYPTED_BACKUP_BYTES: Long = 50L * 1024 * 1024 // 50 MB
     const val MAX_DECRYPTED_BACKUP_BYTES: Long = 100L * 1024 * 1024 // 100 MB
+    const val MAX_SINGLE_ENTRY_DECOMPRESSED_BYTES: Long = 50L * 1024 * 1024 // 50 MB
     const val MAX_RECORD_COUNT: Int = 100_000
     const val MAX_RETENTION_COUNT: Int = 3
 

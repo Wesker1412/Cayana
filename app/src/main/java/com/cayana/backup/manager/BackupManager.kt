@@ -80,6 +80,9 @@ class BackupManager(
                 calendarActions = actions,
                 portableSettings = portableSettings
             )
+            if (archiveBytes.size > BackupConfig.MAX_DECRYPTED_BACKUP_BYTES) {
+                return Result.Error(IllegalStateException("備份未加密資料超過大小限制（最大 ${BackupConfig.MAX_DECRYPTED_BACKUP_BYTES} 位元組）"))
+            }
 
             // 6. Encrypt client-side using AES-256-GCM envelope
             val encryptedBlob = BackupCryptoEngine.encrypt(
@@ -87,6 +90,9 @@ class BackupManager(
                 rootKey = rootKey,
                 snapshotId = snapshotId
             )
+            if (encryptedBlob.size > BackupConfig.MAX_ENCRYPTED_BACKUP_BYTES) {
+                return Result.Error(IllegalStateException("備份加密檔案超過大小限制（最大 ${BackupConfig.MAX_ENCRYPTED_BACKUP_BYTES} 位元組）"))
+            }
 
             // 7. Upload to Google Drive appDataFolder
             val fileName = "${BackupConfig.FILE_NAME_PREFIX}${snapshotId}${BackupConfig.FILE_NAME_SUFFIX}"
@@ -147,6 +153,9 @@ class BackupManager(
             )
         }
         val encryptedBlob = downloadResult.data
+        if (encryptedBlob.size > BackupConfig.MAX_ENCRYPTED_BACKUP_BYTES) {
+            return Result.Error(IllegalStateException("下載的備份檔案超過大小限制（最大 ${BackupConfig.MAX_ENCRYPTED_BACKUP_BYTES} 位元組）"))
+        }
 
         // 3. Decrypt locally with fail-closed authentication
         val decrypted = try {
@@ -181,7 +190,12 @@ class BackupManager(
 
                 // Insert canonical memories with source existence checked on this device
                 for (mem in parsed.memories) {
-                    val exists = sourceExistenceValidator.doesSourceExist(mem.sourceUri)
+                    val existence = sourceExistenceValidator.checkSourceExistence(mem.sourceUri, mem.sourceType)
+                    val exists = when (existence) {
+                        is com.cayana.source.SourceExistence.Exists -> true
+                        is com.cayana.source.SourceExistence.Missing -> false
+                        is com.cayana.source.SourceExistence.Unavailable -> mem.sourceExists
+                    }
                     val toInsert = mem.copy(sourceExists = exists)
                     memoryDao.insertOrUpdate(MemoryEntity.fromDomain(toInsert))
                 }
@@ -190,11 +204,14 @@ class BackupManager(
                 restoredCalendarActionHistoryDao.insertAll(parsed.calendarActions)
             }
 
-            // 7. Save working recovery key locally wrapped with Keystore
+            // 7. Apply portable settings (only portable preferences, never device-specific capabilities)
+            settingsRepository.applyPortableSettings(parsed.settings)
+
+            // 8. Save working recovery key locally wrapped with Keystore
             recoveryKeyStorage.saveRecoveryKey(rootKey)
             settingsRepository.updateHasRecoveryKey(true)
 
-            // 8. Rebuild local Search Index
+            // 9. Rebuild local Search Index
             runCatching {
                 memoryRepository.rebuildSearchIndex()
             }.onFailure { e ->

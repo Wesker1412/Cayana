@@ -9,6 +9,7 @@ import com.cayana.source.SourceType
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
 
 class BackupValidationException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -52,13 +53,23 @@ object BackupSnapshotParser {
                         throw BackupValidationException("備份檔案條目重複：$name")
                     }
 
-                    val content = zis.readBytes()
-                    totalExtractedBytes += content.size
-                    if (totalExtractedBytes > BackupConfig.MAX_DECRYPTED_BACKUP_BYTES) {
-                        throw BackupValidationException("備份解壓縮大小超過安全限制。")
+                    val entryOut = ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var entryBytesRead = 0L
+                    var bytesRead: Int
+                    while (zis.read(buffer).also { bytesRead = it } != -1) {
+                        entryBytesRead += bytesRead
+                        totalExtractedBytes += bytesRead
+                        if (entryBytesRead > BackupConfig.MAX_SINGLE_ENTRY_DECOMPRESSED_BYTES) {
+                            throw BackupValidationException("備份單一條目解壓縮大小超過限制（最大 ${BackupConfig.MAX_SINGLE_ENTRY_DECOMPRESSED_BYTES} 位元組）。")
+                        }
+                        if (totalExtractedBytes > BackupConfig.MAX_DECRYPTED_BACKUP_BYTES) {
+                            throw BackupValidationException("備份解壓縮大小超過安全限制。")
+                        }
+                        entryOut.write(buffer, 0, bytesRead)
                     }
 
-                    entries[name] = content
+                    entries[name] = entryOut.toByteArray()
                     zis.closeEntry()
                     entry = zis.nextEntry
                 }
