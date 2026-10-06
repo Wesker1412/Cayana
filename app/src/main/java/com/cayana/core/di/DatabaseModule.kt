@@ -17,7 +17,8 @@ val databaseModule = module {
                 CayanaDatabase.MIGRATION_2_3,
                 CayanaDatabase.MIGRATION_3_4,
                 CayanaDatabase.MIGRATION_4_5,
-                CayanaDatabase.MIGRATION_5_6
+                CayanaDatabase.MIGRATION_5_6,
+                CayanaDatabase.MIGRATION_6_7
             )
             .build()
     }
@@ -27,4 +28,5 @@ val databaseModule = module {
     single { get<CayanaDatabase>().searchDao() }
     single { get<CayanaDatabase>().shareReceiptDao() }
     single { get<CayanaDatabase>().searchIndexStateDao() }
+    single { get<CayanaDatabase>().restoredCalendarActionHistoryDao() }
 }

@@ -46,4 +46,7 @@ interface CalendarActionDao {
 
     @Query("DELETE FROM calendar_actions WHERE memoryId = :memoryId")
     suspend fun deleteByMemoryId(memoryId: String): Int
+
+    @Query("SELECT * FROM calendar_actions")
+    suspend fun getAll(): List<CalendarActionEntity>
 }

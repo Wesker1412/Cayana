@@ -48,7 +48,12 @@ data class UserSettings(
     val lastPhotoReconciledCapturedAt: Long = Long.MAX_VALUE,
     val lastPhotoReconciledMemoryId: String = "",
     val lastRecordingReconciledCapturedAt: Long = Long.MAX_VALUE,
-    val lastRecordingReconciledMemoryId: String = ""
+    val lastRecordingReconciledMemoryId: String = "",
+    val isDriveBackupConnected: Boolean = false,
+    val driveAuthStatus: com.cayana.backup.drive.DriveAuthStatus = com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED,
+    val autoBackupEnabled: Boolean = false,
+    val lastBackupTimestamp: Long = 0L,
+    val hasRecoveryKey: Boolean = false
 )
 
 interface SettingsRepository {
@@ -85,6 +90,10 @@ interface SettingsRepository {
     suspend fun resetPhotoReconcileCursor()
     suspend fun updateRecordingReconcileCursor(capturedAt: Long, memoryId: String)
     suspend fun resetRecordingReconcileCursor()
+    suspend fun updateDriveAuthStatus(status: com.cayana.backup.drive.DriveAuthStatus)
+    suspend fun updateAutoBackupEnabled(enabled: Boolean)
+    suspend fun updateLastBackupTimestamp(timestamp: Long)
+    suspend fun updateHasRecoveryKey(hasKey: Boolean)
 }
 
 /**
@@ -265,5 +274,26 @@ class InMemorySettingsRepository(
                 sttModelInstalledAt = 0L
             )
         }
+    }
+
+    override suspend fun updateDriveAuthStatus(status: com.cayana.backup.drive.DriveAuthStatus) {
+        _settings.update {
+            it.copy(
+                driveAuthStatus = status,
+                isDriveBackupConnected = (status == com.cayana.backup.drive.DriveAuthStatus.CONNECTED)
+            )
+        }
+    }
+
+    override suspend fun updateAutoBackupEnabled(enabled: Boolean) {
+        _settings.update { it.copy(autoBackupEnabled = enabled) }
+    }
+
+    override suspend fun updateLastBackupTimestamp(timestamp: Long) {
+        _settings.update { it.copy(lastBackupTimestamp = timestamp) }
+    }
+
+    override suspend fun updateHasRecoveryKey(hasKey: Boolean) {
+        _settings.update { it.copy(hasRecoveryKey = hasKey) }
     }
 }

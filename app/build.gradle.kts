@@ -100,6 +100,9 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     implementation(libs.kotlinx.coroutines.play.services)
 
+    // Google Play Services Auth (AuthorizationClient for Drive appDataFolder)
+    implementation(libs.google.play.services.auth)
+
     // On-device ASR (sherpa-onnx)
     implementation(files("libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"))
 

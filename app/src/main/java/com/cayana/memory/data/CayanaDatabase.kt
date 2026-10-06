@@ -18,9 +18,10 @@ import com.cayana.source.share.data.ShareReceiptEntity
         CalendarActionEntity::class,
         MemoryFtsEntity::class,
         ShareReceiptEntity::class,
-        SearchIndexStateEntity::class
+        SearchIndexStateEntity::class,
+        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
@@ -29,6 +30,7 @@ abstract class CayanaDatabase : RoomDatabase() {
     abstract fun searchDao(): SearchDao
     abstract fun shareReceiptDao(): ShareReceiptDao
     abstract fun searchIndexStateDao(): SearchIndexStateDao
+    abstract fun restoredCalendarActionHistoryDao(): com.cayana.calendar.data.RestoredCalendarActionHistoryDao
 
     companion object {
         const val DATABASE_NAME = "cayana_memory.db"
@@ -250,6 +252,35 @@ abstract class CayanaDatabase : RoomDatabase() {
                 } finally {
                     cursor.close()
                 }
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `restored_calendar_action_history` (
+                        `id` TEXT NOT NULL,
+                        `originalActionId` TEXT NOT NULL,
+                        `memoryId` TEXT NOT NULL,
+                        `actionType` TEXT NOT NULL,
+                        `originalStatus` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `title` TEXT,
+                        `startAt` INTEGER,
+                        `endAt` INTEGER,
+                        `location` TEXT,
+                        `isAllDay` INTEGER NOT NULL DEFAULT 0,
+                        `zoneId` TEXT,
+                        `originalCalendarId` INTEGER,
+                        `originalCalendarEventId` INTEGER,
+                        `restoredAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_restored_calendar_action_history_memoryId` ON `restored_calendar_action_history` (`memoryId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_restored_calendar_action_history_originalActionId` ON `restored_calendar_action_history` (`originalActionId`)")
             }
         }
     }

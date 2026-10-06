@@ -54,6 +54,10 @@ class DataStoreSettingsRepository(
         val KEY_LAST_PHOTO_RECONCILED_ID = stringPreferencesKey("last_photo_reconciled_memory_id")
         val KEY_LAST_RECORDING_RECONCILED_AT = longPreferencesKey("last_recording_reconciled_captured_at")
         val KEY_LAST_RECORDING_RECONCILED_ID = stringPreferencesKey("last_recording_reconciled_memory_id")
+        val KEY_DRIVE_AUTH_STATUS = stringPreferencesKey("drive_auth_status")
+        val KEY_AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
+        val KEY_LAST_BACKUP_TIMESTAMP = longPreferencesKey("last_backup_timestamp")
+        val KEY_HAS_RECOVERY_KEY = booleanPreferencesKey("has_recovery_key")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -171,7 +175,14 @@ class DataStoreSettingsRepository(
                     lastPhotoReconciledCapturedAt = lastPhotoReconciled,
                     lastPhotoReconciledMemoryId = lastPhotoReconciledId,
                     lastRecordingReconciledCapturedAt = lastRecordingReconciled,
-                    lastRecordingReconciledMemoryId = lastRecordingReconciledId
+                    lastRecordingReconciledMemoryId = lastRecordingReconciledId,
+                    isDriveBackupConnected = (preferences[KEY_DRIVE_AUTH_STATUS] == com.cayana.backup.drive.DriveAuthStatus.CONNECTED.name),
+                    driveAuthStatus = runCatching {
+                        com.cayana.backup.drive.DriveAuthStatus.valueOf(preferences[KEY_DRIVE_AUTH_STATUS] ?: "")
+                    }.getOrDefault(com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED),
+                    autoBackupEnabled = preferences[KEY_AUTO_BACKUP_ENABLED] ?: false,
+                    lastBackupTimestamp = preferences[KEY_LAST_BACKUP_TIMESTAMP] ?: 0L,
+                    hasRecoveryKey = preferences[KEY_HAS_RECOVERY_KEY] ?: false
                 )
             }
     }
@@ -390,6 +401,30 @@ class DataStoreSettingsRepository(
             preferences.remove(KEY_STT_MODEL_FILE_SIZE)
             preferences.remove(KEY_STT_MODEL_LAST_MODIFIED)
             preferences.remove(KEY_STT_MODEL_INSTALLED_AT)
+        }
+    }
+
+    override suspend fun updateDriveAuthStatus(status: com.cayana.backup.drive.DriveAuthStatus) {
+        dataStore.edit { preferences ->
+            preferences[KEY_DRIVE_AUTH_STATUS] = status.name
+        }
+    }
+
+    override suspend fun updateAutoBackupEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[KEY_AUTO_BACKUP_ENABLED] = enabled
+        }
+    }
+
+    override suspend fun updateLastBackupTimestamp(timestamp: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_LAST_BACKUP_TIMESTAMP] = timestamp
+        }
+    }
+
+    override suspend fun updateHasRecoveryKey(hasKey: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[KEY_HAS_RECOVERY_KEY] = hasKey
         }
     }
 }

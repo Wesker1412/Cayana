@@ -11,6 +11,7 @@ import com.cayana.source.screenshot.ScreenshotSourceWatcher
 import com.cayana.ui.onboarding.SourceItemUiState
 import com.cayana.ui.settings.repository.SettingsRepository
 import com.cayana.ui.settings.repository.UserSettings
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,7 +30,10 @@ class SettingsViewModel(
     private val screenshotWatcher: ScreenshotSourceWatcher? = null,
     private val modelInstaller: SherpaModelInstaller? = null,
     private val sttEngine: SpeechToTextEngine? = null,
-    private val recordingCoordinator: RecordingProcessingCoordinator? = null
+    private val recordingCoordinator: RecordingProcessingCoordinator? = null,
+    private val backupManager: com.cayana.backup.manager.BackupManager? = null,
+    private val driveAuthManager: com.cayana.backup.drive.DriveAuthorizationManager? = null,
+    private val recoveryKeyStorage: com.cayana.backup.crypto.RecoveryKeyStorage? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -326,5 +330,130 @@ class SettingsViewModel(
                 }
             }
         }
+    }
+
+    fun startConnectDrive(launcher: (android.content.IntentSender) -> Unit) {
+        viewModelScope.launch {
+            if (recoveryKeyStorage?.hasRecoveryKey() != true) {
+                val newKey = com.cayana.backup.crypto.RecoveryKeyManager.generateRootKey()
+                val formatted = com.cayana.backup.crypto.RecoveryKeyManager.formatKey(newKey)
+                _uiState.update { it.copy(showRecoveryKeyDialog = true, generatedRecoveryKey = formatted) }
+            }
+
+            val authManager = driveAuthManager ?: return@launch
+            val res = authManager.getAuthorizationIntentSender()
+            if (res is com.cayana.core.common.Result.Success) {
+                val sender = res.data
+                if (sender != null) {
+                    launcher(sender)
+                } else {
+                    settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.CONNECTED)
+                }
+            }
+        }
+    }
+
+    fun confirmRecoveryKey() {
+        val keyStr = _uiState.value.generatedRecoveryKey
+        if (!keyStr.isNullOrBlank()) {
+            val keyBytes = runCatching { com.cayana.backup.crypto.RecoveryKeyManager.parseKey(keyStr) }.getOrNull()
+            if (keyBytes != null) {
+                recoveryKeyStorage?.saveRecoveryKey(keyBytes)
+                viewModelScope.launch {
+                    settingsRepository.updateHasRecoveryKey(true)
+                }
+            }
+        }
+        _uiState.update { it.copy(showRecoveryKeyDialog = false, generatedRecoveryKey = null) }
+    }
+
+    fun dismissRecoveryKeyDialog() {
+        _uiState.update { it.copy(showRecoveryKeyDialog = false) }
+    }
+
+    fun onDriveAuthorizationResult(success: Boolean) {
+        viewModelScope.launch {
+            if (success) {
+                driveAuthManager?.onAuthorizationSuccess("granted")
+                settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.CONNECTED)
+            } else {
+                settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.AUTH_REQUIRED)
+            }
+        }
+    }
+
+    fun disconnectDrive() {
+        viewModelScope.launch {
+            driveAuthManager?.disconnect()
+            settingsRepository.updateDriveAuthStatus(com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED)
+        }
+    }
+
+    fun toggleAutoBackup(enabled: Boolean, context: android.content.Context) {
+        viewModelScope.launch {
+            settingsRepository.updateAutoBackupEnabled(enabled)
+            if (enabled) {
+                com.cayana.backup.worker.AutoBackupWorker.schedule(context)
+            } else {
+                com.cayana.backup.worker.AutoBackupWorker.cancel(context)
+            }
+        }
+    }
+
+    fun performManualBackup(): Job =
+        viewModelScope.launch {
+            val bManager = backupManager ?: return@launch
+            _uiState.update { it.copy(backupState = BackupUiState.BackingUp) }
+            when (val res = bManager.performBackup()) {
+                is com.cayana.core.common.Result.Success -> {
+                    _uiState.update { it.copy(backupState = BackupUiState.Success("備份成功！已上傳至 Google Drive。")) }
+                }
+                is com.cayana.core.common.Result.Error -> {
+                    _uiState.update { it.copy(backupState = BackupUiState.Error(res.exception.message ?: "備份失敗。")) }
+                }
+                com.cayana.core.common.Result.Loading -> Unit
+            }
+        }
+
+    fun openRestoreDialog() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(showRestoreDialog = true, isFetchingBackups = true) }
+            val bManager = backupManager ?: return@launch
+            val res = bManager.listBackups()
+            val backups = if (res is com.cayana.core.common.Result.Success) res.data else emptyList()
+            _uiState.update { it.copy(availableBackups = backups, isFetchingBackups = false) }
+        }
+    }
+
+    fun dismissRestoreDialog() {
+        _uiState.update { it.copy(showRestoreDialog = false) }
+    }
+
+    fun performRestore(
+        fileId: String,
+        rawRecoveryKey: String,
+        onConfirmReplaceLocal: suspend () -> Boolean = { true }
+    ): Job =
+        viewModelScope.launch {
+            val bManager = backupManager ?: return@launch
+            _uiState.update { it.copy(backupState = BackupUiState.Restoring) }
+            when (val res = bManager.restoreBackup(fileId, rawRecoveryKey, onConfirmReplaceLocal)) {
+                is com.cayana.core.common.Result.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            backupState = BackupUiState.Success("還原成功！已恢復 ${res.data.memoriesRestored} 筆記憶。"),
+                            showRestoreDialog = false
+                        )
+                    }
+                }
+                is com.cayana.core.common.Result.Error -> {
+                    _uiState.update { it.copy(backupState = BackupUiState.Error(res.exception.message ?: "還原失敗。")) }
+                }
+                com.cayana.core.common.Result.Loading -> Unit
+            }
+        }
+
+    fun clearBackupState() {
+        _uiState.update { it.copy(backupState = BackupUiState.Idle) }
     }
 }

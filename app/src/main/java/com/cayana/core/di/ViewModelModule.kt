@@ -23,7 +23,10 @@ val viewModelModule = module {
             screenshotWatcher = getOrNull(),
             modelInstaller = getOrNull(),
             sttEngine = getOrNull(),
-            recordingCoordinator = getOrNull()
+            recordingCoordinator = getOrNull(),
+            backupManager = getOrNull(),
+            driveAuthManager = getOrNull(),
+            recoveryKeyStorage = getOrNull()
         )
     }
 

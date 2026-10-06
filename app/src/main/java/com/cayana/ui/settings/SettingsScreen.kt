@@ -22,15 +22,25 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.activity.result.IntentSenderRequest
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Screenshot
+import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -43,6 +53,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import com.cayana.backup.drive.DriveAuthStatus
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.LaunchedEffect
@@ -81,6 +97,16 @@ fun SettingsScreen(
     val context = LocalContext.current
     var showCalendarDialog by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    val driveAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onDriveAuthorizationResult(result.resultCode == Activity.RESULT_OK)
+    }
+
+    var selectedBackupFileId by remember { mutableStateOf<String?>(null) }
+    var restoreRecoveryKeyInput by remember { mutableStateOf("") }
+    var showReplaceConfirmationDialog by remember { mutableStateOf(false) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -423,7 +449,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ---------------------------------------------------------------
-            // Section 3: Backup
+            // Section 4: Backup
             // ---------------------------------------------------------------
             Text(
                 text = "Backup",
@@ -438,29 +464,161 @@ fun SettingsScreen(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CloudQueue,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Google Drive 備份",
+                        style = MaterialTheme.typography.titleMedium
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Google Drive",
-                            style = MaterialTheme.typography.titleMedium
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Status Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val statusIcon = when (uiState.settings.driveAuthStatus) {
+                            DriveAuthStatus.CONNECTED -> Icons.Default.CloudDone
+                            DriveAuthStatus.AUTH_REQUIRED -> Icons.Default.Warning
+                            DriveAuthStatus.DISCONNECTED -> Icons.Default.CloudQueue
+                        }
+                        val statusTint = when (uiState.settings.driveAuthStatus) {
+                            DriveAuthStatus.CONNECTED -> MaterialTheme.colorScheme.primary
+                            DriveAuthStatus.AUTH_REQUIRED -> MaterialTheme.colorScheme.error
+                            DriveAuthStatus.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = null,
+                            tint = statusTint,
+                            modifier = Modifier.size(24.dp)
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            val statusText = when (uiState.settings.driveAuthStatus) {
+                                DriveAuthStatus.CONNECTED -> "已連接"
+                                DriveAuthStatus.AUTH_REQUIRED -> "需要重新授權"
+                                DriveAuthStatus.DISCONNECTED -> "未連接"
+                            }
+                            Text(
+                                text = "狀態：$statusText",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            if (uiState.settings.driveAuthStatus == DriveAuthStatus.CONNECTED) {
+                                val lastTime = uiState.settings.lastBackupTimestamp
+                                val lastTimeStr = if (lastTime > 0L) {
+                                    SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(lastTime))
+                                } else {
+                                    "尚未備份"
+                                }
+                                Text(
+                                    text = "上次備份：$lastTimeStr",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Recovery Key Status
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VpnKey,
+                            contentDescription = null,
+                            tint = if (uiState.settings.hasRecoveryKey) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = "尚未設定 (Stage 6 即將推出)",
+                            text = if (uiState.settings.hasRecoveryKey) "復原金鑰：已設定" else "復原金鑰：未設定",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+
+                    if (uiState.backupState is BackupUiState.BackingUp || uiState.backupState is BackupUiState.Restoring) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        val progressLabel = if (uiState.backupState is BackupUiState.BackingUp) "正在建立端對端加密備份並上傳..." else "正在自 Google Drive 下載並驗證還原..."
+                        Text(progressLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (uiState.settings.driveAuthStatus != DriveAuthStatus.CONNECTED) {
+                        Button(
+                            onClick = {
+                                viewModel.startConnectDrive { sender ->
+                                    driveAuthLauncher.launch(IntentSenderRequest.Builder(sender).build())
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("連接 Google Drive")
+                        }
+                    } else {
+                        // Connected actions
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.performManualBackup() },
+                                modifier = Modifier.weight(1f),
+                                enabled = uiState.backupState !is BackupUiState.BackingUp && uiState.backupState !is BackupUiState.Restoring
+                            ) {
+                                Text("立即備份")
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.openRestoreDialog() },
+                                modifier = Modifier.weight(1f),
+                                enabled = uiState.backupState !is BackupUiState.BackingUp && uiState.backupState !is BackupUiState.Restoring
+                            ) {
+                                Text("從備份還原")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Auto-backup toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "自動備份 (每 24 小時)",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = "連上網路且電量充足時自動在背景加密備份",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.settings.autoBackupEnabled,
+                                onCheckedChange = { checked ->
+                                    viewModel.toggleAutoBackup(checked, context)
+                                }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        TextButton(
+                            onClick = { viewModel.disconnectDrive() },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("中斷連接", color = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
@@ -468,7 +626,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ---------------------------------------------------------------
-            // Section 4: Privacy & Safety Principles
+            // Section 5: Privacy & Safety Principles
             // ---------------------------------------------------------------
             Text(
                 text = "Privacy & Safety Principles",
@@ -497,7 +655,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ---------------------------------------------------------------
-            // Section 5: About
+            // Section 6: About
             // ---------------------------------------------------------------
             Text(
                 text = "About",
@@ -682,6 +840,184 @@ fun SettingsScreen(
                     TextButton(onClick = { viewModel.dismissSttModelDialog() }) {
                         Text("取消")
                     }
+                }
+            }
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Recovery Key Dialog
+    // ---------------------------------------------------------------
+    if (uiState.showRecoveryKeyDialog && uiState.generatedRecoveryKey != null) {
+        val keyText = uiState.generatedRecoveryKey ?: ""
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissRecoveryKeyDialog() },
+            title = { Text("Cayana 備份復原金鑰") },
+            text = {
+                Column {
+                    Text(
+                        text = "這是解密您 Google Drive 雲端備份的唯一金鑰。沒有這把金鑰，Cayana 與 Google 都無法解密您的備份。\n\n請務必妥善保存或抄寫此金鑰：",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = keyText,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("Cayana Recovery Key", keyText)
+                            clipboard.setPrimaryClip(clip)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("複製金鑰")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.confirmRecoveryKey() }
+                ) {
+                    Text("我已妥善保存金鑰")
+                }
+            }
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Restore Dialog
+    // ---------------------------------------------------------------
+    if (uiState.showRestoreDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissRestoreDialog() },
+            title = { Text("從 Google Drive 備份還原") },
+            text = {
+                Column {
+                    if (uiState.isFetchingBackups) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                        Text(
+                            "正在搜尋 Google Drive 備份...",
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .padding(top = 8.dp)
+                        )
+                    } else if (uiState.availableBackups.isEmpty()) {
+                        Text("在 Google Drive appDataFolder 中找不到 Cayana 備份檔案。")
+                    } else {
+                        Text("選擇欲還原的備份快照：", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        uiState.availableBackups.forEach { backup ->
+                            val isSelected = selectedBackupFileId == backup.fileId || (selectedBackupFileId == null && backup == uiState.availableBackups.first())
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedBackupFileId = backup.fileId }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { selectedBackupFileId = backup.fileId }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(backup.fileName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                                    val dateStr = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(backup.createdTimeMillis))
+                                    Text("$dateStr (${backup.sizeBytes / 1024} KB)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = restoreRecoveryKeyInput,
+                            onValueChange = { restoreRecoveryKeyInput = it },
+                            label = { Text("輸入復原金鑰 (XXXXX-XXXXX-...)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (!uiState.isFetchingBackups && uiState.availableBackups.isNotEmpty()) {
+                    Button(
+                        onClick = {
+                            showReplaceConfirmationDialog = true
+                        },
+                        enabled = restoreRecoveryKeyInput.isNotBlank()
+                    ) {
+                        Text("下一步")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissRestoreDialog() }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Replace Confirmation Dialog
+    // ---------------------------------------------------------------
+    if (showReplaceConfirmationDialog) {
+        val targetFileId = selectedBackupFileId ?: uiState.availableBackups.firstOrNull()?.fileId ?: ""
+        AlertDialog(
+            onDismissRequest = { showReplaceConfirmationDialog = false },
+            title = { Text("確認還原記憶資料？") },
+            text = {
+                Text(
+                    "這會取代目前 Cayana 中的記憶資料。原始照片、錄音與 Android 行事曆不會被刪除或修改。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showReplaceConfirmationDialog = false
+                        viewModel.performRestore(targetFileId, restoreRecoveryKeyInput)
+                    }
+                ) {
+                    Text("確認取代並還原")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReplaceConfirmationDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Backup Status Message Dialog
+    // ---------------------------------------------------------------
+    if (uiState.backupState is BackupUiState.Success || uiState.backupState is BackupUiState.Error) {
+        val isSuccess = uiState.backupState is BackupUiState.Success
+        val msg = if (isSuccess) (uiState.backupState as BackupUiState.Success).message else (uiState.backupState as BackupUiState.Error).message
+        AlertDialog(
+            onDismissRequest = { viewModel.clearBackupState() },
+            title = { Text(if (isSuccess) "操作完成" else "操作失敗") },
+            text = { Text(msg) },
+            confirmButton = {
+                Button(onClick = { viewModel.clearBackupState() }) {
+                    Text("確定")
                 }
             }
         )
