@@ -48,10 +48,11 @@ class RoomMemoryRepository(
     }
 
     override suspend fun saveMemory(item: MemoryItem): Unit = withContext(dispatchers.io) {
-        val entity = MemoryEntity.fromDomain(item)
-        memoryDao.insertOrUpdate(entity)
         searchIndexStateDao?.markDirty()
         indexNeedsRebuild = true
+
+        val entity = MemoryEntity.fromDomain(item)
+        memoryDao.insertOrUpdate(entity)
 
         // Update derived search index safely with replaceFts
         try {
@@ -67,9 +68,11 @@ class RoomMemoryRepository(
     }
 
     override suspend fun deleteMemory(id: String): Unit = withContext(dispatchers.io) {
-        memoryDao.deleteById(id)
         searchIndexStateDao?.markDirty()
         indexNeedsRebuild = true
+
+        memoryDao.deleteById(id)
+
         try {
             searchDao?.deleteFtsByMemoryId(id)
             searchIndexStateDao?.clearDirtyIfNoPending()
@@ -103,6 +106,7 @@ class RoomMemoryRepository(
         } catch (e: Exception) {
             CayanaLogger.w("SearchIndex", "Failed to rebuild search index: ${e.javaClass.simpleName}")
             indexNeedsRebuild = true
+            throw e
         }
         Unit
     }

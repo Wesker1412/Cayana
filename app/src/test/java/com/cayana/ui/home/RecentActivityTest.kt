@@ -237,10 +237,16 @@ class RecentActivityTest {
             CayanaDatabase::class.java
         ).allowMainThreadQueries().build()
 
+        val testDispatchers = object : com.cayana.core.common.CoroutineDispatchers {
+            override val io = testDispatcher
+            override val computation = testDispatcher
+            override val main = testDispatcher
+        }
         val roomRepo = RoomMemoryRepository(
             memoryDao = db.memoryDao(),
             searchDao = db.searchDao(),
-            searchIndexStateDao = db.searchIndexStateDao()
+            searchIndexStateDao = db.searchIndexStateDao(),
+            dispatchers = testDispatchers
         )
         val roomViewModel = HomeViewModel(memoryRepository = roomRepo)
 

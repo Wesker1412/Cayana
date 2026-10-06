@@ -424,4 +424,90 @@ class ShareIngestTest {
 
         db.close()
     }
+
+    @Test
+    fun processingSessionResumesAfterMoreThan60SecondsAndCompletes() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.shareReceiptDao()
+
+        val text = "Long running or interrupted share"
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(Intent.ACTION_SEND.toByteArray())
+        digest.update("text/plain".toByteArray())
+        digest.update(text.toByteArray())
+        val fp = digest.digest().joinToString("") { "%02x".format(it) }
+
+        val interruptedSessionId = "session-interrupted-123"
+        // Seed an in-flight receipt created 120 seconds ago, with expiresAt = Long.MAX_VALUE
+        val twoMinutesAgo = System.currentTimeMillis() - 120_000L
+        dao.upsertReceipt(
+            ShareReceiptEntity(
+                fingerprint = fp,
+                sessionId = interruptedSessionId,
+                createdAt = twoMinutesAgo,
+                expiresAt = Long.MAX_VALUE,
+                status = "PROCESSING",
+                itemIdsJson = "[]"
+            )
+        )
+
+        // Simulate app recreation / new processor instance
+        val newProc = ShareProcessor(context, repository, fakeOcrEngine, dao)
+        val result = newProc.processIntent(intent)
+
+        assertTrue("Resumed processing must succeed", result is ShareIngestResult.Success)
+
+        // Check receipt in DB: status must be COMPLETED, expiresAt within normal dedup window from now
+        val receipt = dao.getReceipt(fp)
+        assertNotNull(receipt)
+        assertEquals("COMPLETED", receipt!!.status)
+        assertEquals(interruptedSessionId, receipt.sessionId)
+        assertTrue(receipt.expiresAt > System.currentTimeMillis())
+
+        // Verify deterministic ID derived from session-interrupted-123
+        val expectedMemoryId = java.util.UUID.nameUUIDFromBytes(
+            "share:$interruptedSessionId:text".toByteArray(Charsets.UTF_8)
+        ).toString()
+
+        val memories = repository.getAllMemories().first()
+        assertEquals(1, memories.size)
+        assertEquals(expectedMemoryId, memories.first().id)
+
+        db.close()
+    }
+
+    @Test
+    fun emptyShareIntentTransitionsToTerminalIgnored() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.shareReceiptDao()
+        val proc = ShareProcessor(context, repository, fakeOcrEngine, dao)
+
+        // An intent with unsupported URI scheme that produces no valid memories
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, Uri.parse("file:///non_existent_or_unsafe.png"))
+        }
+
+        val result = proc.processIntent(intent)
+        assertTrue("Intent with only unsafe streams must be Ignored", result is ShareIngestResult.Ignored)
+
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(Intent.ACTION_SEND.toByteArray())
+        digest.update("image/png".toByteArray())
+        digest.update("".toByteArray())
+        digest.update("file:///non_existent_or_unsafe.png".toByteArray())
+        val fp = digest.digest().joinToString("") { "%02x".format(it) }
+
+        val receipt = dao.getReceipt(fp)
+        assertNotNull(receipt)
+        assertEquals("Receipt must transition to IGNORED terminal status", "IGNORED", receipt!!.status)
+        assertTrue(receipt.expiresAt <= System.currentTimeMillis() + ShareIngestConfig.DEDUP_WINDOW_MS + 1000L)
+
+        db.close()
+    }
 }

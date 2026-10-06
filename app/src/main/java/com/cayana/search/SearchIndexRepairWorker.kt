@@ -29,8 +29,14 @@ class SearchIndexRepairWorker(
         return try {
             CayanaLogger.i("SearchIndexRepair", "Starting background search index repair")
             memoryRepository.rebuildSearchIndex()
-            CayanaLogger.i("SearchIndexRepair", "Search index repair completed successfully")
-            Result.success()
+            val stillDirty = searchIndexStateDao.isDirty() == true || memoryRepository.isIndexRebuildNeeded()
+            if (stillDirty) {
+                CayanaLogger.w("SearchIndexRepair", "Search index still dirty after repair attempt")
+                Result.retry()
+            } else {
+                CayanaLogger.i("SearchIndexRepair", "Search index repair completed successfully")
+                Result.success()
+            }
         } catch (e: Exception) {
             CayanaLogger.w("SearchIndexRepair", "Search index repair failed: ${e.javaClass.simpleName}")
             Result.retry()

@@ -573,4 +573,147 @@ class LocalSearchTest {
         assertEquals(1, searchResults.size)
         assertEquals("url-mem-crash", searchResults.first().memory.id)
     }
+
+    @Test
+    fun dirtyOrderingSaveFaultInjectionSurvivesProcessDeathAndRepairs() = runBlocking {
+        var failFtsReplace = true
+        val realSearchDao = database.searchDao()
+        val faultInjectingSearchDao = object : com.cayana.search.data.SearchDao by realSearchDao {
+            override suspend fun replaceFts(document: com.cayana.memory.data.MemoryFtsEntity) {
+                if (failFtsReplace) {
+                    throw RuntimeException("Simulated crash right before FTS replace")
+                }
+                realSearchDao.replaceFts(document)
+            }
+        }
+
+        val faultRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = faultInjectingSearchDao,
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        val memory = MemoryItem(
+            id = "mem-save-fault-1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Fault Injection Note",
+            rawText = "台北馬拉松號碼布 88888",
+            normalizedText = "台北馬拉松號碼布 88888",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+
+        // Save memory with fault injection
+        faultRepo.saveMemory(memory)
+
+        // Verify:
+        // 1. markDirty succeeded and remains true
+        assertTrue("Dirty flag must be set prior to canonical mutation", database.searchIndexStateDao().isDirty() == true)
+        // 2. Canonical memory write succeeded
+        val canonical = database.memoryDao().getMemoryById("mem-save-fault-1")
+        assertNotNull("Canonical memory must be persisted", canonical)
+        // 3. FTS was NOT updated due to simulated crash
+        assertEquals(0, database.searchDao().getFtsCount())
+
+        // Simulate process death / repository recreation
+        val recreatedRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+        val freshSearchEngine = DefaultMemorySearchEngine(
+            memoryRepository = recreatedRepo,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        // Dirty flag survives process death
+        assertTrue("Recreated repo detects index rebuild needed", recreatedRepo.isIndexRebuildNeeded())
+
+        // Before repair, FTS index has 0 documents
+        assertEquals(0, database.searchDao().getFtsCount())
+
+        // Perform repair
+        recreatedRepo.rebuildSearchIndex()
+
+        // After repair, dirty is false and canonical content is searchable
+        assertFalse(recreatedRepo.isIndexRebuildNeeded())
+        val results = freshSearchEngine.search(SearchQuery(query = "88888"))
+        assertEquals(1, results.size)
+        assertEquals("mem-save-fault-1", results.first().memory.id)
+    }
+
+    @Test
+    fun dirtyOrderingDeleteFaultInjectionSurvivesProcessDeathAndRepairs() = runBlocking {
+        // Step 1: Save memory cleanly
+        val memory = MemoryItem(
+            id = "mem-delete-fault-1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 1000L,
+            capturedAt = 1000L,
+            title = "Delete Note",
+            rawText = "準備刪除的秘密資料 99999",
+            normalizedText = "準備刪除的秘密資料 99999",
+            sourceExists = true,
+            processingState = ProcessingState.COMPLETED
+        )
+        repository.saveMemory(memory)
+        var results = searchEngine.search(SearchQuery(query = "99999"))
+        assertEquals(1, results.size)
+
+        // Step 2: Fault inject searchDao.deleteFtsByMemoryId to simulate death before FTS delete
+        var failFtsDelete = true
+        val realSearchDao = database.searchDao()
+        val faultInjectingSearchDao = object : com.cayana.search.data.SearchDao by realSearchDao {
+            override suspend fun deleteFtsByMemoryId(memoryId: String) {
+                if (failFtsDelete) {
+                    throw RuntimeException("Simulated crash right before FTS delete")
+                }
+                realSearchDao.deleteFtsByMemoryId(memoryId)
+            }
+        }
+
+        val faultRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = faultInjectingSearchDao,
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        faultRepo.deleteMemory(memory.id)
+
+        // Verify:
+        // 1. markDirty succeeded and remains true
+        assertTrue("Dirty flag must be set prior to canonical deletion", database.searchIndexStateDao().isDirty() == true)
+        // 2. Canonical deletion succeeded
+        val canonical = database.memoryDao().getMemoryById("mem-delete-fault-1")
+        assertEquals(null, canonical)
+        // 3. FTS still has stale entry due to crash
+        assertEquals(1, database.searchDao().getFtsCount())
+
+        // Simulate process death / repository recreation
+        val recreatedRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+        val freshSearchEngine = DefaultMemorySearchEngine(
+            memoryRepository = recreatedRepo,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        // Dirty flag survives process death
+        assertTrue("Recreated repo detects index rebuild needed", recreatedRepo.isIndexRebuildNeeded())
+
+        // Perform repair
+        recreatedRepo.rebuildSearchIndex()
+
+        // After repair, dirty is cleared and deleted content is gone from FTS
+        assertFalse(recreatedRepo.isIndexRebuildNeeded())
+        results = freshSearchEngine.search(SearchQuery(query = "99999"))
+        assertEquals(0, results.size)
+        assertEquals(0, database.searchDao().getFtsCount())
+    }
 }

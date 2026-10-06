@@ -24,7 +24,8 @@ import org.koin.compose.koinInject
 fun CayanaNavHost(
     navController: NavHostController = rememberNavController(),
     settingsRepository: SettingsRepository = koinInject(),
-    overrideStartDestination: String? = null
+    overrideStartDestination: String? = null,
+    searchQuery: String? = null
 ) {
     val settingsState by settingsRepository.getSettings().collectAsState(initial = null)
 
@@ -58,6 +59,11 @@ fun CayanaNavHost(
 
         composable(Screen.Home.route) {
             val homeViewModel: HomeViewModel = koinViewModel()
+            androidx.compose.runtime.LaunchedEffect(searchQuery) {
+                if (searchQuery != null) {
+                    homeViewModel.onSearchQueryChanged(searchQuery)
+                }
+            }
             HomeScreen(
                 viewModel = homeViewModel,
                 onNavigateToSettings = {
