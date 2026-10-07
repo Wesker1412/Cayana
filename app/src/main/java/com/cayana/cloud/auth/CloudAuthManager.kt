@@ -20,6 +20,7 @@ enum class CloudAuthStatus {
 interface CloudAuthManager {
     val authStatus: StateFlow<CloudAuthStatus>
     fun getUserId(): String?
+    fun hasStoredRefreshToken(): Boolean
     suspend fun getValidAccessToken(): Result<String>
     suspend fun initialSignInAnonymously(): Result<String>
     suspend fun restoreSession(): Result<String>
@@ -43,6 +44,8 @@ class SupabaseCloudAuthManager(
     private var inMemoryUserId: String? = null
 
     override fun getUserId(): String? = inMemoryUserId
+
+    override fun hasStoredRefreshToken(): Boolean = refreshTokenStorage.hasRefreshToken()
 
     override suspend fun initialSignInAnonymously(): Result<String> = withContext(Dispatchers.IO) {
         try {

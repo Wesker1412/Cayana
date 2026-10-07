@@ -21,6 +21,15 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        val supabaseUrl = (project.findProperty("CAYANA_SUPABASE_URL") as? String)
+            ?: System.getenv("CAYANA_SUPABASE_URL")
+            ?: ""
+        val supabasePublishableKey = (project.findProperty("CAYANA_SUPABASE_PUBLISHABLE_KEY") as? String)
+            ?: System.getenv("CAYANA_SUPABASE_PUBLISHABLE_KEY")
+            ?: ""
+
+        buildConfigField("String", "CAYANA_SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "CAYANA_SUPABASE_PUBLISHABLE_KEY", "\"$supabasePublishableKey\"")
     }
 
     buildTypes {
@@ -41,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

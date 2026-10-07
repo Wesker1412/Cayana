@@ -18,9 +18,11 @@ import org.koin.dsl.module
 
 val cloudModule = module {
     single<SupabaseClient> {
+        val url = if (CloudConfig.isConfigured()) CloudConfig.supabaseUrl else "https://unconfigured.cayana.local"
+        val key = if (CloudConfig.isConfigured()) CloudConfig.supabasePublishableKey else "unconfigured_key"
         createSupabaseClient(
-            supabaseUrl = CloudConfig.DEFAULT_SUPABASE_URL,
-            supabaseKey = CloudConfig.DEFAULT_SUPABASE_ANON_KEY
+            supabaseUrl = url,
+            supabaseKey = key
         ) {
             install(Auth) {
                 sessionManager = io.github.jan.supabase.auth.MemorySessionManager()
@@ -59,7 +61,8 @@ val cloudModule = module {
             memoryRepository = get(),
             cloudClient = get(),
             cloudAuthManager = get(),
-            recoveryKeyStorage = get()
+            recoveryKeyStorage = get(),
+            database = get()
         )
     }
 }

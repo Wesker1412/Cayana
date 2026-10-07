@@ -5,7 +5,9 @@ import com.cayana.core.common.Result
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class FakeCayanaCloudClient : CayanaCloudClient {
+class FakeCayanaCloudClient(
+    var simulatedOwnerId: String? = null
+) : CayanaCloudClient {
 
     private val serverSequence = AtomicLong(1L)
     // Map of memoryId -> CloudRemoteRecord
@@ -22,11 +24,12 @@ class FakeCayanaCloudClient : CayanaCloudClient {
 
         onUpsertListener?.invoke(record)
 
+        val owner = simulatedOwnerId ?: "tenant-current"
         val existing = remoteRecords[record.memoryId]
         if (existing == null) {
             val newSeq = serverSequence.incrementAndGet()
             val remoteRecord = CloudRemoteRecord(
-                owner_id = "tenant-current",
+                owner_id = owner,
                 memory_id = record.memoryId,
                 revision = record.revision,
                 payload_version = record.payloadVersion,
@@ -40,7 +43,7 @@ class FakeCayanaCloudClient : CayanaCloudClient {
         } else if (record.revision > existing.revision) {
             val newSeq = serverSequence.incrementAndGet()
             val remoteRecord = CloudRemoteRecord(
-                owner_id = "tenant-current",
+                owner_id = owner,
                 memory_id = record.memoryId,
                 revision = record.revision,
                 payload_version = record.payloadVersion,

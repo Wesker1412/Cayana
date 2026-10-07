@@ -17,6 +17,8 @@ class FakeCloudAuthManager(
     var fakeAccessToken: String? = "fake_jwt_token_for_tenant"
     var shouldFailAuth: Boolean = false
     var shouldFailRefresh: Boolean = false
+    var hasRefreshToken: Boolean = false
+    var initialSignInAnonymouslyCallCount: Int = 0
 
     fun setSimulatedUserId(userId: String) {
         simulatedUserId = userId
@@ -24,7 +26,10 @@ class FakeCloudAuthManager(
 
     override fun getUserId(): String? = if (_authStatus.value == CloudAuthStatus.AUTHENTICATED) simulatedUserId else null
 
+    override fun hasStoredRefreshToken(): Boolean = hasRefreshToken
+
     override suspend fun initialSignInAnonymously(): Result<String> {
+        initialSignInAnonymouslyCallCount++
         if (shouldFailAuth) {
             _authStatus.value = CloudAuthStatus.NEEDS_ATTENTION
             return Result.Error(IllegalStateException("Simulated auth failure"))

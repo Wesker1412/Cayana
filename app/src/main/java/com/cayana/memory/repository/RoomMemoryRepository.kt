@@ -225,7 +225,11 @@ class RoomMemoryRepository(
     }
 
     override suspend fun markSourceExists(id: String, exists: Boolean) = withContext(dispatchers.io) {
-        memoryDao.updateSourceExists(id, exists)
+        val existing = memoryDao.getMemoryById(id)?.toDomain()
+        if (existing != null && existing.sourceExists != exists) {
+            val updated = existing.copy(sourceExists = exists)
+            saveMemory(updated, origin = MutationOrigin.LOCAL)
+        }
     }
 
     override suspend fun getMemoriesForReconciliation(

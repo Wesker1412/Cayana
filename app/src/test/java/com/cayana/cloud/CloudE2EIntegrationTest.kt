@@ -86,8 +86,11 @@ class CloudE2EIntegrationTest {
         recoveryKeyStorage = InMemoryRecoveryKeyStorage()
         recoveryKeyStorage.saveRecoveryKey(rootKey)
 
-        fakeCloudClient = FakeCayanaCloudClient()
-        fakeAuthManager = FakeCloudAuthManager()
+        fakeAuthManager = FakeCloudAuthManager(
+            initialStatus = com.cayana.cloud.auth.CloudAuthStatus.AUTHENTICATED,
+            simulatedUserId = "tenant-e2e"
+        )
+        fakeCloudClient = FakeCayanaCloudClient(simulatedOwnerId = "tenant-e2e")
 
         cloudSyncManager = DefaultCloudSyncManager(
             cloudSyncStateDao = cloudSyncStateDao,
@@ -97,7 +100,8 @@ class CloudE2EIntegrationTest {
             memoryRepository = memoryRepository,
             cloudClient = fakeCloudClient,
             cloudAuthManager = fakeAuthManager,
-            recoveryKeyStorage = recoveryKeyStorage
+            recoveryKeyStorage = recoveryKeyStorage,
+            database = database
         )
     }
 

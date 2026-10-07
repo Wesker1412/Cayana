@@ -14,7 +14,8 @@ object CloudCryptoService {
     const val PAYLOAD_VERSION_V1 = 1
     const val GCM_NONCE_BYTES = 12
     const val GCM_TAG_BITS = 128
-    const val MAX_CIPHERTEXT_BYTES = 512 * 1024 // 512 KB
+    const val MAX_CLOUD_CIPHERTEXT_BYTES = 524288 // Exactly 512 KiB (524,288 bytes)
+    const val MAX_CIPHERTEXT_BYTES = MAX_CLOUD_CIPHERTEXT_BYTES
 
     private const val AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding"
     private const val DOMAIN_CLOUD_SYNC = "CayanaCloudSyncKeyV1"

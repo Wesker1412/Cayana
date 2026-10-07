@@ -2,6 +2,7 @@ package com.cayana.cloud
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import com.cayana.backup.crypto.InMemoryRecoveryKeyStorage
 import com.cayana.backup.crypto.RecoveryKeyManager
@@ -9,6 +10,7 @@ import com.cayana.cloud.auth.FakeCloudAuthManager
 import com.cayana.cloud.client.CloudUpsertResponse
 import com.cayana.cloud.client.FakeCayanaCloudClient
 import com.cayana.cloud.crypto.CloudCryptoService
+import com.cayana.cloud.crypto.EncryptedCloudRecord
 import com.cayana.cloud.data.CloudMemorySyncMetadataDao
 import com.cayana.cloud.data.CloudSyncOutboxDao
 import com.cayana.cloud.data.CloudSyncStateDao
@@ -92,7 +94,8 @@ class CloudOutboxIntegrationTest {
             memoryRepository = memoryRepository,
             cloudClient = fakeCloudClient,
             cloudAuthManager = fakeAuthManager,
-            recoveryKeyStorage = recoveryKeyStorage
+            recoveryKeyStorage = recoveryKeyStorage,
+            database = database
         )
 
         // Mark cloud sync as initialized & enabled
@@ -112,10 +115,14 @@ class CloudOutboxIntegrationTest {
         database.close()
     }
 
-    private fun createSampleMemory(id: String = "mem-outbox-1", text: String = "Test content"): MemoryItem {
+    private fun createSampleMemory(
+        id: String = "mem-outbox-1",
+        text: String = "Test content",
+        sourceType: SourceType = SourceType.SCREENSHOT
+    ): MemoryItem {
         return MemoryItem(
             id = id,
-            sourceType = SourceType.SCREENSHOT,
+            sourceType = sourceType,
             createdAt = System.currentTimeMillis(),
             capturedAt = System.currentTimeMillis(),
             title = "Test Memory",
@@ -333,5 +340,110 @@ class CloudOutboxIntegrationTest {
         assertEquals(meta1?.revision, meta1?.lastSyncedRevision)
         assertEquals(meta2?.revision, meta2?.lastSyncedRevision)
         assertEquals(meta3?.revision, meta3?.lastSyncedRevision)
+    }
+
+    @Test
+    fun sourceExistenceLocalChangeIncrementsRevisionAndEnqueuesOutbox() = runTest {
+        // 1. Initial photo memory with sourceExists = true
+        val photoMemory = createSampleMemory("photo-mem-1", "Photo content", SourceType.PHOTO)
+        memoryRepository.saveMemory(photoMemory, origin = MutationOrigin.LOCAL)
+
+        // Drain initial upload
+        val sync1 = cloudSyncManager.syncOnce()
+        assertTrue(sync1 is Result.Success)
+        val meta1 = cloudMemorySyncMetadataDao.getMetadata(photoMemory.id)
+        assertEquals(1L, meta1?.revision)
+
+        // 2. Local reconciliation discovers source photo is missing on device
+        memoryRepository.markSourceExists(photoMemory.id, false)
+
+        // Verify local state updated
+        val updatedLocal = memoryDao.getMemoryById(photoMemory.id)
+        assertNotNull(updatedLocal)
+        assertEquals(false, updatedLocal?.sourceExists)
+
+        // Verify revision incremented (1 -> 2)
+        val meta2 = cloudMemorySyncMetadataDao.getMetadata(photoMemory.id)
+        assertEquals(2L, meta2?.revision)
+
+        // Verify outbox has UPSERT with revision 2
+        val pendingOutbox = cloudSyncOutboxDao.getPendingBatch(10)
+        assertEquals(1, pendingOutbox.size)
+        assertEquals(photoMemory.id, pendingOutbox[0].memoryId)
+        assertEquals(2L, pendingOutbox[0].revision)
+        assertEquals("UPSERT", pendingOutbox[0].operation)
+
+        // 3. Sync to remote
+        val sync2 = cloudSyncManager.syncOnce()
+        assertTrue(sync2 is Result.Success)
+
+        // Remote record received with revision 2
+        val remoteRecord = fakeCloudClient.remoteRecords[photoMemory.id]
+        assertNotNull(remoteRecord)
+        assertEquals(2L, remoteRecord?.revision)
+
+        // Decrypt remote payload and assert sourceExists is false
+        val cloudSyncKey = CloudCryptoService.deriveCloudSyncKey(rootKey)
+        val encryptedRecord = EncryptedCloudRecord(
+            memoryId = remoteRecord!!.memory_id,
+            revision = remoteRecord.revision,
+            payloadVersion = remoteRecord.payload_version,
+            nonceBase64 = remoteRecord.nonce,
+            ciphertextBase64 = remoteRecord.ciphertext,
+            isTombstone = remoteRecord.is_tombstone
+        )
+        val decrypted = CloudCryptoService.decryptMemory(encryptedRecord, cloudSyncKey)
+        assertEquals(false, decrypted.sourceExists)
+    }
+
+    @Test
+    fun processDeathDuringInitialCloudEnableCannotLoseMemoryUpload() = runTest {
+        // Clear state to simulate uninitialized
+        cloudSyncStateDao.clearAll()
+        cloudMemorySyncMetadataDao.clearAll()
+        cloudSyncOutboxDao.clearAll()
+
+        // 3 canonical memories exist locally before cloud enable
+        val m1 = createSampleMemory("mem-death-1", "Memory 1")
+        val m2 = createSampleMemory("mem-death-2", "Memory 2")
+        val m3 = createSampleMemory("mem-death-3", "Memory 3")
+        memoryDao.insertOrUpdate(com.cayana.memory.data.MemoryEntity.fromDomain(m1))
+        memoryDao.insertOrUpdate(com.cayana.memory.data.MemoryEntity.fromDomain(m2))
+        memoryDao.insertOrUpdate(com.cayana.memory.data.MemoryEntity.fromDomain(m3))
+
+        // Simulate crash/failure during atomic setup inside a transaction
+        try {
+            database.withTransaction {
+                // Simulate partial writes
+                cloudMemorySyncMetadataDao.upsertMetadata(
+                    com.cayana.cloud.data.CloudMemorySyncMetadataEntity("mem-death-1", 1L, 0L)
+                )
+                // Crash before outbox enqueue
+                throw RuntimeException("Simulated process death / crash")
+            }
+        } catch (_: Exception) {
+            // Transaction rolled back
+        }
+
+        // Verify rollback: metadata is NOT half-baked
+        val meta1AfterCrash = cloudMemorySyncMetadataDao.getMetadata("mem-death-1")
+        assertNull("Rolled back transaction must leave no orphan metadata", meta1AfterCrash)
+        assertEquals(0, cloudSyncOutboxDao.getPendingBatch(10).size)
+
+        // Restart process / retry initializeAndEnable
+        val initResult = cloudSyncManager.initializeAndEnable()
+        assertTrue(initResult is Result.Success)
+
+        // All 3 memories must now have metadata revision = 1 AND pending outbox entries
+        val allPending = cloudSyncOutboxDao.getPendingBatch(10)
+        assertEquals(3, allPending.size)
+        val pendingIds = allPending.map { it.memoryId }.toSet()
+        assertTrue(pendingIds.contains("mem-death-1"))
+        assertTrue(pendingIds.contains("mem-death-2"))
+        assertTrue(pendingIds.contains("mem-death-3"))
+
+        assertNotNull(cloudMemorySyncMetadataDao.getMetadata("mem-death-1"))
+        assertNotNull(cloudMemorySyncMetadataDao.getMetadata("mem-death-2"))
+        assertNotNull(cloudMemorySyncMetadataDao.getMetadata("mem-death-3"))
     }
 }

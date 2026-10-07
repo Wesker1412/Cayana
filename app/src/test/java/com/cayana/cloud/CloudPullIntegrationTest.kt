@@ -92,8 +92,11 @@ class CloudPullIntegrationTest {
         recoveryKeyStorage = InMemoryRecoveryKeyStorage()
         recoveryKeyStorage.saveRecoveryKey(rootKey)
 
-        fakeCloudClient = FakeCayanaCloudClient()
-        fakeAuthManager = FakeCloudAuthManager()
+        fakeAuthManager = FakeCloudAuthManager(
+            initialStatus = com.cayana.cloud.auth.CloudAuthStatus.AUTHENTICATED,
+            simulatedUserId = "tenant-current"
+        )
+        fakeCloudClient = FakeCayanaCloudClient(simulatedOwnerId = "tenant-current")
 
         cloudSyncManager = DefaultCloudSyncManager(
             cloudSyncStateDao = cloudSyncStateDao,
@@ -103,7 +106,8 @@ class CloudPullIntegrationTest {
             memoryRepository = memoryRepository,
             cloudClient = fakeCloudClient,
             cloudAuthManager = fakeAuthManager,
-            recoveryKeyStorage = recoveryKeyStorage
+            recoveryKeyStorage = recoveryKeyStorage,
+            database = database
         )
 
         cloudSyncStateDao.upsertSyncState(
@@ -391,5 +395,84 @@ class CloudPullIntegrationTest {
         val currentLocal = memoryDao.getMemoryById(memoryId)
         assertEquals("Original Good Title", currentLocal?.title)
         assertEquals("Original good text", currentLocal?.rawText)
+    }
+
+    @Test
+    fun remoteRecordWithDifferentOwnerIsRejectedAndCursorNotAdvanced() = runTest {
+        // Authenticated user is tenant-a
+        fakeAuthManager.setSimulatedUserId("tenant-a-uuid")
+
+        // Server sends record belonging to tenant-b
+        val initialCursor = cloudSyncStateDao.getSyncState()?.lastPullSeq ?: 0L
+        val validRecord = createRemoteMemoryRecord("mem-other-tenant", 1L, "Other Title", "Other text")
+        val maliciousRecord = CloudRemoteRecord(
+            owner_id = "tenant-b-uuid",
+            memory_id = validRecord.memoryId,
+            revision = validRecord.revision,
+            payload_version = validRecord.payloadVersion,
+            nonce = validRecord.nonceBase64,
+            ciphertext = validRecord.ciphertextBase64,
+            is_tombstone = validRecord.isTombstone,
+            change_seq = initialCursor + 1
+        )
+        fakeCloudClient.remoteRecords[maliciousRecord.memory_id] = maliciousRecord
+
+        val syncResult = cloudSyncManager.syncOnce()
+        assertTrue("Sync must fail on cross-tenant record", syncResult is Result.Error)
+
+        // Local DB must be untouched
+        assertNull(memoryDao.getMemoryById("mem-other-tenant"))
+
+        // Cursor must NOT advance
+        val finalCursor = cloudSyncStateDao.getSyncState()?.lastPullSeq ?: 0L
+        assertEquals("Cursor must not advance past rejected record", initialCursor, finalCursor)
+    }
+
+    @Test
+    fun remoteRecordWithMalformedNonceOrCiphertextIsRejected() = runTest {
+        val initialCursor = cloudSyncStateDao.getSyncState()?.lastPullSeq ?: 0L
+
+        // 1. Malformed nonce (not 12 bytes)
+        val badNonceRecord = CloudRemoteRecord(
+            owner_id = fakeAuthManager.getUserId(),
+            memory_id = "mem-bad-nonce",
+            revision = 1L,
+            payload_version = 1,
+            nonce = Base64.getEncoder().encodeToString(ByteArray(8)), // 8 bytes instead of 12
+            ciphertext = "Y2lwaGVydGV4dA==",
+            is_tombstone = false,
+            change_seq = initialCursor + 1
+        )
+        fakeCloudClient.remoteRecords[badNonceRecord.memory_id] = badNonceRecord
+
+        val syncResult = cloudSyncManager.syncOnce()
+        assertTrue("Sync must fail on malformed nonce", syncResult is Result.Error)
+        assertNull(memoryDao.getMemoryById("mem-bad-nonce"))
+        val cursorAfter = cloudSyncStateDao.getSyncState()?.lastPullSeq ?: 0L
+        assertEquals("Cursor must not advance", initialCursor, cursorAfter)
+    }
+
+    @Test
+    fun remoteRecordWithInvalidRevisionOrSeqIsRejected() = runTest {
+        val initialCursor = cloudSyncStateDao.getSyncState()?.lastPullSeq ?: 0L
+
+        // Invalid revision <= 0
+        val badRevRecord = CloudRemoteRecord(
+            owner_id = fakeAuthManager.getUserId(),
+            memory_id = "mem-bad-rev",
+            revision = 0L,
+            payload_version = 1,
+            nonce = Base64.getEncoder().encodeToString(ByteArray(12)),
+            ciphertext = "Y2lwaGVydGV4dA==",
+            is_tombstone = false,
+            change_seq = initialCursor + 1
+        )
+        fakeCloudClient.remoteRecords[badRevRecord.memory_id] = badRevRecord
+
+        val syncResult = cloudSyncManager.syncOnce()
+        assertTrue("Sync must fail on revision <= 0", syncResult is Result.Error)
+        assertNull(memoryDao.getMemoryById("mem-bad-rev"))
+        val cursorAfter = cloudSyncStateDao.getSyncState()?.lastPullSeq ?: 0L
+        assertEquals("Cursor must not advance", initialCursor, cursorAfter)
     }
 }

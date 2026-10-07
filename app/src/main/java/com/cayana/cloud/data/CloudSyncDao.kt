@@ -29,6 +29,9 @@ interface CloudSyncStateDao {
 
     @Query("UPDATE cloud_sync_state SET isEnabled = :enabled WHERE id = 1")
     suspend fun setSyncEnabled(enabled: Boolean)
+
+    @Query("DELETE FROM cloud_sync_state")
+    suspend fun clearAll(): Int
 }
 
 @Dao
@@ -47,6 +50,9 @@ interface CloudMemorySyncMetadataDao {
 
     @Query("DELETE FROM cloud_memory_sync_metadata WHERE memoryId = :memoryId")
     suspend fun deleteMetadata(memoryId: String): Int
+
+    @Query("DELETE FROM cloud_memory_sync_metadata")
+    suspend fun clearAll(): Int
 }
 
 @Dao
