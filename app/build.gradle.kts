@@ -2,7 +2,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
 
@@ -21,15 +20,6 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-        val supabaseUrl = (project.findProperty("CAYANA_SUPABASE_URL") as? String)
-            ?: System.getenv("CAYANA_SUPABASE_URL")
-            ?: ""
-        val supabasePublishableKey = (project.findProperty("CAYANA_SUPABASE_PUBLISHABLE_KEY") as? String)
-            ?: System.getenv("CAYANA_SUPABASE_PUBLISHABLE_KEY")
-            ?: ""
-
-        buildConfigField("String", "CAYANA_SUPABASE_URL", "\"$supabaseUrl\"")
-        buildConfigField("String", "CAYANA_SUPABASE_PUBLISHABLE_KEY", "\"$supabasePublishableKey\"")
     }
 
     buildTypes {
@@ -120,16 +110,8 @@ dependencies {
     // Archive extraction (supports official tar.bz2 and zip)
     implementation("org.apache.commons:commons-compress:1.26.1")
 
-    // Supabase
-    implementation(platform(libs.supabase.bom))
-    implementation(libs.supabase.auth)
-    implementation(libs.supabase.postgrest)
-    implementation(libs.ktor.client.okhttp)
-
     // Testing
     testImplementation(libs.junit)
-    testImplementation("org.postgresql:postgresql:42.7.4")
-    testImplementation(libs.embedded.postgres)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.koin.test)

@@ -122,8 +122,7 @@ class CayanaApplication : Application() {
                     databaseModule,
                     repositoryModule,
                     viewModelModule,
-                    com.cayana.core.di.backupModule,
-                    com.cayana.core.di.cloudModule
+                    com.cayana.core.di.backupModule
                 )
             }
         }

@@ -15,10 +15,7 @@ val repositoryModule = module {
             searchDao = get(),
             searchIndexStateDao = get(),
             dispatchers = get(),
-            database = get(),
-            cloudSyncStateDao = get(),
-            cloudMemorySyncMetadataDao = get(),
-            cloudSyncOutboxDao = get()
+            database = get()
         )
     }
 

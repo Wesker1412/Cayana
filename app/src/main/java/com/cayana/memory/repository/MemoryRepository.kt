@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.Flow
  */
 enum class MutationOrigin {
     LOCAL,
-    CLOUD_SYNC,
     RESTORE
 }
 
@@ -20,13 +19,11 @@ interface MemoryRepository {
     suspend fun getMemoryBySourceUri(sourceUri: String): MemoryItem?
     suspend fun saveMemory(
         item: MemoryItem,
-        origin: MutationOrigin = MutationOrigin.LOCAL,
-        remoteRevision: Long? = null
+        origin: MutationOrigin = MutationOrigin.LOCAL
     )
     suspend fun deleteMemory(
         id: String,
-        origin: MutationOrigin = MutationOrigin.LOCAL,
-        remoteRevision: Long? = null
+        origin: MutationOrigin = MutationOrigin.LOCAL
     )
     fun searchMemories(query: String): Flow<List<MemoryItem>>
     fun getMemoryCount(): Flow<Int>

@@ -23,10 +23,7 @@ class RoomMemoryRepository(
     private val searchDao: SearchDao? = null,
     private val searchIndexStateDao: SearchIndexStateDao? = null,
     private val dispatchers: CoroutineDispatchers = com.cayana.core.common.AppDispatchers(),
-    private val database: com.cayana.memory.data.CayanaDatabase? = null,
-    private val cloudSyncStateDao: com.cayana.cloud.data.CloudSyncStateDao? = null,
-    private val cloudMemorySyncMetadataDao: com.cayana.cloud.data.CloudMemorySyncMetadataDao? = null,
-    private val cloudSyncOutboxDao: com.cayana.cloud.data.CloudSyncOutboxDao? = null
+    private val database: com.cayana.memory.data.CayanaDatabase? = null
 ) : MemoryRepository {
 
     private val searchIndexMutationMutex = Mutex()
@@ -58,8 +55,7 @@ class RoomMemoryRepository(
 
     override suspend fun saveMemory(
         item: MemoryItem,
-        origin: MutationOrigin,
-        remoteRevision: Long?
+        origin: MutationOrigin
     ): Unit = withContext(dispatchers.io) {
         searchIndexMutationMutex.withLock {
             searchIndexStateDao?.markDirty()
@@ -67,48 +63,12 @@ class RoomMemoryRepository(
 
             val entity = MemoryEntity.fromDomain(item)
 
-            val executeCanonicalAndOutbox: suspend () -> Unit = {
-                memoryDao.insertOrUpdate(entity)
-
-                if (origin == MutationOrigin.LOCAL) {
-                    val isCloudInit = cloudSyncStateDao?.getSyncState()?.isInitialized == true
-                    if (isCloudInit) {
-                        val currentMeta = cloudMemorySyncMetadataDao?.getMetadata(item.id)
-                        val newRevision = (currentMeta?.revision ?: 0L) + 1L
-                        cloudMemorySyncMetadataDao?.upsertMetadata(
-                            com.cayana.cloud.data.CloudMemorySyncMetadataEntity(
-                                memoryId = item.id,
-                                revision = newRevision,
-                                lastSyncedRevision = currentMeta?.lastSyncedRevision ?: 0L
-                            )
-                        )
-                        val outboxItem = com.cayana.cloud.data.CloudSyncOutboxEntity(
-                            id = java.util.UUID.randomUUID().toString(),
-                            memoryId = item.id,
-                            revision = newRevision,
-                            operation = "UPSERT",
-                            createdAt = System.currentTimeMillis()
-                        )
-                        cloudSyncOutboxDao?.enqueue(outboxItem)
-                    }
-                } else if (origin == MutationOrigin.CLOUD_SYNC) {
-                    val rev = remoteRevision ?: 1L
-                    cloudMemorySyncMetadataDao?.upsertMetadata(
-                        com.cayana.cloud.data.CloudMemorySyncMetadataEntity(
-                            memoryId = item.id,
-                            revision = rev,
-                            lastSyncedRevision = rev
-                        )
-                    )
-                }
-            }
-
             if (database != null) {
                 database.withTransaction {
-                    executeCanonicalAndOutbox()
+                    memoryDao.insertOrUpdate(entity)
                 }
             } else {
-                executeCanonicalAndOutbox()
+                memoryDao.insertOrUpdate(entity)
             }
 
             // Update derived search index safely with replaceFts
@@ -127,55 +87,18 @@ class RoomMemoryRepository(
 
     override suspend fun deleteMemory(
         id: String,
-        origin: MutationOrigin,
-        remoteRevision: Long?
+        origin: MutationOrigin
     ): Unit = withContext(dispatchers.io) {
         searchIndexMutationMutex.withLock {
             searchIndexStateDao?.markDirty()
             indexNeedsRebuild = true
 
-            val executeDeleteAndOutbox: suspend () -> Unit = {
-                memoryDao.deleteById(id)
-
-                if (origin == MutationOrigin.LOCAL) {
-                    val isCloudInit = cloudSyncStateDao?.getSyncState()?.isInitialized == true
-                    if (isCloudInit) {
-                        val currentMeta = cloudMemorySyncMetadataDao?.getMetadata(id)
-                        val newRevision = (currentMeta?.revision ?: 0L) + 1L
-                        cloudMemorySyncMetadataDao?.upsertMetadata(
-                            com.cayana.cloud.data.CloudMemorySyncMetadataEntity(
-                                memoryId = id,
-                                revision = newRevision,
-                                lastSyncedRevision = currentMeta?.lastSyncedRevision ?: 0L
-                            )
-                        )
-                        val outboxItem = com.cayana.cloud.data.CloudSyncOutboxEntity(
-                            id = java.util.UUID.randomUUID().toString(),
-                            memoryId = id,
-                            revision = newRevision,
-                            operation = "DELETE",
-                            createdAt = System.currentTimeMillis()
-                        )
-                        cloudSyncOutboxDao?.enqueue(outboxItem)
-                    }
-                } else if (origin == MutationOrigin.CLOUD_SYNC) {
-                    val rev = remoteRevision ?: 1L
-                    cloudMemorySyncMetadataDao?.upsertMetadata(
-                        com.cayana.cloud.data.CloudMemorySyncMetadataEntity(
-                            memoryId = id,
-                            revision = rev,
-                            lastSyncedRevision = rev
-                        )
-                    )
-                }
-            }
-
             if (database != null) {
                 database.withTransaction {
-                    executeDeleteAndOutbox()
+                    memoryDao.deleteById(id)
                 }
             } else {
-                executeDeleteAndOutbox()
+                memoryDao.deleteById(id)
             }
 
             try {

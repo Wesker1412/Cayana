@@ -19,12 +19,9 @@ import com.cayana.source.share.data.ShareReceiptEntity
         MemoryFtsEntity::class,
         ShareReceiptEntity::class,
         SearchIndexStateEntity::class,
-        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class,
-        com.cayana.cloud.data.CloudSyncStateEntity::class,
-        com.cayana.cloud.data.CloudMemorySyncMetadataEntity::class,
-        com.cayana.cloud.data.CloudSyncOutboxEntity::class
+        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
@@ -34,9 +31,6 @@ abstract class CayanaDatabase : RoomDatabase() {
     abstract fun shareReceiptDao(): ShareReceiptDao
     abstract fun searchIndexStateDao(): SearchIndexStateDao
     abstract fun restoredCalendarActionHistoryDao(): com.cayana.calendar.data.RestoredCalendarActionHistoryDao
-    abstract fun cloudSyncStateDao(): com.cayana.cloud.data.CloudSyncStateDao
-    abstract fun cloudMemorySyncMetadataDao(): com.cayana.cloud.data.CloudMemorySyncMetadataDao
-    abstract fun cloudSyncOutboxDao(): com.cayana.cloud.data.CloudSyncOutboxDao
 
     companion object {
         const val DATABASE_NAME = "cayana_memory.db"
@@ -330,6 +324,14 @@ abstract class CayanaDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_sync_outbox_createdAt` ON `cloud_sync_outbox` (`createdAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_sync_outbox_memoryId_revision` ON `cloud_sync_outbox` (`memoryId`, `revision`)")
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `cloud_sync_state`")
+                db.execSQL("DROP TABLE IF EXISTS `cloud_memory_sync_metadata`")
+                db.execSQL("DROP TABLE IF EXISTS `cloud_sync_outbox`")
             }
         }
     }

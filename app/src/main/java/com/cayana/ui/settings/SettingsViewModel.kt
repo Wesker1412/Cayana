@@ -33,8 +33,7 @@ class SettingsViewModel(
     private val recordingCoordinator: RecordingProcessingCoordinator? = null,
     private val backupManager: com.cayana.backup.manager.BackupManager? = null,
     private val driveAuthManager: com.cayana.backup.drive.DriveAuthorizationManager? = null,
-    private val recoveryKeyStorage: com.cayana.backup.crypto.RecoveryKeyStorage? = null,
-    private val cloudSyncManager: com.cayana.cloud.sync.CloudSyncManager? = null
+    private val recoveryKeyStorage: com.cayana.backup.crypto.RecoveryKeyStorage? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -44,26 +43,6 @@ class SettingsViewModel(
     private var lastUserSettings: UserSettings = UserSettings()
 
     init {
-        viewModelScope.launch {
-            cloudSyncManager?.syncStateFlow?.collect { cloudState ->
-                val isEnabled = cloudState?.isEnabled ?: false
-                val lastTime = cloudState?.lastSuccessfulSyncAt ?: 0L
-                val error = cloudState?.lastErrorCode
-                val uiStatus = when {
-                    error != null -> CloudSyncUiStatus.NEEDS_ATTENTION
-                    cloudState?.isEnabled == true -> CloudSyncUiStatus.SYNCED
-                    else -> CloudSyncUiStatus.SYNCED
-                }
-                _uiState.update { current ->
-                    current.copy(
-                        cloudSyncEnabled = isEnabled,
-                        cloudSyncStatus = uiStatus,
-                        lastCloudSyncAt = lastTime,
-                        cloudSyncError = error
-                    )
-                }
-            }
-        }
         viewModelScope.launch {
             settingsRepository.getSettings().collect { userSettings ->
                 lastUserSettings = userSettings
@@ -525,46 +504,5 @@ class SettingsViewModel(
 
     fun clearBackupState() {
         _uiState.update { it.copy(backupState = BackupUiState.Idle) }
-    }
-
-    fun toggleCloudSync(enabled: Boolean, context: android.content.Context) {
-        viewModelScope.launch {
-            val cManager = cloudSyncManager ?: return@launch
-            if (enabled) {
-                if (!_uiState.value.settings.hasRecoveryKey) {
-                    val newKey = com.cayana.backup.crypto.RecoveryKeyManager.generateRootKey()
-                    val formatted = com.cayana.backup.crypto.RecoveryKeyManager.formatKey(newKey)
-                    _uiState.update { it.copy(showRecoveryKeyDialog = true, generatedRecoveryKey = formatted) }
-                    return@launch
-                }
-                _uiState.update { it.copy(cloudSyncStatus = CloudSyncUiStatus.SYNCING) }
-                when (val res = cManager.initializeAndEnable(context)) {
-                    is com.cayana.core.common.Result.Success -> {
-                        _uiState.update { it.copy(cloudSyncEnabled = true, cloudSyncStatus = CloudSyncUiStatus.SYNCED) }
-                    }
-                    is com.cayana.core.common.Result.Error -> {
-                        _uiState.update { it.copy(cloudSyncEnabled = false, cloudSyncStatus = CloudSyncUiStatus.NEEDS_ATTENTION, cloudSyncError = res.exception.message) }
-                    }
-                    com.cayana.core.common.Result.Loading -> Unit
-                }
-            } else {
-                cManager.disable(context)
-                _uiState.update { it.copy(cloudSyncEnabled = false, cloudSyncStatus = CloudSyncUiStatus.SYNCED) }
-            }
-        }
-    }
-
-    fun performCloudSyncNow(): Job = viewModelScope.launch {
-        val cManager = cloudSyncManager ?: return@launch
-        _uiState.update { it.copy(cloudSyncStatus = CloudSyncUiStatus.SYNCING) }
-        when (val res = cManager.syncOnce()) {
-            is com.cayana.core.common.Result.Success -> {
-                _uiState.update { it.copy(cloudSyncStatus = CloudSyncUiStatus.SYNCED, cloudSyncError = null) }
-            }
-            is com.cayana.core.common.Result.Error -> {
-                _uiState.update { it.copy(cloudSyncStatus = CloudSyncUiStatus.NEEDS_ATTENTION, cloudSyncError = res.exception.message) }
-            }
-            com.cayana.core.common.Result.Loading -> Unit
-        }
     }
 }

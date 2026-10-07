@@ -22,13 +22,6 @@ sealed interface BackupUiState {
     data class Error(val message: String) : BackupUiState
 }
 
-enum class CloudSyncUiStatus {
-    SYNCED,         // 已同步
-    SYNCING,        // 同步中
-    WAITING_NET,    // 等待網路
-    NEEDS_ATTENTION // 需要處理
-}
-
 data class SettingsUiState(
     val settings: UserSettings = UserSettings(),
     val sourceItems: List<SourceItemUiState> = emptyList(),
@@ -46,9 +39,5 @@ data class SettingsUiState(
     val recoveryKeyConfirmationError: String? = null,
     val showRestoreDialog: Boolean = false,
     val availableBackups: List<DriveBackupMetadata> = emptyList(),
-    val isFetchingBackups: Boolean = false,
-    val cloudSyncEnabled: Boolean = false,
-    val cloudSyncStatus: CloudSyncUiStatus = CloudSyncUiStatus.SYNCED,
-    val lastCloudSyncAt: Long = 0L,
-    val cloudSyncError: String? = null
+    val isFetchingBackups: Boolean = false
 )

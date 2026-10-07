@@ -113,8 +113,7 @@ class ScreenshotCursorCommitTest {
         
         override suspend fun saveMemory(
             item: MemoryItem,
-            origin: MutationOrigin,
-            remoteRevision: Long?
+            origin: MutationOrigin
         ) {
             if (failOnUri != null && item.sourceUri == failOnUri) {
                 throw IOException("Disk I/O Error: SQLite database locked")
@@ -125,8 +124,7 @@ class ScreenshotCursorCommitTest {
 
         override suspend fun deleteMemory(
             id: String,
-            origin: MutationOrigin,
-            remoteRevision: Long?
+            origin: MutationOrigin
         ) {
             storage.remove(id)
             countFlow.value = storage.size

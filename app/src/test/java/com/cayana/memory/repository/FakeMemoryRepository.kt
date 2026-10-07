@@ -24,16 +24,14 @@ class FakeMemoryRepository : MemoryRepository {
 
     override suspend fun saveMemory(
         item: MemoryItem,
-        origin: MutationOrigin,
-        remoteRevision: Long?
+        origin: MutationOrigin
     ) {
         memoriesMap.update { it + (item.id to item) }
     }
 
     override suspend fun deleteMemory(
         id: String,
-        origin: MutationOrigin,
-        remoteRevision: Long?
+        origin: MutationOrigin
     ) {
         memoriesMap.update { it - id }
     }
