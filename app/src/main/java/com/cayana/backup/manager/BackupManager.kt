@@ -204,7 +204,7 @@ class BackupManager(
                         is com.cayana.source.SourceExistence.Unavailable -> mem.sourceExists
                     }
                     val toInsert = mem.copy(sourceExists = exists)
-                    memoryDao.insertOrUpdate(MemoryEntity.fromDomain(toInsert))
+                    memoryRepository.saveMemory(toInsert, origin = com.cayana.memory.repository.MutationOrigin.RESTORE)
                 }
 
                 // Insert restored calendar actions into inert history table

@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.cayana.core.common.Result
 import com.cayana.memory.model.MemoryItem
 import com.cayana.memory.repository.MemoryRepository
+import com.cayana.memory.repository.MutationOrigin
 import com.cayana.processing.OcrResult
 import com.cayana.test.FakeMediaContentProvider
 import com.cayana.test.FakeOcrEngine
@@ -110,7 +111,11 @@ class ScreenshotCursorCommitTest {
         override fun getMemoryById(id: String): Flow<MemoryItem?> = MutableStateFlow(storage[id])
         override suspend fun getMemoryBySourceUri(sourceUri: String): MemoryItem? = storage.values.find { it.sourceUri == sourceUri }
         
-        override suspend fun saveMemory(item: MemoryItem) {
+        override suspend fun saveMemory(
+            item: MemoryItem,
+            origin: MutationOrigin,
+            remoteRevision: Long?
+        ) {
             if (failOnUri != null && item.sourceUri == failOnUri) {
                 throw IOException("Disk I/O Error: SQLite database locked")
             }
@@ -118,7 +123,11 @@ class ScreenshotCursorCommitTest {
             countFlow.value = storage.size
         }
 
-        override suspend fun deleteMemory(id: String) {
+        override suspend fun deleteMemory(
+            id: String,
+            origin: MutationOrigin,
+            remoteRevision: Long?
+        ) {
             storage.remove(id)
             countFlow.value = storage.size
         }

@@ -22,11 +22,19 @@ class FakeMemoryRepository : MemoryRepository {
         return memoriesMap.value.values.firstOrNull { it.sourceUri == sourceUri }
     }
 
-    override suspend fun saveMemory(item: MemoryItem) {
+    override suspend fun saveMemory(
+        item: MemoryItem,
+        origin: MutationOrigin,
+        remoteRevision: Long?
+    ) {
         memoriesMap.update { it + (item.id to item) }
     }
 
-    override suspend fun deleteMemory(id: String) {
+    override suspend fun deleteMemory(
+        id: String,
+        origin: MutationOrigin,
+        remoteRevision: Long?
+    ) {
         memoriesMap.update { it - id }
     }
 

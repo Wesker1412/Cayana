@@ -19,9 +19,12 @@ import com.cayana.source.share.data.ShareReceiptEntity
         MemoryFtsEntity::class,
         ShareReceiptEntity::class,
         SearchIndexStateEntity::class,
-        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class
+        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class,
+        com.cayana.cloud.data.CloudSyncStateEntity::class,
+        com.cayana.cloud.data.CloudMemorySyncMetadataEntity::class,
+        com.cayana.cloud.data.CloudSyncOutboxEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
@@ -31,6 +34,9 @@ abstract class CayanaDatabase : RoomDatabase() {
     abstract fun shareReceiptDao(): ShareReceiptDao
     abstract fun searchIndexStateDao(): SearchIndexStateDao
     abstract fun restoredCalendarActionHistoryDao(): com.cayana.calendar.data.RestoredCalendarActionHistoryDao
+    abstract fun cloudSyncStateDao(): com.cayana.cloud.data.CloudSyncStateDao
+    abstract fun cloudMemorySyncMetadataDao(): com.cayana.cloud.data.CloudMemorySyncMetadataDao
+    abstract fun cloudSyncOutboxDao(): com.cayana.cloud.data.CloudSyncOutboxDao
 
     companion object {
         const val DATABASE_NAME = "cayana_memory.db"
@@ -281,6 +287,49 @@ abstract class CayanaDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_restored_calendar_action_history_memoryId` ON `restored_calendar_action_history` (`memoryId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_restored_calendar_action_history_originalActionId` ON `restored_calendar_action_history` (`originalActionId`)")
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_sync_state` (
+                        `id` INTEGER NOT NULL,
+                        `isInitialized` INTEGER NOT NULL DEFAULT 0,
+                        `isEnabled` INTEGER NOT NULL DEFAULT 0,
+                        `lastPullSeq` INTEGER NOT NULL DEFAULT 0,
+                        `lastSuccessfulSyncAt` INTEGER NOT NULL DEFAULT 0,
+                        `lastErrorCode` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_memory_sync_metadata` (
+                        `memoryId` TEXT NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `lastSyncedRevision` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`memoryId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_sync_outbox` (
+                        `id` TEXT NOT NULL,
+                        `memoryId` TEXT NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `operation` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `attemptCount` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_sync_outbox_createdAt` ON `cloud_sync_outbox` (`createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_sync_outbox_memoryId_revision` ON `cloud_sync_outbox` (`memoryId`, `revision`)")
             }
         }
     }
