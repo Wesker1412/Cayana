@@ -160,12 +160,88 @@ class AskCoreTest {
     fun `enforces context byte limit through entire ask pipeline`() = runBlocking {
         val result = askService.ask(
             query = "When is my flight to Tokyo?",
-            options = AskOptions(maxContextBytes = 250)
+            options = AskOptions(maxContextPromptBytes = 250)
         )
 
         assertTrue(result is AskResult.Success)
         val success = result as AskResult.Success
-        assertTrue(success.contextPack.totalSerializedBytes <= 250)
+        assertTrue(success.contextPack.promptContextBytes <= 250)
         assertTrue(success.contextPack.isTruncatedByByteLimit)
+    }
+
+    @Test
+    fun `does not auto-cite all memories when llm returns empty citedMemoryIds`() = runBlocking {
+        fakeLlm.customGenerator = { req ->
+            com.cayana.ask.llm.LlmResponse(
+                answer = "Answer without citations.",
+                evidenceState = EvidenceState.SUFFICIENT_EVIDENCE,
+                citedMemoryIds = emptyList() // LLM omitted citation IDs
+            )
+        }
+
+        val result = askService.ask("When is my flight to Tokyo?")
+        assertTrue(result is AskResult.Success)
+        val success = result as AskResult.Success
+
+        // Strict boundary: Must NOT fall back to citing all ContextPack items
+        assertTrue("Sources must be empty when LLM did not cite any memory", success.sources.isEmpty())
+    }
+
+    @Test
+    fun `filters out hallucinated citedMemoryIds not present in context pack`() = runBlocking {
+        fakeLlm.customGenerator = { req ->
+            com.cayana.ask.llm.LlmResponse(
+                answer = "Answer citing hallucinated memory.",
+                evidenceState = EvidenceState.SUFFICIENT_EVIDENCE,
+                citedMemoryIds = listOf("hallucinated-memory-999", "flight-1", "non-existent-404")
+            )
+        }
+
+        val result = askService.ask("When is my flight to Tokyo?")
+        assertTrue(result is AskResult.Success)
+        val success = result as AskResult.Success
+
+        // Only "flight-1" actually exists in the ContextPack
+        assertEquals(1, success.sources.size)
+        assertEquals("flight-1", success.sources.first().memoryId)
+    }
+
+    @Test
+    fun `deduplicates citedMemoryIds while preserving citation order`() = runBlocking {
+        fakeLlm.customGenerator = { req ->
+            com.cayana.ask.llm.LlmResponse(
+                answer = "Answer with duplicate citations.",
+                evidenceState = EvidenceState.SUFFICIENT_EVIDENCE,
+                citedMemoryIds = listOf("flight-1", "flight-1", "hotel-1", "flight-1")
+            )
+        }
+
+        val result = askService.ask("When is my flight to Tokyo?")
+        assertTrue(result is AskResult.Success)
+        val success = result as AskResult.Success
+
+        val citedIds = success.sources.map { it.memoryId }
+        // Note: query "When is my flight to Tokyo?" only matches flight-1 into ContextPack,
+        // so hotel-1 was not in context pack and is filtered out, and flight-1 is deduplicated
+        assertEquals(listOf("flight-1"), citedIds)
+    }
+
+    @Test
+    fun `no evidence response never attaches citations even if llm mistakenly provided them`() = runBlocking {
+        fakeLlm.customGenerator = { req ->
+            com.cayana.ask.llm.LlmResponse(
+                answer = "No evidence found to answer your question.",
+                evidenceState = EvidenceState.NO_EVIDENCE,
+                citedMemoryIds = listOf("flight-1") // Mistakenly attached
+            )
+        }
+
+        val result = askService.ask("When is my flight to Tokyo?")
+        assertTrue(result is AskResult.Success)
+        val success = result as AskResult.Success
+
+        assertEquals(EvidenceState.NO_EVIDENCE, success.evidenceState)
+        // Strict boundary: NO_EVIDENCE must never have citations attached
+        assertTrue("NO_EVIDENCE must have empty sources", success.sources.isEmpty())
     }
 }

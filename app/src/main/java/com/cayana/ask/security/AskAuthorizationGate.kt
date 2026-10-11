@@ -19,14 +19,36 @@ interface AskAuthorizationGate {
 }
 
 /**
- * Permissive gate for local offline inference, testing, and automated queries.
+ * Permissive gate strictly restricted to local offline inference, testing, and automated queries.
+ * Remote providers are strictly fail-closed and denied by this gate.
  */
 class PermissiveAuthorizationGate : AskAuthorizationGate {
     override suspend fun checkAuthorization(
         query: String,
         contextPack: ContextPack,
         providerInfo: LlmProviderInfo
-    ): AuthorizationDecision = AuthorizationDecision.Allowed
+    ): AuthorizationDecision {
+        return if (providerInfo.isLocal) {
+            AuthorizationDecision.Allowed
+        } else {
+            AuthorizationDecision.Denied(
+                "Permissive authorization is strictly limited to local offline providers; remote provider '${providerInfo.name}' requires explicit user authorization"
+            )
+        }
+    }
+}
+
+/**
+ * Fail-closed gate that denies all external transmission by default.
+ */
+class FailClosedAuthorizationGate(
+    private val reason: String = "External transmission is disabled by default"
+) : AskAuthorizationGate {
+    override suspend fun checkAuthorization(
+        query: String,
+        contextPack: ContextPack,
+        providerInfo: LlmProviderInfo
+    ): AuthorizationDecision = AuthorizationDecision.Denied(reason)
 }
 
 /**

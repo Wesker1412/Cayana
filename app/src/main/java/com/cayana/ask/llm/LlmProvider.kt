@@ -12,3 +12,19 @@ interface LlmProvider {
      */
     suspend fun generateAnswer(request: LlmRequest): LlmResponse
 }
+
+/**
+ * Transport wire budget validator interface reserved for Stage 8B remote HTTP providers.
+ *
+ * NOTE ON BUDGET BOUNDARIES:
+ * - ContextPack.promptContextBytes enforces the local context prompt budget.
+ * - In Stage 8B, remote HTTP providers must independently validate the final full HTTP payload
+ *   (JSON envelope, system prompt, headers, parameters) against the transport wire byte budget
+ *   immediately before network transmission.
+ */
+interface HttpWireBudgetValidator {
+    /**
+     * Verifies that the final serialized HTTP request payload fits strictly within the transport wire limit.
+     */
+    fun validateFinalHttpRequestBytes(serializedPayloadBytes: Int, maxTransportBytes: Int): Boolean
+}

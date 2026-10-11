@@ -2,13 +2,20 @@ package com.cayana.ask.context
 
 /**
  * Context Sanitizer for Cayana Ask.
- * Enforces privacy boundaries before context enters the LLM layer:
- * - Redacts Bearer and JWT tokens
- * - Redacts API keys and generic secrets
- * - Redacts credentials and passwords
- * - Redacts Cayana / crypto recovery keys, backup keys, and seed phrases
- * - Redacts local file / content URIs
- * - Strips sensitive URL query parameters, fragments, and credentials
+ *
+ * PRIVACY & HEURISTIC FILTER BOUNDARY:
+ * This sanitizer provides best-effort heuristic redaction for common known secret formats,
+ * including Bearer tokens, JWTs, standard API key prefixes, passwords/credentials,
+ * Cayana recovery keys, seed phrases, and local content/file URIs.
+ *
+ * IMPORTANT: This is explicitly a BEST-EFFORT heuristic filter. It does NOT claim or guarantee
+ * that 100% of all arbitrary sensitive credentials, passwords, or personal secrets can be detected
+ * via regular expressions alone. Privacy guarantees are achieved through defense-in-depth:
+ * 1. Minimal local retrieval (retrieving only relevant excerpts, never full database dumps).
+ * 2. Absolute omission of sourceUri and default stripping of sourceUrl.
+ * 3. Best-effort pattern redaction via ContextSanitizer.
+ * 4. Explicit user authorization gates (AskAuthorizationGate) with inspection preview before external transmission.
+ * 5. Strict byte-bounded serialization.
  */
 object ContextSanitizer {
 

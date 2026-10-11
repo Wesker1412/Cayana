@@ -168,4 +168,31 @@ class ContextPackBuilderTest {
         val rawWireBytes = pack.renderUntrustedMemories().toByteArray(Charsets.UTF_8).size
         assertTrue(rawWireBytes <= maxBytes)
     }
+
+    @Test
+    fun `produces inspectable preview containing query and items without raw internal leaks`() {
+        val memoryContext = MemoryContext(
+            memoryId = "preview-1",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = Instant.parse("2026-10-15T10:00:00Z").toEpochMilli(),
+            title = "Preview Title",
+            relevantExcerpt = "Inspectable content description.",
+            sourceUrl = "https://internal.test/page?token=secret",
+            relevanceScore = 0.95
+        )
+
+        val pack = builder.build(
+            query = "What is this preview?",
+            memoryContexts = listOf(memoryContext),
+            maxBytes = 2048,
+            clock = fixedClock,
+            zoneId = fixedZone
+        )
+
+        val preview = pack.toInspectionPreview()
+        assertTrue(preview.contains("What is this preview?"))
+        assertTrue(preview.contains("preview-1"))
+        assertTrue(preview.contains("Inspectable content description."))
+        assertFalse(preview.contains("token=secret"))
+    }
 }

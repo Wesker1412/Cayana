@@ -101,19 +101,49 @@ class DefaultAskService(
                 )
             }
 
-            // 4. Authorization Gate check
-            if (!options.bypassAuthorizationGate) {
+            // 4. Authorization Gate check (Non-bypassable boundary for remote providers)
+            @Suppress("DEPRECATION")
+            if (!llmProvider.info.isLocal) {
+                // Remote provider: fail-closed by default. Bypass attempts are strictly rejected.
+                if (options.bypassAuthorizationGate) {
+                    return AskResult.Unauthorized(
+                        query = trimmedQuery,
+                        reason = "Cannot bypass authorization gate for remote provider '${llmProvider.info.name}'",
+                        contextPack = contextPack
+                    )
+                }
                 val authDecision = authorizationGate.checkAuthorization(
                     query = trimmedQuery,
                     contextPack = contextPack,
                     providerInfo = llmProvider.info
                 )
-                if (authDecision is AuthorizationDecision.Denied) {
+                if (authDecision !is AuthorizationDecision.Allowed) {
+                    val reason = if (authDecision is AuthorizationDecision.Denied) {
+                        authDecision.reason
+                    } else {
+                        "Remote transmission requires explicit user authorization"
+                    }
                     return AskResult.Unauthorized(
                         query = trimmedQuery,
-                        reason = authDecision.reason,
+                        reason = reason,
                         contextPack = contextPack
                     )
+                }
+            } else {
+                // Local offline provider
+                if (!options.bypassAuthorizationGate) {
+                    val authDecision = authorizationGate.checkAuthorization(
+                        query = trimmedQuery,
+                        contextPack = contextPack,
+                        providerInfo = llmProvider.info
+                    )
+                    if (authDecision is AuthorizationDecision.Denied) {
+                        return AskResult.Unauthorized(
+                            query = trimmedQuery,
+                            reason = authDecision.reason,
+                            contextPack = contextPack
+                        )
+                    }
                 }
             }
 
@@ -135,10 +165,17 @@ class DefaultAskService(
                 responseCitedIds = response.citedMemoryIds
             }
 
-            // 6. Map cited items to MemorySourceRef
-            val sourceMap = contextPack.items.associateBy { it.memoryId }
-            val citations = if (responseCitedIds.isNotEmpty()) {
-                responseCitedIds.mapNotNull { id ->
+            // 6. Map cited items to MemorySourceRef (Strict Evidence & Citation Boundary)
+            val citations: List<MemorySourceRef> = if (responseEvidenceState == EvidenceState.NO_EVIDENCE) {
+                // NO_EVIDENCE must never have citations attached
+                emptyList()
+            } else if (responseCitedIds.isEmpty()) {
+                // Never auto-cite all memories when LLM omitted citedMemoryIds
+                emptyList()
+            } else {
+                val sourceMap = contextPack.items.associateBy { it.memoryId }
+                // Deduplicate while preserving citation order; only accept IDs that exist in ContextPack
+                responseCitedIds.distinct().mapNotNull { id ->
                     sourceMap[id]?.let { item ->
                         val matchingOriginal = retrievalResult.items.find { it.memoryId == id }
                         MemorySourceRef(
@@ -148,16 +185,6 @@ class DefaultAskService(
                             capturedAt = item.capturedAt
                         )
                     }
-                }
-            } else {
-                contextPack.items.map { item ->
-                    val matchingOriginal = retrievalResult.items.find { it.memoryId == item.memoryId }
-                    MemorySourceRef(
-                        memoryId = item.memoryId,
-                        title = matchingOriginal?.title,
-                        sourceType = item.sourceType,
-                        capturedAt = item.capturedAt
-                    )
                 }
             }
 

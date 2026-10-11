@@ -109,7 +109,7 @@ class ContextPackBuilder {
         return ContextPack(
             query = query,
             items = currentItems,
-            totalSerializedBytes = finalBytes,
+            promptContextBytes = finalBytes,
             isTruncatedByByteLimit = wasTruncated,
             createdAt = clock.millis()
         )
@@ -122,7 +122,7 @@ class ContextPackBuilder {
         val tempPack = ContextPack(
             query = query,
             items = items,
-            totalSerializedBytes = 0
+            promptContextBytes = 0
         )
         val renderedMemories = tempPack.renderUntrustedMemories()
         val payload = AskPromptTemplates.formatUserPrompt(query, renderedMemories)
