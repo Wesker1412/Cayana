@@ -18,3 +18,5 @@ captures/
 *.dex
 *.class
 .kotlin/
+__pycache__/
+*.pyc
