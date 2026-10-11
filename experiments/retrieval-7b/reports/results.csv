@@ -1,0 +1,8 @@
+Configuration,Recall@1 (%),Recall@5 (%),MRR@5,FP Rate (%),Lexical R@5 (%),Synonym R@5 (%),CrossLingual R@5 (%),Precise R@5 (%),LongText R@5 (%),Avg Latency (ms),Indexing Time (s),Index Size (MB),Model Size (MB),INT8 Size (MB)
+Scheme A (Stage 7A Deterministic),68.0,73.6,0.706,76.0,100.0,54.3,30.0,88.0,100.0,1.43,0.26,4.20,0.0,0.0
+Scheme B1 (BGE-small-zh-v1.5 Flat),88.0,88.8,0.884,80.0,96.0,100.0,35.0,100.0,100.0,16.15,19.66,3.91,95.0,24.5
+Scheme B2 (BGE-small-zh-v1.5 Chunked),88.0,88.8,0.884,80.0,96.0,100.0,35.0,100.0,100.0,14.89,19.47,3.91,95.0,24.5
+Scheme B3 (Multilingual-E5-small Flat),93.6,97.6,0.952,100.0,100.0,100.0,85.0,100.0,100.0,38.66,29.47,2.93,118.0,29.8
+Scheme B4 (Multilingual-E5-small Chunked),93.6,97.6,0.952,100.0,100.0,100.0,85.0,100.0,100.0,28.95,33.94,2.93,118.0,29.8
+Scheme C1 (Hybrid: 7A + BGE Chunked),80.8,89.6,0.849,92.0,100.0,100.0,40.0,96.0,100.0,18.52,19.73,8.11,95.0,24.5
+Scheme C2 (Hybrid: 7A + E5 Chunked),84.8,95.2,0.888,100.0,100.0,91.4,85.0,100.0,100.0,38.29,34.20,7.13,118.0,29.8
