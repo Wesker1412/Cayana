@@ -30,4 +30,14 @@ val repositoryModule = module {
             searchIndexStateDao = get()
         )
     }
+
+    single<com.cayana.retrieval.MemoryRetriever> {
+        com.cayana.retrieval.DefaultMemoryRetriever(
+            memoryRepository = get(),
+            searchDao = get(),
+            searchIndexStateDao = get(),
+            dispatchers = get(),
+            logger = getOrNull()
+        )
+    }
 }

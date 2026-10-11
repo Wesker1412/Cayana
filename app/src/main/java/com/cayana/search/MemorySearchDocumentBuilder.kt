@@ -2,6 +2,7 @@ package com.cayana.search
 
 import com.cayana.memory.data.MemoryEntity
 import com.cayana.memory.data.MemoryFtsEntity
+import com.cayana.memory.model.EventCandidate
 import com.cayana.memory.model.MemoryItem
 import com.cayana.source.SourceType
 import java.net.URI
@@ -10,6 +11,11 @@ import java.util.Date
 import java.util.Locale
 
 object MemorySearchDocumentBuilder {
+
+    private val CHINESE_MONTHS = listOf(
+        "一月", "二月", "三月", "四月", "五月", "六月",
+        "七月", "八月", "九月", "十月", "十一月", "十二月"
+    )
 
     fun buildDocument(item: MemoryItem): MemoryFtsEntity {
         val host = extractHost(item.sourceUrl)
@@ -23,7 +29,9 @@ object MemorySearchDocumentBuilder {
             host = host,
             displayName = displayName,
             capturedAt = item.capturedAt,
-            metadata = item.metadata
+            metadata = item.metadata,
+            entities = item.entities,
+            eventCandidates = item.eventCandidates
         )
         return MemoryFtsEntity(
             memoryId = item.id,
@@ -42,6 +50,8 @@ object MemorySearchDocumentBuilder {
         val sourceType = runCatching { SourceType.valueOf(entity.sourceType) }.getOrDefault(SourceType.SCREENSHOT)
         val host = extractHost(entity.sourceUrl)
         val displayName = metadata["displayName"] ?: metadata["filename"]
+        val entities = com.cayana.memory.data.Converters.parseEntities(entity.entitiesJson)
+        val candidates = com.cayana.memory.data.Converters.parseCandidates(entity.eventCandidatesJson)
         val searchTokens = buildSearchTokens(
             title = entity.title,
             rawText = entity.rawText,
@@ -51,7 +61,9 @@ object MemorySearchDocumentBuilder {
             host = host,
             displayName = displayName,
             capturedAt = entity.capturedAt,
-            metadata = metadata
+            metadata = metadata,
+            entities = entities,
+            eventCandidates = candidates
         )
         return MemoryFtsEntity(
             memoryId = entity.id,
@@ -75,7 +87,9 @@ object MemorySearchDocumentBuilder {
         host: String?,
         displayName: String?,
         capturedAt: Long,
-        metadata: Map<String, String>
+        metadata: Map<String, String>,
+        entities: List<String> = emptyList(),
+        eventCandidates: List<EventCandidate> = emptyList()
     ): String {
         val tokens = LinkedHashSet<String>()
 
@@ -83,14 +97,8 @@ object MemorySearchDocumentBuilder {
         tokens.add(sourceType.name.lowercase(Locale.ROOT))
         tokens.add(sourceType.displayName.lowercase(Locale.ROOT))
 
-        // 2. Date representations
-        val date = Date(capturedAt)
-        val isoFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(date)
-        val shortFormat = SimpleDateFormat("MM/dd", Locale.ROOT).format(date)
-        val year = SimpleDateFormat("yyyy", Locale.ROOT).format(date)
-        tokens.add(isoFormat)
-        tokens.add(shortFormat)
-        tokens.add(year)
+        // 2. Date representations for capturedAt
+        addDateTimeTokens(capturedAt, tokens)
 
         // 3. URL and host tokens
         if (!sourceUrl.isNullOrBlank()) {
@@ -130,7 +138,58 @@ object MemorySearchDocumentBuilder {
             tokenizeLatinAndCjk(normalizedText, tokens)
         }
 
+        // 7. Entities
+        for (entity in entities) {
+            if (entity.isNotBlank()) {
+                tokenizeLatinAndCjk(entity, tokens)
+            }
+        }
+
+        // 8. Event candidates
+        for (candidate in eventCandidates) {
+            if (candidate.title.isNotBlank()) {
+                tokenizeLatinAndCjk(candidate.title, tokens)
+            }
+            if (!candidate.location.isNullOrBlank()) {
+                tokenizeLatinAndCjk(candidate.location, tokens)
+            }
+            if (!candidate.rawMatchedSnippet.isNullOrBlank()) {
+                tokenizeLatinAndCjk(candidate.rawMatchedSnippet, tokens)
+            }
+            addDateTimeTokens(candidate.startTimestamp, tokens)
+            candidate.endTimestamp?.let { addDateTimeTokens(it, tokens) }
+        }
+
         return tokens.joinToString(" ")
+    }
+
+    private fun addDateTimeTokens(timestamp: Long, tokens: MutableSet<String>) {
+        if (timestamp <= 0L) return
+        val date = Date(timestamp)
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(date)
+        val shortFormat = SimpleDateFormat("MM/dd", Locale.ROOT).format(date)
+        val year = SimpleDateFormat("yyyy", Locale.ROOT).format(date)
+        val monthNum = SimpleDateFormat("M", Locale.ROOT).format(date).toIntOrNull() ?: 0
+        val dayNum = SimpleDateFormat("d", Locale.ROOT).format(date).toIntOrNull() ?: 0
+
+        tokens.add(isoFormat)
+        tokens.add(shortFormat)
+        tokens.add(year)
+        tokens.add("${year}年")
+        if (monthNum in 1..12) {
+            val monthStr = "${monthNum}月"
+            val zhMonth = CHINESE_MONTHS.getOrNull(monthNum - 1)
+            tokens.add(monthStr)
+            tokens.add("${year}年$monthStr")
+            if (zhMonth != null) {
+                tokens.add(zhMonth)
+                tokens.add("${year}年$zhMonth")
+            }
+        }
+        if (dayNum in 1..31) {
+            tokens.add("${dayNum}日")
+            tokens.add("${dayNum}號")
+        }
     }
 
     fun tokenizeLatinAndCjk(text: String, outTokens: MutableSet<String>) {
