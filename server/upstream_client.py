@@ -68,6 +68,44 @@ def escape_xml_content(val: str) -> str:
             .replace("<untrusted_memory", "&lt;untrusted_memory")
             .replace("</untrusted_memory>", "&lt;/untrusted_memory&gt;"))
 
+def format_context_block(item: Dict[str, Any]) -> str:
+    """
+    Renders an individual ContextPackItem into XML block format with full attribute
+    and content escaping, matching the exact format passed to upstream LLMs.
+    """
+    mem_id = str(item.get("memoryId", ""))
+    source = str(item.get("sourceType", "UNKNOWN"))
+    captured = str(item.get("capturedDateIso", ""))
+    raw_snippet = str(item.get("snippet", ""))
+
+    safe_id = escape_xml_attribute(mem_id)
+    safe_source = escape_xml_attribute(source)
+    safe_captured = escape_xml_attribute(captured)
+    safe_snippet = escape_xml_content(raw_snippet)
+
+    return (
+        f'<untrusted_memory id="{safe_id}" source="{safe_source}" captured="{safe_captured}">\n'
+        f'{safe_snippet}\n'
+        f'</untrusted_memory>'
+    )
+
+def build_upstream_user_prompt(question: str, context_items: List[Dict[str, Any]]) -> str:
+    """
+    Constructs the exact user prompt string sent to upstream LLM including XML tags,
+    attributes, and escaped content.
+    """
+    context_blocks = [format_context_block(item) for item in context_items]
+    blocks_str = "\n".join(context_blocks)
+    return f"Question: {question}\n\nContext Memories:\n{blocks_str}"
+
+def calculate_actual_context_bytes(question: str, context_items: List[Dict[str, Any]]) -> int:
+    """
+    Calculates the exact UTF-8 byte count of the complete formatted user prompt payload
+    including XML tags, attributes, and escaped entity expansions.
+    """
+    prompt_str = build_upstream_user_prompt(question, context_items)
+    return len(prompt_str.encode("utf-8"))
+
 class UpstreamLlmClient:
     def __init__(self, config: ServerConfig = None):
         self.config = config or ServerConfig()
@@ -182,28 +220,8 @@ class UpstreamLlmClient:
                 )
 
         # 2. Build prompt with XML escaping to strictly prevent prompt injection escapes
-        context_blocks = []
-        valid_ids = set()
-        for item in context_items:
-            mem_id = str(item.get("memoryId", ""))
-            valid_ids.add(mem_id)
-            source = str(item.get("sourceType", "UNKNOWN"))
-            captured = str(item.get("capturedDateIso", ""))
-            raw_snippet = str(item.get("snippet", ""))
-
-            safe_id = escape_xml_attribute(mem_id)
-            safe_source = escape_xml_attribute(source)
-            safe_captured = escape_xml_attribute(captured)
-            safe_snippet = escape_xml_content(raw_snippet)
-
-            block = (
-                f'<untrusted_memory id="{safe_id}" source="{safe_source}" captured="{safe_captured}">\n'
-                f'{safe_snippet}\n'
-                f'</untrusted_memory>'
-            )
-            context_blocks.append(block)
-
-        user_content = f"Question: {question}\n\nContext Memories:\n" + "\n".join(context_blocks)
+        valid_ids = {str(item.get("memoryId", "")) for item in context_items if item.get("memoryId")}
+        user_content = build_upstream_user_prompt(question, context_items)
 
         temperature = 0.1
         max_tokens = 1024

@@ -57,6 +57,10 @@ class TestCayanaServer(unittest.TestCase):
         logger.clear()
         ServerConfig.TEST_MODE = True
         ServerConfig.KILL_SWITCH = False
+        ServerConfig.ALLOW_UNPROTECTED_PAID_INFERENCE = False
+        ServerConfig.SERVER_API_KEY = ""
+        ServerConfig.UPSTREAM_API_KEY = ""
+        ServerConfig.UPSTREAM_ENDPOINT = ""
         CayanaApiHandler.config = ServerConfig
         CayanaApiHandler.rate_limiter.reset()
 
@@ -179,10 +183,11 @@ class TestCayanaServer(unittest.TestCase):
 
     def test_production_missing_api_key_fails_closed(self):
         """
-        When TEST_MODE=False and API key is missing, production must fail closed
-        with 503 UPSTREAM_NOT_CONFIGURED instead of returning simulated answers.
+        When TEST_MODE=False, server protection is satisfied, but upstream credentials are missing,
+        production must fail closed with 503 UPSTREAM_NOT_CONFIGURED instead of returning simulated answers.
         """
         ServerConfig.TEST_MODE = False
+        ServerConfig.SERVER_API_KEY = "test-secret"
         ServerConfig.UPSTREAM_API_KEY = ""
         ServerConfig.UPSTREAM_ENDPOINT = ""
 
@@ -191,9 +196,206 @@ class TestCayanaServer(unittest.TestCase):
             "question": "Where is my passport?",
             "contextPack": {"items": []}
         }
-        status, resp = self._post_json("/v1/ask", payload=payload)
+        headers = {"X-Cayana-App-Secret": "test-secret"}
+        status, resp = self._post_json("/v1/ask", payload=payload, headers=headers)
         self.assertEqual(status, 503)
         self.assertEqual(resp["error"]["code"], "UPSTREAM_NOT_CONFIGURED")
+
+    def test_production_unconfigured_server_protection_rejects_paid_inference(self):
+        """
+        In production with valid upstream paid credentials but NO server-side protection configured
+        (SERVER_API_KEY empty and ALLOW_UNPROTECTED_PAID_INFERENCE=False), requests must be rejected
+        with 503 SERVER_PROTECTION_NOT_CONFIGURED and upstream generate_answer must NEVER be called (0 calls).
+        """
+        ServerConfig.TEST_MODE = False
+        ServerConfig.ALLOW_UNPROTECTED_PAID_INFERENCE = False
+        ServerConfig.SERVER_API_KEY = ""
+        ServerConfig.UPSTREAM_API_KEY = "valid-paid-upstream-key"
+        ServerConfig.UPSTREAM_ENDPOINT = "https://api.upstream-llm.com/v1/chat"
+
+        call_counter = {"count": 0}
+        orig_generate = CayanaApiHandler.upstream_client.generate_answer
+
+        def mock_generate(*args, **kwargs):
+            call_counter["count"] += 1
+            return orig_generate(*args, **kwargs)
+
+        try:
+            CayanaApiHandler.upstream_client.generate_answer = mock_generate
+            payload = {
+                "installationId": "anon-install-12345",
+                "question": "Where is my passport?",
+                "contextPack": {
+                    "items": [
+                        {
+                            "memoryId": "mem-1",
+                            "snippet": "Passport is on the shelf.",
+                            "sourceType": "SHARED_TEXT"
+                        }
+                    ]
+                }
+            }
+            status, resp = self._post_json("/v1/ask", payload=payload)
+            self.assertEqual(status, 503)
+            self.assertEqual(resp["error"]["code"], "SERVER_PROTECTION_NOT_CONFIGURED")
+            self.assertEqual(call_counter["count"], 0)
+        finally:
+            CayanaApiHandler.upstream_client.generate_answer = orig_generate
+
+    def test_configured_server_api_key_authentication(self):
+        """
+        When SERVER_API_KEY is configured, caller must provide matching authorization
+        via X-Cayana-App-Secret or Authorization: Bearer <key>; missing or mismatching fails with 401.
+        """
+        ServerConfig.SERVER_API_KEY = "my-secret-key-456"
+
+        payload = {
+            "installationId": "anon-install-12345",
+            "question": "Where is my passport?",
+            "contextPack": {"items": []}
+        }
+
+        # 1. Missing secret
+        status, resp = self._post_json("/v1/ask", payload=payload)
+        self.assertEqual(status, 401)
+        self.assertEqual(resp["error"]["code"], "UNAUTHORIZED")
+
+        # 2. Invalid secret
+        status, resp = self._post_json("/v1/ask", payload=payload, headers={"X-Cayana-App-Secret": "wrong-secret"})
+        self.assertEqual(status, 401)
+        self.assertEqual(resp["error"]["code"], "UNAUTHORIZED")
+
+        # 3. Valid via X-Cayana-App-Secret
+        status, resp = self._post_json("/v1/ask", payload=payload, headers={"X-Cayana-App-Secret": "my-secret-key-456"})
+        self.assertEqual(status, 200)
+
+        # 4. Valid via Authorization: Bearer
+        status, resp = self._post_json("/v1/ask", payload=payload, headers={"Authorization": "Bearer my-secret-key-456"})
+        self.assertEqual(status, 200)
+
+    def test_content_length_negative_and_anomalous_headers_rejected(self):
+        """
+        Content-Length header must be non-negative integer. Negative numbers, invalid formats,
+        missing header, and empty body must be rejected safely without unbounded reading.
+        """
+        import socket
+        payload_bytes = json.dumps({
+            "installationId": "anon-install-12345",
+            "question": "Where is my passport?",
+            "contextPack": {"items": []}
+        }).encode("utf-8")
+
+        # 1. Negative Content-Length (-1)
+        status, resp = self._post_json(
+            "/v1/ask",
+            raw_body=payload_bytes,
+            headers={"Content-Length": "-1", "X-Cayana-Installation-Id": "anon-install-12345"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "INVALID_CONTENT_LENGTH")
+
+        # 2. Negative Content-Length (-500)
+        status, resp = self._post_json(
+            "/v1/ask",
+            raw_body=payload_bytes,
+            headers={"Content-Length": "-500", "X-Cayana-Installation-Id": "anon-install-12345"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "INVALID_CONTENT_LENGTH")
+
+        # 3. Non-integer Content-Length ("abc")
+        status, resp = self._post_json(
+            "/v1/ask",
+            raw_body=payload_bytes,
+            headers={"Content-Length": "abc", "X-Cayana-Installation-Id": "anon-install-12345"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "INVALID_CONTENT_LENGTH")
+
+        # 4. Floating point Content-Length ("12.5")
+        status, resp = self._post_json(
+            "/v1/ask",
+            raw_body=payload_bytes,
+            headers={"Content-Length": "12.5", "X-Cayana-Installation-Id": "anon-install-12345"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "INVALID_CONTENT_LENGTH")
+
+        # 5. Empty payload (Content-Length: 0)
+        status, resp = self._post_json(
+            "/v1/ask",
+            raw_body=b"",
+            headers={"Content-Length": "0", "X-Cayana-Installation-Id": "anon-install-12345"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "EMPTY_PAYLOAD")
+
+        # 6. Missing Content-Length header using raw socket
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        try:
+            req_raw = (
+                b"POST /v1/ask HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            s.sendall(req_raw)
+            resp_chunks = []
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                resp_chunks.append(chunk)
+            resp_raw = b"".join(resp_chunks).decode("utf-8")
+            self.assertIn("411 Length Required", resp_raw)
+            self.assertIn("LENGTH_REQUIRED", resp_raw)
+        finally:
+            s.close()
+
+    def test_context_budget_accounts_for_xml_escaping_and_special_chars(self):
+        """
+        Context budget verification must account for XML escaping expansions (& -> &amp;, etc.),
+        XML tag overhead, and multi-byte UTF-8 characters.
+        If actual formatted upstream prompt exceeds MAX_CONTEXT_PROMPT_BYTES (16KB),
+        it must be rejected with 400 CONTEXT_TOO_LARGE before calling upstream LLM.
+        """
+        # Snippet of 3,500 '&' characters:
+        # Raw snippet string length: 3,500 bytes (< 8,000 snippet limit).
+        # But after XML escaping, 3500 * 5 (&amp;) = 17,500 bytes, which exceeds 16KB limit (16,384 bytes)!
+        special_snippet = "&" * 3500
+
+        call_counter = {"count": 0}
+        orig_generate = CayanaApiHandler.upstream_client.generate_answer
+
+        def mock_generate(*args, **kwargs):
+            call_counter["count"] += 1
+            return orig_generate(*args, **kwargs)
+
+        try:
+            CayanaApiHandler.upstream_client.generate_answer = mock_generate
+
+            payload = {
+                "installationId": "anon-install-12345",
+                "question": "What is in memory?",
+                "contextPack": {
+                    "promptContextBytes": 3600,  # Client claimed raw count
+                    "items": [
+                        {
+                            "memoryId": "mem-special-1",
+                            "snippet": special_snippet,
+                            "sourceType": "SHARED_TEXT"
+                        }
+                    ]
+                }
+            }
+
+            status, resp = self._post_json("/v1/ask", payload=payload)
+            self.assertEqual(status, 400)
+            self.assertEqual(resp["error"]["code"], "CONTEXT_TOO_LARGE")
+            # Must be rejected before calling upstream inference
+            self.assertEqual(call_counter["count"], 0)
+        finally:
+            CayanaApiHandler.upstream_client.generate_answer = orig_generate
 
     def test_upstream_http_rejected(self):
         """

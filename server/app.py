@@ -12,7 +12,9 @@ from .upstream_client import (
     UpstreamNotConfiguredError,
     UpstreamPayloadTooLargeError,
     UpstreamSecurityError,
-    UpstreamException
+    UpstreamException,
+    build_upstream_user_prompt,
+    calculate_actual_context_bytes
 )
 
 SAFE_REQ_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
@@ -121,11 +123,65 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                     return
                 req_id = raw_hdr_req_id
 
-            # 2. Content-Length and Wire Budget Check
+            # 2. Content-Length Validation and Bounded Body Read
+            raw_cl = self.headers.get("Content-Length")
+            if raw_cl is None:
+                duration_ms = int((time.time() - start_time) * 1000)
+                self._send_json(411, {
+                    "error": {
+                        "code": "LENGTH_REQUIRED",
+                        "message": "Content-Length header is required for POST /v1/ask."
+                    }
+                }, request_id=req_id, error_code="LENGTH_REQUIRED")
+                logger.log_request(req_id, "", duration_ms, 411, "LENGTH_REQUIRED")
+                return
+
+            raw_cl_clean = raw_cl.strip()
+            if not re.match(r"^\d+$", raw_cl_clean):
+                duration_ms = int((time.time() - start_time) * 1000)
+                self._send_json(400, {
+                    "error": {
+                        "code": "INVALID_CONTENT_LENGTH",
+                        "message": "Content-Length must be a valid non-negative integer."
+                    }
+                }, request_id=req_id, error_code="INVALID_CONTENT_LENGTH")
+                logger.log_request(req_id, "", duration_ms, 400, "INVALID_CONTENT_LENGTH")
+                return
+
             try:
-                content_length = int(self.headers.get("Content-Length", 0))
-            except (ValueError, TypeError):
-                content_length = 0
+                content_length = int(raw_cl_clean)
+            except ValueError:
+                duration_ms = int((time.time() - start_time) * 1000)
+                self._send_json(400, {
+                    "error": {
+                        "code": "INVALID_CONTENT_LENGTH",
+                        "message": "Content-Length must be a valid integer."
+                    }
+                }, request_id=req_id, error_code="INVALID_CONTENT_LENGTH")
+                logger.log_request(req_id, "", duration_ms, 400, "INVALID_CONTENT_LENGTH")
+                return
+
+            if content_length < 0:
+                duration_ms = int((time.time() - start_time) * 1000)
+                self._send_json(400, {
+                    "error": {
+                        "code": "INVALID_CONTENT_LENGTH",
+                        "message": "Content-Length cannot be negative."
+                    }
+                }, request_id=req_id, error_code="INVALID_CONTENT_LENGTH")
+                logger.log_request(req_id, "", duration_ms, 400, "INVALID_CONTENT_LENGTH")
+                return
+
+            if content_length == 0:
+                duration_ms = int((time.time() - start_time) * 1000)
+                self._send_json(400, {
+                    "error": {
+                        "code": "EMPTY_PAYLOAD",
+                        "message": "Request payload cannot be empty."
+                    }
+                }, request_id=req_id, error_code="EMPTY_PAYLOAD")
+                logger.log_request(req_id, "", duration_ms, 400, "EMPTY_PAYLOAD")
+                return
 
             if content_length > self.config.MAX_REQUEST_BYTES:
                 duration_ms = int((time.time() - start_time) * 1000)
@@ -138,17 +194,27 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 logger.log_request(req_id, "", duration_ms, 413, "PAYLOAD_TOO_LARGE")
                 return
 
-            # Read Request Body
-            raw_body = self.rfile.read(content_length)
-            if len(raw_body) > self.config.MAX_REQUEST_BYTES:
+            # Read Request Body with bounded buffer chunks
+            chunks = []
+            bytes_remaining = content_length
+            while bytes_remaining > 0:
+                chunk_size = min(bytes_remaining, 4096)
+                chunk = self.rfile.read(chunk_size)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                bytes_remaining -= len(chunk)
+
+            raw_body = b"".join(chunks)
+            if len(raw_body) != content_length:
                 duration_ms = int((time.time() - start_time) * 1000)
-                self._send_json(413, {
+                self._send_json(400, {
                     "error": {
-                        "code": "PAYLOAD_TOO_LARGE",
-                        "message": f"Read payload exceeded {self.config.MAX_REQUEST_BYTES} bytes."
+                        "code": "INCOMPLETE_BODY",
+                        "message": f"Expected {content_length} bytes, but received {len(raw_body)} bytes."
                     }
-                }, request_id=req_id, error_code="PAYLOAD_TOO_LARGE")
-                logger.log_request(req_id, "", duration_ms, 413, "PAYLOAD_TOO_LARGE")
+                }, request_id=req_id, error_code="INCOMPLETE_BODY")
+                logger.log_request(req_id, "", duration_ms, 400, "INCOMPLETE_BODY")
                 return
 
             # 3. Parse JSON safely
@@ -204,14 +270,30 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             # 5. Guard Against Unprotected Paid Inference
-            if not self.config.TEST_MODE and not self.config.ALLOW_UNPROTECTED_PAID_INFERENCE and self.config.SERVER_API_KEY:
+            if not self.config.TEST_MODE and not self.config.ALLOW_UNPROTECTED_PAID_INFERENCE:
+                # Production default fail-closed: reject paid inference unless server protection is active
+                if not self.config.SERVER_API_KEY:
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    self._send_json(503, {
+                        "error": {
+                            "code": "SERVER_PROTECTION_NOT_CONFIGURED",
+                            "message": "Paid inference is disabled: server protection is not configured in production mode."
+                        }
+                    }, request_id=req_id, installation_id=inst_id, error_code="SERVER_PROTECTION_NOT_CONFIGURED")
+                    logger.log_request(req_id, inst_id, duration_ms, 503, "SERVER_PROTECTION_NOT_CONFIGURED")
+                    return
+
+            if self.config.SERVER_API_KEY:
+                auth_header = self.headers.get("Authorization", "").strip()
                 client_secret = self.headers.get("X-Cayana-App-Secret", "").strip()
-                if client_secret != self.config.SERVER_API_KEY:
+                bearer_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+                is_authorized = (client_secret == self.config.SERVER_API_KEY) or (bearer_token == self.config.SERVER_API_KEY)
+                if not is_authorized:
                     duration_ms = int((time.time() - start_time) * 1000)
                     self._send_json(401, {
                         "error": {
                             "code": "UNAUTHORIZED",
-                            "message": "Access restricted: valid application secret required for paid inference."
+                            "message": "Access restricted: valid application secret or authorization token required."
                         }
                     }, request_id=req_id, installation_id=inst_id, error_code="UNAUTHORIZED")
                     logger.log_request(req_id, inst_id, duration_ms, 401, "UNAUTHORIZED")
@@ -345,19 +427,14 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                     return
 
             # 9. Server-Measured Context Budget Verification (Do not trust client-claimed bytes)
-            actual_context_bytes = len(question.encode("utf-8"))
-            for item in items:
-                actual_context_bytes += len(item["snippet"].encode("utf-8"))
-                actual_context_bytes += len(str(item["memoryId"]).encode("utf-8"))
-                actual_context_bytes += len(str(item["sourceType"]).encode("utf-8"))
-                actual_context_bytes += len(str(item.get("capturedDateIso", "")).encode("utf-8"))
+            actual_context_bytes = calculate_actual_context_bytes(question, items)
 
             if actual_context_bytes > self.config.MAX_CONTEXT_PROMPT_BYTES:
                 duration_ms = int((time.time() - start_time) * 1000)
                 self._send_json(400, {
                     "error": {
                         "code": "CONTEXT_TOO_LARGE",
-                        "message": f"Measured context prompt budget ({actual_context_bytes} bytes) exceeds {self.config.MAX_CONTEXT_PROMPT_BYTES} bytes limit."
+                        "message": f"Formatted context prompt budget ({actual_context_bytes} bytes) exceeds {self.config.MAX_CONTEXT_PROMPT_BYTES} bytes limit."
                     }
                 }, request_id=req_id, installation_id=inst_id, error_code="CONTEXT_TOO_LARGE")
                 logger.log_request(req_id, inst_id, duration_ms, 400, "CONTEXT_TOO_LARGE")
