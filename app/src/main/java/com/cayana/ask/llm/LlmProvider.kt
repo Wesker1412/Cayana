@@ -8,6 +8,12 @@ interface LlmProvider {
     val info: LlmProviderInfo
 
     /**
+     * Indicates whether this provider is currently available and deployed.
+     * Defaults to true (e.g. for local/offline mock providers and test doubles).
+     */
+    val isEnabled: Boolean get() = true
+
+    /**
      * Executes generation for the bounded request.
      */
     suspend fun generateAnswer(request: LlmRequest): LlmResponse

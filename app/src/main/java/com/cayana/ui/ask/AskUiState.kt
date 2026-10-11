@@ -29,5 +29,6 @@ data class AskUiState(
     val pendingAuthorization: PendingAuthorizationRequest? = null,
     val selectedDetailMemory: MemoryItem? = null,
     val useRemoteProvider: Boolean = false,
-    val activeProviderName: String = "Local Offline Provider"
+    val isRemoteAvailable: Boolean = false,
+    val activeProviderName: String = "示範推論 (未搭載本機 LLM)"
 )

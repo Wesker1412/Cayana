@@ -110,4 +110,68 @@ class InteractiveAuthorizationGateTest {
         assertTrue(denied.reason.contains("declined"))
         assertNull(gate.pendingRequest.value)
     }
+
+    @Test
+    fun `second concurrent authorization request is denied and does not overwrite active request`() = runBlocking {
+        val gate = DefaultInteractiveAuthorizationGate()
+        val contextPack1 = builder.build("Question 1", listOf(sampleMemory), maxBytes = 16 * 1024)
+        val contextPack2 = builder.build("Question 2", listOf(sampleMemory), maxBytes = 16 * 1024)
+
+        val firstDeferred = async {
+            gate.checkAuthorization(
+                query = "Question 1",
+                contextPack = contextPack1,
+                providerInfo = remoteProviderInfo
+            )
+        }
+
+        // Wait for first request to register
+        val firstPending = gate.pendingRequest.first { it != null }
+        assertNotNull(firstPending)
+        assertEquals("Question 1", firstPending!!.query)
+
+        // Attempt second request while first is still awaiting approval
+        val secondDecision = gate.checkAuthorization(
+            query = "Question 2",
+            contextPack = contextPack2,
+            providerInfo = remoteProviderInfo
+        )
+
+        // Second request must be immediately denied without overwriting the first
+        assertTrue(secondDecision is AuthorizationDecision.Denied)
+        val denied = secondDecision as AuthorizationDecision.Denied
+        assertTrue(denied.reason.contains("already pending"))
+
+        // Active request in gate must still be Question 1
+        assertEquals("Question 1", gate.pendingRequest.value?.query)
+
+        // Approve first request cleanly
+        gate.approve(firstPending.id)
+        val firstDecision = firstDeferred.await()
+        assertTrue(firstDecision is AuthorizationDecision.Allowed)
+        assertNull(gate.pendingRequest.value)
+    }
+
+    @Test
+    fun `cancelPending clears active request and denies transmission`() = runBlocking {
+        val gate = DefaultInteractiveAuthorizationGate()
+        val contextPack = builder.build("Where is flight?", listOf(sampleMemory), maxBytes = 16 * 1024)
+
+        val checkDeferred = async {
+            gate.checkAuthorization(
+                query = "Where is flight?",
+                contextPack = contextPack,
+                providerInfo = remoteProviderInfo
+            )
+        }
+
+        gate.pendingRequest.first { it != null }
+
+        // Cancel all pending
+        gate.cancelPending()
+
+        val decision = checkDeferred.await()
+        assertTrue(decision is AuthorizationDecision.Denied)
+        assertNull(gate.pendingRequest.value)
+    }
 }

@@ -35,11 +35,29 @@ class DefaultAskService(
     private val authorizationGate: AskAuthorizationGate
 ) : AskService {
 
+    override val isEnabled: Boolean
+        get() = llmProvider.isEnabled
+
     override suspend fun ask(
         query: String,
         options: AskOptions
     ): AskResult {
         val trimmedQuery = query.trim()
+        if (!llmProvider.isEnabled) {
+            val emptyPack = contextPackBuilder.build(
+                query = trimmedQuery,
+                memoryContexts = emptyList(),
+                maxBytes = options.maxContextBytes,
+                clock = options.clock,
+                zoneId = options.zoneId
+            )
+            return AskResult.Error(
+                query = trimmedQuery,
+                message = "推論服務尚未正式部署啟用，目前無法使用。",
+                cause = IllegalStateException("LlmProvider '${llmProvider.info.name}' is undeployed or disabled")
+            )
+        }
+
         if (trimmedQuery.isEmpty()) {
             val emptyPack = contextPackBuilder.build(
                 query = "",

@@ -9,6 +9,11 @@ import com.cayana.ask.model.AskResult
  */
 interface AskService {
     /**
+     * Indicates whether the underlying LLM provider is available and enabled.
+     */
+    val isEnabled: Boolean get() = true
+
+    /**
      * Submits a question, retrieves private bounded memory context,
      * builds a sanitized ContextPack, checks authorization, and invokes the configured LLM provider.
      */

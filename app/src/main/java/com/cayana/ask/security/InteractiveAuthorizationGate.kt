@@ -26,6 +26,7 @@ interface InteractiveAuthorizationGate : AskAuthorizationGate {
     val pendingRequest: StateFlow<PendingAuthorizationRequest?>
     fun approve(requestId: String)
     fun reject(requestId: String)
+    fun cancelPending()
 }
 
 /**
@@ -35,8 +36,10 @@ interface InteractiveAuthorizationGate : AskAuthorizationGate {
  * 1. If provider is local (isLocal == true), delegates to fallbackLocalGate (PermissiveAuthorizationGate).
  * 2. If provider is remote (isLocal == false), suspends execution, sets pendingRequest for UI presentation,
  *    and awaits explicit user approval.
- * 3. If user cancels or rejects, execution resumes with AuthorizationDecision.Denied, guaranteeing
- *    zero HTTP transmission leaves the device.
+ * 3. Enforces single active request lifecycle: compareAndSet prevents any secondary concurrent request
+ *    from overwriting an in-flight pending request.
+ * 4. If user cancels, leaves page, or coroutine is cancelled, execution resumes with AuthorizationDecision.Denied
+ *    and pending state is cleanly wiped, guaranteeing zero HTTP transmission leaves the device.
  */
 class DefaultInteractiveAuthorizationGate(
     private val fallbackLocalGate: AskAuthorizationGate = PermissiveAuthorizationGate()
@@ -61,11 +64,18 @@ class DefaultInteractiveAuthorizationGate(
             providerInfo = providerInfo,
             deferred = deferred
         )
-        _pendingRequest.value = request
+
+        // Single pending request guarantee: do not allow overwriting an active request
+        if (!_pendingRequest.compareAndSet(null, request)) {
+            return AuthorizationDecision.Denied(
+                "Another authorization request is already pending; overwriting is strictly prohibited"
+            )
+        }
 
         val approved = try {
             deferred.await()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Cancelled or faulted: fail-closed
             false
         } finally {
             if (_pendingRequest.value?.id == request.id) {
@@ -93,6 +103,14 @@ class DefaultInteractiveAuthorizationGate(
     override fun reject(requestId: String) {
         val current = _pendingRequest.value
         if (current != null && current.id == requestId) {
+            current.deferred.complete(false)
+            _pendingRequest.value = null
+        }
+    }
+
+    override fun cancelPending() {
+        val current = _pendingRequest.value
+        if (current != null) {
             current.deferred.complete(false)
             _pendingRequest.value = null
         }

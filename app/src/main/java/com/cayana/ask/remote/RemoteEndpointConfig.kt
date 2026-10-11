@@ -14,6 +14,7 @@ import java.net.URI
  */
 data class RemoteEndpointConfig(
     val baseUrl: String = DEFAULT_BASE_URL,
+    val isDeployed: Boolean = false,
     val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
     val readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
     val maxRequestBytes: Int = DEFAULT_MAX_REQUEST_BYTES,
@@ -23,6 +24,13 @@ data class RemoteEndpointConfig(
     val maxContextPromptBytes: Int = DEFAULT_MAX_CONTEXT_PROMPT_BYTES,
     val allowInsecureLocalhost: Boolean = false
 ) {
+    /**
+     * Determines whether the remote endpoint is valid, verified, and officially deployed.
+     * The unconfigured placeholder domain (DEFAULT_BASE_URL) is NEVER treated as available.
+     */
+    val isRemoteInferenceAvailable: Boolean
+        get() = (isDeployed && baseUrl != DEFAULT_BASE_URL) || (allowInsecureLocalhost && baseUrl != DEFAULT_BASE_URL)
+
     init {
         validateEndpointUrl(baseUrl, allowInsecureLocalhost)
     }

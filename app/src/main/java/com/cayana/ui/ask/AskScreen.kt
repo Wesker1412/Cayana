@@ -1,5 +1,6 @@
 package com.cayana.ui.ask
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,6 +80,10 @@ fun AskScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    BackHandler(enabled = uiState.isQuerying) {
+        viewModel.onCancelQuery()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -97,7 +102,14 @@ fun AskScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (uiState.isQuerying) {
+                                viewModel.onCancelQuery()
+                            }
+                            onNavigateBack()
+                        }
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回"
@@ -108,8 +120,9 @@ fun AskScreen(
                     FilterChip(
                         selected = uiState.useRemoteProvider,
                         onClick = { viewModel.onToggleRemoteProvider(!uiState.useRemoteProvider) },
+                        enabled = !uiState.isQuerying,
                         label = {
-                            Text(if (uiState.useRemoteProvider) "遠端模式" else "本機模式")
+                            Text(if (uiState.useRemoteProvider) "遠端模式" else "示範模式")
                         },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -359,12 +372,28 @@ private fun AnswerResultView(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = "回答",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "回答",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = "示範模擬",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     Text(
                         text = result.answer,
                         style = MaterialTheme.typography.bodyLarge,

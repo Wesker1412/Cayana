@@ -1,11 +1,16 @@
 package com.cayana.ui.ask
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.test.core.app.ApplicationProvider
 import com.cayana.ask.context.ContextPackBuilder
 import com.cayana.ask.llm.FakeLlmProvider
 import com.cayana.ask.llm.LlmProviderInfo
@@ -23,16 +28,38 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class AskScreenTest {
 
+    private val composeTestRule = createComposeRule()
+
+    private val registerActivityRule = TestRule { base, _ ->
+        object : Statement() {
+            override fun evaluate() {
+                val context = ApplicationProvider.getApplicationContext<Context>()
+                val shadowPm = Shadows.shadowOf(context.packageManager)
+                val component = ComponentName(context.packageName, "androidx.activity.ComponentActivity")
+                val filter = IntentFilter(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+                shadowPm.addActivityIfNotPresent(component)
+                shadowPm.addIntentFilterForActivity(component, filter)
+                base.evaluate()
+            }
+        }
+    }
+
     @get:Rule
-    val composeTestRule = createComposeRule()
+    val ruleChain: RuleChain = RuleChain.outerRule(registerActivityRule).around(composeTestRule)
 
     private lateinit var memoryRepository: FakeMemoryRepository
     private lateinit var gate: DefaultInteractiveAuthorizationGate
@@ -100,7 +127,7 @@ class AskScreenTest {
 
         composeTestRule.onNodeWithText("問問 Cayana").assertIsDisplayed()
         composeTestRule.onNodeWithText("詢問任何關於你記憶的問題……").assertIsDisplayed()
-        composeTestRule.onNodeWithText("本機模式").assertIsDisplayed()
+        composeTestRule.onNodeWithText("示範模式").assertIsDisplayed()
     }
 
     @Test
@@ -132,7 +159,7 @@ class AskScreenTest {
         }
 
         // Toggle to remote mode
-        composeTestRule.onNodeWithText("本機模式").performClick()
+        composeTestRule.onNodeWithText("示範模式").performClick()
         composeTestRule.onNodeWithText("遠端模式").assertIsDisplayed()
 
         composeTestRule.onNodeWithText("詢問任何關於你記憶的問題……").performTextInput("Where is ticket?")

@@ -297,4 +297,99 @@ class AskViewModelTest {
         viewModel.onDismissMemoryDetail()
         assertNull(viewModel.uiState.value.selectedDetailMemory)
     }
+
+    @Test
+    fun `repeated onAsk while query is in progress is ignored`() = runTest {
+        viewModel.onQueryChanged("Where is my passport?")
+        localFakeLlm.simulateDelayMs = 1000L
+
+        viewModel.onAsk()
+        testDispatcher.scheduler.runCurrent()
+        assertTrue(viewModel.uiState.value.isQuerying)
+
+        // Attempt second onAsk during in-flight query
+        viewModel.onAsk()
+        testDispatcher.scheduler.runCurrent()
+
+        // Only 1 execution was launched
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(1, localFakeLlm.requestCount)
+    }
+
+    @Test
+    fun `toggling provider while querying is strictly forbidden`() = runTest {
+        viewModel.onQueryChanged("Where is my passport?")
+        localFakeLlm.simulateDelayMs = 1000L
+
+        viewModel.onAsk()
+        testDispatcher.scheduler.runCurrent()
+        assertTrue(viewModel.uiState.value.isQuerying)
+        assertFalse(viewModel.uiState.value.useRemoteProvider)
+
+        // Attempt toggle to remote while query is in-flight
+        viewModel.onToggleRemoteProvider(true)
+        assertFalse(viewModel.uiState.value.useRemoteProvider)
+
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.useRemoteProvider)
+    }
+
+    @Test
+    fun `query execution uses fixed provider chosen at submission moment`() = runTest {
+        viewModel.onQueryChanged("Where is my passport?")
+        // Start with local provider (useRemoteProvider = false)
+        viewModel.onAsk()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, localFakeLlm.requestCount)
+        assertEquals(0, remoteFakeLlm.requestCount)
+    }
+
+    @Test
+    fun `undeployed remote provider is disabled and rejects remote ask with explanatory message`() = runTest {
+        val disabledRemoteLlm = FakeLlmProvider(
+            info = LlmProviderInfo("disabled_remote", "Undeployed Remote LLM", isLocal = false, "v1")
+        ).apply {
+            customGenerator = { throw IllegalStateException("Should not be called") }
+        }
+        val disabledRemoteService = object : AskService {
+            override val isEnabled: Boolean = false
+            override suspend fun ask(query: String, options: AskOptions): AskResult {
+                return AskResult.Error(query, "遠端推論服務尚未正式部署啟用，目前無法使用。")
+            }
+        }
+
+        val testViewModel = AskViewModel(
+            localAskService = localService,
+            remoteAskService = disabledRemoteService,
+            authorizationGate = gate,
+            memoryRepository = memoryRepository
+        )
+
+        assertFalse(testViewModel.uiState.value.isRemoteAvailable)
+
+        // Attempting to toggle to disabled remote provider displays explanation
+        testViewModel.onToggleRemoteProvider(true)
+        assertFalse(testViewModel.uiState.value.useRemoteProvider)
+        assertTrue(testViewModel.uiState.value.errorMessage?.contains("尚未正式部署啟用") == true)
+    }
+
+    @Test
+    fun `onCancelQuery clears pending authorization and job without transmitting`() = runTest {
+        viewModel.onToggleRemoteProvider(true)
+        viewModel.onQueryChanged("Where is my passport?")
+        viewModel.onAsk()
+
+        testDispatcher.scheduler.runCurrent()
+        assertNotNull(viewModel.uiState.value.pendingAuthorization)
+
+        // User or navigation cancels query
+        viewModel.onCancelQuery()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isQuerying)
+        assertNull(state.pendingAuthorization)
+        assertEquals(0, remoteFakeLlm.requestCount)
+    }
 }

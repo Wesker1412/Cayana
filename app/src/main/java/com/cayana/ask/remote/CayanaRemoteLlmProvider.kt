@@ -32,11 +32,21 @@ class CayanaRemoteLlmProvider(
         modelName = MODEL_NAME
     )
 
+    override val isEnabled: Boolean
+        get() = config.isRemoteInferenceAvailable
+
     override fun validateFinalHttpRequestBytes(serializedPayloadBytes: Int, maxTransportBytes: Int): Boolean {
         return serializedPayloadBytes in 1..maxTransportBytes
     }
 
     override suspend fun generateAnswer(request: LlmRequest): LlmResponse {
+        // 0. Deployment and readiness verification
+        if (!isEnabled) {
+            throw RemoteInferenceException.ServiceUnavailable(
+                "遠端推論服務尚未正式部署啟用，禁止對未經驗證的預留端點進行推論傳輸。"
+            )
+        }
+
         // 1. Client-side input bounds verification
         if (request.query.length > config.maxQuestionChars) {
             throw RemoteInferenceException.InvalidRequest(

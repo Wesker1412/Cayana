@@ -133,6 +133,7 @@ sealed class RemoteInferenceException(message: String, cause: Throwable? = null)
     class ServerError(val statusCode: Int, message: String) : RemoteInferenceException("HTTP $statusCode: $message")
     class NetworkError(message: String, cause: Throwable? = null) : RemoteInferenceException("Network Error: $message", cause)
     class SecurityViolation(message: String) : RemoteInferenceException("Security Violation: $message")
+    class ServiceUnavailable(message: String) : RemoteInferenceException("Service Unavailable: $message")
 }
 
 /**

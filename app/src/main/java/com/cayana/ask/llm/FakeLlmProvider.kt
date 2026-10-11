@@ -10,9 +10,9 @@ import kotlinx.coroutines.delay
 class FakeLlmProvider(
     override val info: LlmProviderInfo = LlmProviderInfo(
         id = "fake-offline-provider",
-        name = "Fake Offline LLM Provider",
+        name = "示範推論 (本機模擬)",
         isLocal = true,
-        modelName = "mock-stage8a-v1"
+        modelName = "demo-mock-v1"
     ),
     var defaultEvidenceState: EvidenceState = EvidenceState.SUFFICIENT_EVIDENCE,
     var customGenerator: (suspend (LlmRequest) -> LlmResponse)? = null,

@@ -8,6 +8,7 @@ import com.cayana.ask.remote.RemoteInferenceException
 import com.cayana.ask.security.InteractiveAuthorizationGate
 import com.cayana.ask.service.AskService
 import com.cayana.memory.repository.MemoryRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +31,16 @@ class AskViewModel(
     private val _uiState = MutableStateFlow(AskUiState())
     val uiState: StateFlow<AskUiState> = _uiState.asStateFlow()
 
+    private var currentQueryJob: Job? = null
+
     init {
+        _uiState.update {
+            it.copy(
+                isRemoteAvailable = remoteAskService.isEnabled,
+                activeProviderName = getProviderDisplayName(it.useRemoteProvider)
+            )
+        }
+
         // Observe pending authorization requests emitted by the authorization gate
         viewModelScope.launch {
             authorizationGate.pendingRequest.collect { request ->
@@ -62,15 +72,32 @@ class AskViewModel(
     }
 
     fun onToggleRemoteProvider(enabled: Boolean) {
+        // Requirement 4: 查詢進行中禁止切換 Provider
+        if (_uiState.value.isQuerying) return
+
+        // Requirement 3: 未部署遠端服務必須停用
+        if (enabled && !remoteAskService.isEnabled) {
+            _uiState.update {
+                it.copy(
+                    errorMessage = "遠端推論服務尚未正式部署啟用，目前僅提供示範模式。"
+                )
+            }
+            return
+        }
+
         _uiState.update {
             it.copy(
                 useRemoteProvider = enabled,
-                activeProviderName = if (enabled) "Cayana Remote LLM API" else "Local Offline Provider"
+                activeProviderName = getProviderDisplayName(enabled),
+                errorMessage = null
             )
         }
     }
 
     fun onAsk() {
+        // Requirement 4: 查詢進行中不允許重複 onAsk()
+        if (_uiState.value.isQuerying) return
+
         val trimmed = _uiState.value.query.trim()
         if (trimmed.isEmpty()) {
             _uiState.update {
@@ -81,6 +108,19 @@ class AskViewModel(
             }
             return
         }
+
+        // Requirement 4: 每次提問固定使用提交瞬間選定的 Provider
+        val useRemoteAtSubmission = _uiState.value.useRemoteProvider
+        if (useRemoteAtSubmission && !remoteAskService.isEnabled) {
+            _uiState.update {
+                it.copy(
+                    errorMessage = "遠端推論服務尚未正式部署啟用，無法送出遠端提問。"
+                )
+            }
+            return
+        }
+
+        val service = if (useRemoteAtSubmission) remoteAskService else localAskService
 
         _uiState.update {
             it.copy(
@@ -93,13 +133,7 @@ class AskViewModel(
             )
         }
 
-        viewModelScope.launch {
-            val service = if (_uiState.value.useRemoteProvider) {
-                remoteAskService
-            } else {
-                localAskService
-            }
-
+        currentQueryJob = viewModelScope.launch {
             val askResult = service.ask(trimmed, AskOptions())
             handleAskResult(askResult)
         }
@@ -118,6 +152,7 @@ class AskViewModel(
     fun onRejectAuthorization() {
         val pending = _uiState.value.pendingAuthorization ?: return
         authorizationGate.reject(pending.id)
+        currentQueryJob?.cancel()
         _uiState.update {
             it.copy(
                 isQuerying = false,
@@ -126,6 +161,25 @@ class AskViewModel(
                 errorMessage = "已取消遠端傳輸，未送出任何資料。"
             )
         }
+    }
+
+    fun onCancelQuery() {
+        authorizationGate.cancelPending()
+        currentQueryJob?.cancel()
+        _uiState.update {
+            it.copy(
+                isQuerying = false,
+                progressStage = AskProgressStage.IDLE,
+                pendingAuthorization = null,
+                errorMessage = "已取消傳輸，未送出任何資料。"
+            )
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        authorizationGate.cancelPending()
+        currentQueryJob?.cancel()
     }
 
     fun onRetry() {
@@ -203,6 +257,14 @@ class AskViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private fun getProviderDisplayName(useRemote: Boolean): String {
+        return if (useRemote) {
+            "Cayana Remote LLM API"
+        } else {
+            "示範推論 (未搭載本機 LLM)"
         }
     }
 
