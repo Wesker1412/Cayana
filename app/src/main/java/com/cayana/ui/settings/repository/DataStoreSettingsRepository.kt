@@ -58,6 +58,10 @@ class DataStoreSettingsRepository(
         val KEY_AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
         val KEY_LAST_BACKUP_TIMESTAMP = longPreferencesKey("last_backup_timestamp")
         val KEY_HAS_RECOVERY_KEY = booleanPreferencesKey("has_recovery_key")
+        val KEY_GOOGLE_TASKS_AUTH_STATUS = stringPreferencesKey("google_tasks_auth_status")
+        val KEY_AUTO_TASKS_ENABLED = booleanPreferencesKey("auto_tasks_enabled")
+        val KEY_SELECTED_TASK_LIST_ID = stringPreferencesKey("selected_task_list_id")
+        val KEY_SELECTED_TASK_LIST_TITLE = stringPreferencesKey("selected_task_list_title")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -182,7 +186,14 @@ class DataStoreSettingsRepository(
                     }.getOrDefault(com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED),
                     autoBackupEnabled = preferences[KEY_AUTO_BACKUP_ENABLED] ?: false,
                     lastBackupTimestamp = preferences[KEY_LAST_BACKUP_TIMESTAMP] ?: 0L,
-                    hasRecoveryKey = preferences[KEY_HAS_RECOVERY_KEY] ?: false
+                    hasRecoveryKey = preferences[KEY_HAS_RECOVERY_KEY] ?: false,
+                    isGoogleTasksConnected = (preferences[KEY_GOOGLE_TASKS_AUTH_STATUS] == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED.name),
+                    googleTasksAuthStatus = runCatching {
+                        com.cayana.actions.tasks.auth.TasksAuthStatus.valueOf(preferences[KEY_GOOGLE_TASKS_AUTH_STATUS] ?: "")
+                    }.getOrDefault(com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED),
+                    autoTasksEnabled = preferences[KEY_AUTO_TASKS_ENABLED] ?: false,
+                    selectedTaskListId = preferences[KEY_SELECTED_TASK_LIST_ID],
+                    selectedTaskListTitle = preferences[KEY_SELECTED_TASK_LIST_TITLE]
                 )
             }
     }
@@ -425,6 +436,33 @@ class DataStoreSettingsRepository(
     override suspend fun updateHasRecoveryKey(hasKey: Boolean) {
         dataStore.edit { preferences ->
             preferences[KEY_HAS_RECOVERY_KEY] = hasKey
+        }
+    }
+
+    override suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus) {
+        dataStore.edit { preferences ->
+            preferences[KEY_GOOGLE_TASKS_AUTH_STATUS] = status.name
+        }
+    }
+
+    override suspend fun updateAutoTasksEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[KEY_AUTO_TASKS_ENABLED] = enabled
+        }
+    }
+
+    override suspend fun updateSelectedTaskList(listId: String?, listTitle: String?) {
+        dataStore.edit { preferences ->
+            if (listId != null) {
+                preferences[KEY_SELECTED_TASK_LIST_ID] = listId
+            } else {
+                preferences.remove(KEY_SELECTED_TASK_LIST_ID)
+            }
+            if (listTitle != null) {
+                preferences[KEY_SELECTED_TASK_LIST_TITLE] = listTitle
+            } else {
+                preferences.remove(KEY_SELECTED_TASK_LIST_TITLE)
+            }
         }
     }
 

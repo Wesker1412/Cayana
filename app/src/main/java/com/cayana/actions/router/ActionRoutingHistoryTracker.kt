@@ -10,7 +10,8 @@ interface ActionRoutingHistoryTracker {
 }
 
 class DefaultActionRoutingHistoryTracker(
-    private val calendarActionDao: CalendarActionDao? = null
+    private val calendarActionDao: CalendarActionDao? = null,
+    private val taskActionDao: com.cayana.actions.tasks.data.TaskActionDao? = null
 ) : ActionRoutingHistoryTracker {
     private val memoryRoutedActions = ConcurrentHashMap<String, MutableSet<ActionCandidateType>>()
 
@@ -22,6 +23,16 @@ class DefaultActionRoutingHistoryTracker(
                 emptyList()
             }
             if (calendarActions.isNotEmpty()) {
+                return true
+            }
+        }
+        if (type == ActionCandidateType.TASK && taskActionDao != null) {
+            val taskActions = try {
+                taskActionDao.getActionsForMemory(sourceMemoryId)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            if (taskActions.any { it.status in listOf("CREATED", "CREATING", "NEEDS_ATTENTION") }) {
                 return true
             }
         }

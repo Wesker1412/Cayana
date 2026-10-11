@@ -53,7 +53,12 @@ data class UserSettings(
     val driveAuthStatus: com.cayana.backup.drive.DriveAuthStatus = com.cayana.backup.drive.DriveAuthStatus.DISCONNECTED,
     val autoBackupEnabled: Boolean = false,
     val lastBackupTimestamp: Long = 0L,
-    val hasRecoveryKey: Boolean = false
+    val hasRecoveryKey: Boolean = false,
+    val isGoogleTasksConnected: Boolean = false,
+    val googleTasksAuthStatus: com.cayana.actions.tasks.auth.TasksAuthStatus = com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED,
+    val autoTasksEnabled: Boolean = false,
+    val selectedTaskListId: String? = null,
+    val selectedTaskListTitle: String? = null
 )
 
 interface SettingsRepository {
@@ -94,6 +99,9 @@ interface SettingsRepository {
     suspend fun updateAutoBackupEnabled(enabled: Boolean)
     suspend fun updateLastBackupTimestamp(timestamp: Long)
     suspend fun updateHasRecoveryKey(hasKey: Boolean)
+    suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus)
+    suspend fun updateAutoTasksEnabled(enabled: Boolean)
+    suspend fun updateSelectedTaskList(listId: String?, listTitle: String?)
     suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings)
 }
 
@@ -296,6 +304,23 @@ class InMemorySettingsRepository(
 
     override suspend fun updateHasRecoveryKey(hasKey: Boolean) {
         _settings.update { it.copy(hasRecoveryKey = hasKey) }
+    }
+
+    override suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus) {
+        _settings.update {
+            it.copy(
+                googleTasksAuthStatus = status,
+                isGoogleTasksConnected = (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED)
+            )
+        }
+    }
+
+    override suspend fun updateAutoTasksEnabled(enabled: Boolean) {
+        _settings.update { it.copy(autoTasksEnabled = enabled) }
+    }
+
+    override suspend fun updateSelectedTaskList(listId: String?, listTitle: String?) {
+        _settings.update { it.copy(selectedTaskListId = listId, selectedTaskListTitle = listTitle) }
     }
 
     override suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings) {

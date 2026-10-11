@@ -119,6 +119,16 @@ class DefaultActionRouter(
                     )
                 }
 
+                // Re-verify destination configuration and authorization immediately before execution
+                if (!destination.isConfigured()) {
+                    logger.d(TAG, "Destination ${decision.destinationType} is no longer configured; skipping execution")
+                    return DestinationExecutionResult.Failure("Destination no longer configured", canRetry = false)
+                }
+                if (!destination.isAuthorized()) {
+                    logger.w(TAG, "Destination ${decision.destinationType} authorization lost before execution")
+                    return DestinationExecutionResult.NeedsAttention("Destination authorization lost before execution")
+                }
+
                 // Double check duplicate protection before executing
                 if (routingHistoryTracker.hasBeenRouted(memoryItem.id, decision.candidate.type)) {
                     return DestinationExecutionResult.Skipped
@@ -137,10 +147,11 @@ class DefaultActionRouter(
                     // Failure rule: Destination 執行失敗 → Memory 不回滾，永不刪除或修改 MemoryItem
                     result
                 } catch (e: Exception) {
-                    logger.e(TAG, "Destination execution exception for memory ${memoryItem.id}: ${e.message}")
+                    // Privacy guarantee: strictly avoid logging private text, memory contents, or tokens
+                    logger.e(TAG, "Destination execution exception: ${e.javaClass.simpleName}")
                     // Crucial: Memory in memoryRepository is strictly preserved and never touched or rolled back!
                     DestinationExecutionResult.Failure(
-                        reason = "Destination execution failed: ${e.message}",
+                        reason = "Destination execution failed: ${e.javaClass.simpleName}",
                         canRetry = true
                     )
                 }

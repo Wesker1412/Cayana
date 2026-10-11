@@ -84,8 +84,26 @@ val appModule = module {
         )
     }
 
+    single<com.cayana.actions.tasks.auth.TasksAuthorizationManager> {
+        com.cayana.actions.tasks.auth.GoogleTasksAuthorizationManager(
+            context = androidContext()
+        )
+    }
+
+    single<com.cayana.actions.tasks.client.GoogleTasksClient> {
+        com.cayana.actions.tasks.client.GoogleTasksHttpClient(
+            logger = get()
+        )
+    }
+
     single<com.cayana.actions.destination.TaskDestination> {
-        com.cayana.actions.destination.UnconfiguredTaskDestination()
+        com.cayana.actions.tasks.destination.GoogleTasksDestination(
+            taskActionDao = get(),
+            tasksAuthManager = get(),
+            tasksClient = get(),
+            settingsRepository = get(),
+            logger = get()
+        )
     }
 
     single<com.cayana.actions.destination.NoteDestination> {
@@ -104,7 +122,8 @@ val appModule = module {
 
     single<com.cayana.actions.router.ActionRoutingHistoryTracker> {
         com.cayana.actions.router.DefaultActionRoutingHistoryTracker(
-            calendarActionDao = get()
+            calendarActionDao = get(),
+            taskActionDao = get()
         )
     }
 

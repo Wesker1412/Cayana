@@ -19,9 +19,10 @@ import com.cayana.source.share.data.ShareReceiptEntity
         MemoryFtsEntity::class,
         ShareReceiptEntity::class,
         SearchIndexStateEntity::class,
-        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class
+        com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class,
+        com.cayana.actions.tasks.data.TaskActionEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
@@ -31,6 +32,7 @@ abstract class CayanaDatabase : RoomDatabase() {
     abstract fun shareReceiptDao(): ShareReceiptDao
     abstract fun searchIndexStateDao(): SearchIndexStateDao
     abstract fun restoredCalendarActionHistoryDao(): com.cayana.calendar.data.RestoredCalendarActionHistoryDao
+    abstract fun taskActionDao(): com.cayana.actions.tasks.data.TaskActionDao
 
     companion object {
         const val DATABASE_NAME = "cayana_memory.db"
@@ -332,6 +334,36 @@ abstract class CayanaDatabase : RoomDatabase() {
                 db.execSQL("DROP TABLE IF EXISTS `cloud_sync_state`")
                 db.execSQL("DROP TABLE IF EXISTS `cloud_memory_sync_metadata`")
                 db.execSQL("DROP TABLE IF EXISTS `cloud_sync_outbox`")
+            }
+        }
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `task_actions` (
+                        `id` TEXT NOT NULL,
+                        `sourceMemoryId` TEXT NOT NULL,
+                        `actionType` TEXT NOT NULL,
+                        `taskListId` TEXT NOT NULL,
+                        `taskListTitle` TEXT,
+                        `destinationTaskId` TEXT,
+                        `status` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `originalDueAt` INTEGER,
+                        `googleDue` TEXT,
+                        `notes` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `attemptCount` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_task_actions_sourceMemoryId_actionType_taskListId` ON `task_actions` (`sourceMemoryId`, `actionType`, `taskListId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_task_actions_sourceMemoryId` ON `task_actions` (`sourceMemoryId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_task_actions_status` ON `task_actions` (`status`)")
             }
         }
     }
