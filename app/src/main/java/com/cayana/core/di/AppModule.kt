@@ -70,6 +70,55 @@ val appModule = module {
         )
     }
 
+    single<com.cayana.actions.classifier.ActionClassifier> {
+        com.cayana.actions.classifier.DeterministicActionClassifier(
+            eventExtractor = get()
+        )
+    }
+
+    single<com.cayana.actions.destination.CalendarDestination> {
+        com.cayana.actions.destination.CalendarDestinationAdapter(
+            coordinator = get(),
+            calendarProviderHelper = get(),
+            settingsRepository = get()
+        )
+    }
+
+    single<com.cayana.actions.destination.TaskDestination> {
+        com.cayana.actions.destination.UnconfiguredTaskDestination()
+    }
+
+    single<com.cayana.actions.destination.NoteDestination> {
+        com.cayana.actions.destination.UnconfiguredNoteDestination()
+    }
+
+    single<com.cayana.actions.destination.DestinationRegistry> {
+        com.cayana.actions.destination.DefaultDestinationRegistry(
+            destinations = listOf(
+                get<com.cayana.actions.destination.CalendarDestination>(),
+                get<com.cayana.actions.destination.TaskDestination>(),
+                get<com.cayana.actions.destination.NoteDestination>()
+            )
+        )
+    }
+
+    single<com.cayana.actions.router.ActionRoutingHistoryTracker> {
+        com.cayana.actions.router.DefaultActionRoutingHistoryTracker(
+            calendarActionDao = get()
+        )
+    }
+
+    single<com.cayana.actions.router.ActionRouter> {
+        com.cayana.actions.router.DefaultActionRouter(
+            classifier = get(),
+            destinationRegistry = get(),
+            routingHistoryTracker = get(),
+            memoryRepository = get(),
+            logger = get()
+        )
+    }
+
+
     single<com.cayana.processing.OcrEngine> {
         com.cayana.processing.ocr.MlKitOcrEngine(
             context = androidContext(),
