@@ -27,7 +27,15 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      - name: Run Unit Tests
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Server Unit Tests
+        run: python -m unittest discover -s server -p "test_*.py"
+
+      - name: Run Android Unit Tests
         run: ./gradlew test --stacktrace
 
       - name: Upload Test Report

@@ -1,6 +1,7 @@
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 import re
 from typing import Dict, Any, List, Tuple
 from .config import ServerConfig
@@ -25,9 +26,53 @@ CRITICAL SECURITY AND PRIVACY RULES:
 6. "citedMemoryIds" MUST ONLY contain memory IDs explicitly provided in the <untrusted_memory id="..."> attributes. Do not invent IDs.
 """
 
+class UpstreamException(Exception):
+    pass
+
+class UpstreamNotConfiguredError(UpstreamException):
+    pass
+
+class UpstreamPayloadTooLargeError(UpstreamException):
+    pass
+
+class UpstreamSecurityError(UpstreamException):
+    pass
+
+class StrictNoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """
+    Strict handler that disallows following any HTTP redirects (301, 302, 303, 307, 308)
+    to prevent leaking credentials/API keys to third-party endpoints or unintended destinations.
+    """
+    def http_error_301(self, req, fp, code, msg, headers):
+        raise UpstreamSecurityError(f"Upstream HTTP redirect ({code}) is strictly forbidden.")
+    def http_error_302(self, req, fp, code, msg, headers):
+        raise UpstreamSecurityError(f"Upstream HTTP redirect ({code}) is strictly forbidden.")
+    def http_error_303(self, req, fp, code, msg, headers):
+        raise UpstreamSecurityError(f"Upstream HTTP redirect ({code}) is strictly forbidden.")
+    def http_error_307(self, req, fp, code, msg, headers):
+        raise UpstreamSecurityError(f"Upstream HTTP redirect ({code}) is strictly forbidden.")
+    def http_error_308(self, req, fp, code, msg, headers):
+        raise UpstreamSecurityError(f"Upstream HTTP redirect ({code}) is strictly forbidden.")
+
+def escape_xml_attribute(val: str) -> str:
+    return (str(val)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+def escape_xml_content(val: str) -> str:
+    return (str(val)
+            .replace("&", "&amp;")
+            .replace("<untrusted_memory", "&lt;untrusted_memory")
+            .replace("</untrusted_memory>", "&lt;/untrusted_memory&gt;"))
+
 class UpstreamLlmClient:
     def __init__(self, config: ServerConfig = None):
         self.config = config or ServerConfig()
+        # Build opener with strict no-redirect policy
+        self._opener = urllib.request.build_opener(StrictNoRedirectHandler())
 
     def generate_answer(
         self,
@@ -36,21 +81,19 @@ class UpstreamLlmClient:
         options: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Executes inference either against configured upstream LLM endpoint or test fallback simulator.
-        Returns normalized dictionary:
-        {
-            "answer": str,
-            "evidenceState": str,
-            "citedMemoryIds": List[str],
-            "model": str,
-            "promptTokens": int,
-            "completionTokens": int
-        }
+        Executes inference against configured upstream LLM endpoint.
+        In production mode (TEST_MODE=false), missing upstream API key or endpoint fails closed.
+        Simulated inference is ONLY allowed when TEST_MODE=true.
         """
-        if self.config.TEST_MODE or not self.config.UPSTREAM_API_KEY:
+        if not self.config.TEST_MODE:
+            if not self.config.UPSTREAM_API_KEY or not self.config.UPSTREAM_ENDPOINT:
+                raise UpstreamNotConfiguredError("Upstream LLM provider is not configured in production mode.")
+            return self._generate_remote(question, context_items, options)
+        else:
+            # In test mode: if endpoint and key are explicitly configured, run remote (e.g. for mock server tests)
+            if self.config.UPSTREAM_ENDPOINT and self.config.UPSTREAM_API_KEY:
+                return self._generate_remote(question, context_items, options)
             return self._generate_simulated(question, context_items, options)
-            
-        return self._generate_remote(question, context_items, options)
 
     def _generate_simulated(
         self,
@@ -72,15 +115,9 @@ class UpstreamLlmClient:
             }
 
         q_lower = question.lower()
-        
-        # Check if the memory contains prompt injection attempts
-        # Simulator verifies that injection commands are never executed
         matching_items = []
         for item in context_items:
-            snippet = item.get("snippet", "").lower()
-            mem_id = item.get("memoryId", "")
-            
-            # Simple keyword matching for simulation
+            snippet = str(item.get("snippet", "")).lower()
             q_keywords = [w for w in re.findall(r"\w+", q_lower) if len(w) > 1]
             if any(kw in snippet for kw in q_keywords if kw):
                 matching_items.append(item)
@@ -95,12 +132,10 @@ class UpstreamLlmClient:
                 "completionTokens": 20
             }
 
-        # Check for partial evidence vs supported
         primary = matching_items[0]
-        cited_ids = [item["memoryId"] for item in matching_items]
-        
-        # In simulation: if question has "maybe" or "exact details unknown" or query asks about something missing
+        cited_ids = [str(item["memoryId"]) for item in matching_items]
         snippet_text = primary.get("snippet", "")
+
         if "partial" in q_lower or "insufficient" in q_lower:
             return {
                 "answer": f"Found partial reference to '{primary.get('memoryId')}', but complete details are missing.",
@@ -127,25 +162,56 @@ class UpstreamLlmClient:
         options: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Calls real upstream OpenAI-compatible / Gemini / Anthropic inference endpoint.
+        Calls real upstream OpenAI-compatible / Gemini / Anthropic inference endpoint
+        over strictly verified HTTPS with hard byte limits and zero redirect following.
         """
         endpoint = self.config.UPSTREAM_ENDPOINT
         if not endpoint:
-            raise ValueError("UPSTREAM_ENDPOINT is not configured.")
+            raise UpstreamNotConfiguredError("UPSTREAM_ENDPOINT is not configured.")
 
-        # Build prompt
+        # 1. Scheme Validation: HTTPS required (HTTP only allowed on loopback in TEST_MODE)
+        parsed_uri = urllib.parse.urlparse(endpoint)
+        scheme = parsed_uri.scheme.lower()
+        hostname = (parsed_uri.hostname or "").lower()
+
+        if scheme != "https":
+            is_loopback = hostname in ("127.0.0.1", "localhost", "::1")
+            if not (self.config.TEST_MODE and is_loopback):
+                raise UpstreamSecurityError(
+                    f"Insecure upstream protocol '{scheme}' is prohibited for endpoint '{endpoint}'. HTTPS is required."
+                )
+
+        # 2. Build prompt with XML escaping to strictly prevent prompt injection escapes
         context_blocks = []
         valid_ids = set()
         for item in context_items:
-            mem_id = item.get("memoryId", "")
+            mem_id = str(item.get("memoryId", ""))
             valid_ids.add(mem_id)
-            source = item.get("sourceType", "UNKNOWN")
-            captured = item.get("capturedDateIso", "")
-            snippet = item.get("snippet", "").replace("</untrusted_memory>", "&lt;/untrusted_memory&gt;")
-            block = f'<untrusted_memory id="{mem_id}" source="{source}" captured="{captured}">\n{snippet}\n</untrusted_memory>'
+            source = str(item.get("sourceType", "UNKNOWN"))
+            captured = str(item.get("capturedDateIso", ""))
+            raw_snippet = str(item.get("snippet", ""))
+
+            safe_id = escape_xml_attribute(mem_id)
+            safe_source = escape_xml_attribute(source)
+            safe_captured = escape_xml_attribute(captured)
+            safe_snippet = escape_xml_content(raw_snippet)
+
+            block = (
+                f'<untrusted_memory id="{safe_id}" source="{safe_source}" captured="{safe_captured}">\n'
+                f'{safe_snippet}\n'
+                f'</untrusted_memory>'
+            )
             context_blocks.append(block)
 
         user_content = f"Question: {question}\n\nContext Memories:\n" + "\n".join(context_blocks)
+
+        temperature = 0.1
+        max_tokens = 1024
+        if options and isinstance(options, dict):
+            if "temperature" in options:
+                temperature = float(options["temperature"])
+            if "maxTokens" in options:
+                max_tokens = int(options["maxTokens"])
 
         payload = {
             "model": self.config.UPSTREAM_MODEL,
@@ -153,8 +219,8 @@ class UpstreamLlmClient:
                 {"role": "system", "content": UPSTREAM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}
             ],
-            "temperature": 0.1,
-            "max_tokens": 1024,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}
         }
 
@@ -165,22 +231,47 @@ class UpstreamLlmClient:
         }
 
         req = urllib.request.Request(endpoint, data=req_bytes, headers=headers, method="POST")
+
         try:
-            with urllib.request.urlopen(req, timeout=self.config.REQUEST_TIMEOUT_SECONDS) as resp:
-                status = resp.status
-                body = resp.read().decode("utf-8")
-                data = json.loads(body)
-                
+            with self._opener.open(req, timeout=self.config.REQUEST_TIMEOUT_SECONDS) as resp:
+                # 3. Hard byte limit check on response body
+                max_bytes = self.config.MAX_RESPONSE_BYTES
+                content_length_hdr = resp.headers.get("Content-Length")
+                if content_length_hdr:
+                    try:
+                        cl = int(content_length_hdr)
+                        if cl > max_bytes:
+                            raise UpstreamPayloadTooLargeError(
+                                f"Upstream response Content-Length ({cl}) exceeds limit of {max_bytes} bytes."
+                            )
+                    except ValueError:
+                        pass
+
+                body_chunks = []
+                total_read = 0
+                while True:
+                    chunk = resp.read(4096)
+                    if not chunk:
+                        break
+                    total_read += len(chunk)
+                    if total_read > max_bytes:
+                        raise UpstreamPayloadTooLargeError(
+                            f"Upstream response stream exceeded {max_bytes} bytes limit."
+                        )
+                    body_chunks.append(chunk)
+
+                body_str = b"".join(body_chunks).decode("utf-8")
+                data = json.loads(body_str)
+
                 # Parse OpenAI-like response
                 content_str = data["choices"][0]["message"]["content"]
                 parsed = json.loads(content_str)
-                
+
                 answer = parsed.get("answer", "")
                 evidence_state = parsed.get("evidenceState", "INSUFFICIENT")
                 raw_cited_ids = parsed.get("citedMemoryIds", [])
-                
-                # Sanitization: only retain IDs that existed in original context_items
-                clean_cited_ids = [mid for mid in raw_cited_ids if mid in valid_ids]
+
+                clean_cited_ids = [str(mid) for mid in raw_cited_ids if str(mid) in valid_ids]
                 if evidence_state == "NO_EVIDENCE":
                     clean_cited_ids = []
 
@@ -194,7 +285,11 @@ class UpstreamLlmClient:
                     "completionTokens": usage.get("completion_tokens", 0)
                 }
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Upstream HTTP Error {e.code}: {err_body}")
+            err_body = e.read(1024).decode("utf-8", errors="replace")
+            raise UpstreamException(f"Upstream HTTP Error {e.code}: {err_body}")
+        except (UpstreamSecurityError, UpstreamPayloadTooLargeError, UpstreamNotConfiguredError):
+            raise
+        except TimeoutError as e:
+            raise UpstreamException(f"Upstream request timed out: {str(e)}")
         except Exception as e:
-            raise RuntimeError(f"Upstream communication failure: {str(e)}")
+            raise UpstreamException(f"Upstream communication failure: {str(e)}")
