@@ -18,6 +18,14 @@ data class MemoryContext(
     val matchedSignals: Set<RetrievalSignal> = emptySet(),
     val eventSummary: String? = null
 ) {
+    /**
+     * Internal heuristic character estimation used during candidate ranking and excerpt pruning.
+     *
+     * IMPORTANT: This is an estimation heuristic for candidate-level pruning, NOT the exact
+     * serialized JSON character or byte count of the wire transmission payload.
+     * Downstream transmission layers (such as Stage 8 ContextPack) must independently enforce
+     * their own strict end-to-end serialized wire transmission budget.
+     */
     fun estimatedTotalChars(): Int {
         var count = relevantExcerpt.length
         title?.let { count += it.length }

@@ -17,7 +17,14 @@ object RetrievalPolicy {
     /** Maximum characters extracted per memory for the relevant excerpt */
     const val MAX_EXCERPT_CHARS_PER_MEMORY: Int = 1200
 
-    /** Hard ceiling on total combined context characters across all retrieved items */
+    /**
+     * Internal heuristic character budget across retrieved memory text fields (title, excerpt,
+     * URL, event summary) used for candidate pruning during retrieval.
+     *
+     * NOTE: This is an internal candidate pruning ceiling and does NOT represent the complete
+     * JSON wire-serialized length. Downstream Stage 8 ContextPack will independently enforce
+     * the total transmission budget.
+     */
     const val MAX_TOTAL_CONTEXT_CHARS: Int = 7000
 
     /** Maximum allowed characters for raw query input to prevent heavy regex / memory allocation */

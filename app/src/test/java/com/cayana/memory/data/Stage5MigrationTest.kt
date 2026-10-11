@@ -118,7 +118,7 @@ class Stage5MigrationTest {
             override suspend fun searchMemoriesMatch(ftsQuery: String): List<MemoryEntity> =
                 emptyList()
 
-            override suspend fun searchMemoriesMatchBounded(ftsQuery: String, limit: Int): List<MemoryEntity> =
+            override suspend fun searchMemoriesMatchBounded(ftsQuery: String, limit: Int, term: String): List<MemoryEntity> =
                 emptyList()
 
             override suspend fun searchMemoryIds(ftsQuery: String): List<String> =

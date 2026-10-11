@@ -774,9 +774,11 @@ class MemoryRetrieverTest {
         assertTrue("Whole serialized context across all items ($totalSerializedChars) must not exceed MAX_TOTAL_CONTEXT_CHARS (${RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS})",
             totalSerializedChars <= RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS)
 
-        // Verify URL was sanitized and stripped of sensitive tokens
+        // Verify URL was strictly sanitized: query string, fragment, and userinfo are stripped by default
         result.items.forEach { ctx ->
             assertFalse("Sensitive token in URL must be stripped", ctx.sourceUrl?.contains("secret123") == true)
+            assertFalse("Query string in URL must be stripped by default", ctx.sourceUrl?.contains("?") == true)
+            assertFalse("Query parameters in URL must be stripped by default", ctx.sourceUrl?.contains("client=android") == true)
         }
     }
 
@@ -874,5 +876,127 @@ class MemoryRetrieverTest {
 
         // Verify versionStorage was updated to v2
         assertEquals(RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION, versionStorage.getIndexFormatVersion())
+    }
+
+    @Test
+    fun singleTermSearchOlderExactTitleBeatsNewerBodyMatches() = runBlocking {
+        // 500 new memories whose rawText contains "城堡"
+        val recentTime = Instant.parse("2026-10-10T12:00:00Z").toEpochMilli()
+        val newMemories = (1..500).map { i ->
+            MemoryItem(
+                id = "mem-recent-castle-$i",
+                title = "日常生活隨筆第 $i 篇",
+                rawText = "今天在沙灘上堆了一座漂亮的城堡模型紀錄 $i",
+                capturedAt = recentTime + (i * 1000L),
+                sourceType = SourceType.SCREENSHOT
+            )
+        }
+        database.memoryDao().insertAll(newMemories.map { com.cayana.memory.data.MemoryEntity.fromDomain(it) })
+        database.searchDao().insertAllFts(newMemories.map { com.cayana.search.MemorySearchDocumentBuilder.buildDocument(it) })
+
+        // 1 older memory whose title is EXACTLY "城堡"
+        val olderTime = Instant.parse("2025-01-01T12:00:00Z").toEpochMilli()
+        val exactTitleOlder = MemoryItem(
+            id = "mem-exact-title-castle-older",
+            title = "城堡",
+            rawText = "世界文化遺產城堡參觀歷史背景與建築結構詳細介紹",
+            capturedAt = olderTime,
+            sourceType = SourceType.SCREENSHOT
+        )
+        repository.saveMemory(exactTitleOlder)
+
+        // Single term search "城堡"
+        val result = retriever.retrieve(RetrievalQuery("城堡", defaultOptions))
+        assertFalse("Retrieval result must not be empty", result.items.isEmpty())
+
+        // Top-1 must be the older memory with exact title "城堡"
+        val topItem = result.items[0]
+        assertEquals("Top-1 must be the older memory with exact title '城堡'", "mem-exact-title-castle-older", topItem.memoryId)
+        assertEquals("城堡", topItem.title)
+        assertTrue("Must contain EXACT_TITLE signal", topItem.matchedSignals.contains(RetrievalSignal.EXACT_TITLE))
+        assertEquals(RetrievalConfidence.HIGH, result.confidence)
+
+        // Verify bounded candidate generation in SQL:
+        val boundedFtsMatches = database.searchDao().searchMemoriesMatchBounded(ftsQuery = "城堡", limit = 15, term = "城堡")
+        assertEquals("SQL candidate query must rank exact title first within LIMIT bound", "mem-exact-title-castle-older", boundedFtsMatches[0].id)
+        assertTrue("Returned SQL candidates must be bounded by limit", boundedFtsMatches.size <= 15)
+    }
+
+    @Test
+    fun rebuildFailureLeavesIndexDirtyAndRetriesOnNextRun() = runBlocking {
+        val versionStorage = com.cayana.search.data.InMemorySearchIndexVersionStorage(initialVersion = 1)
+        val realSearchDao = database.searchDao()
+
+        // Wrap searchDao to simulate process death / disk exception during rebuild
+        var shouldFailRebuild = true
+        val faultInjectingSearchDao = object : com.cayana.search.data.SearchDao by realSearchDao {
+            override suspend fun insertAllFts(entities: List<com.cayana.memory.data.MemoryFtsEntity>) {
+                if (shouldFailRebuild) {
+                    throw IllegalStateException("Simulated crash during batch FTS insertion")
+                }
+                realSearchDao.insertAllFts(entities)
+            }
+        }
+
+        val testRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = faultInjectingSearchDao,
+            searchIndexStateDao = database.searchIndexStateDao(),
+            searchIndexVersionStorage = versionStorage,
+            database = database
+        )
+
+        val testRetriever = DefaultMemoryRetriever(
+            memoryRepository = testRepo,
+            searchDao = faultInjectingSearchDao,
+            searchIndexStateDao = database.searchIndexStateDao(),
+            searchIndexVersionStorage = versionStorage,
+            logger = testLogger
+        )
+
+        // Add a canonical memory
+        testRepo.saveMemory(
+            MemoryItem(
+                id = "mem-rebuild-resilience",
+                title = "關鍵修復筆記",
+                rawText = "這是重要的一筆本機記憶",
+                sourceType = SourceType.SCREENSHOT
+            )
+        )
+
+        // Trigger rebuild while failure is active
+        try {
+            testRepo.rebuildSearchIndex()
+        } catch (_: Exception) {
+            // Expected simulated failure
+        }
+
+        // Verify state after interrupted rebuild:
+        // 1. Persistent dirty state MUST be true
+        assertEquals("SearchIndexStateDao must remain dirty after interrupted rebuild",
+            true, database.searchIndexStateDao().isDirty())
+        assertTrue("Repository must report rebuild needed", testRepo.isIndexRebuildNeeded())
+        // 2. Format version must NOT be updated while dirty
+        assertEquals("Index format version must NOT be updated on failure", 1, versionStorage.getIndexFormatVersion())
+
+        // Now resolve fault (e.g. process restart / healthy retry)
+        shouldFailRebuild = false
+
+        // Next retrieval or rebuild call should automatically repair index
+        val repairResult = testRetriever.retrieve(RetrievalQuery("關鍵修復筆記", defaultOptions))
+        assertFalse("Must retrieve item after automatic index repair", repairResult.items.isEmpty())
+        assertEquals("mem-rebuild-resilience", repairResult.items[0].memoryId)
+
+        // Verify index is now clean and format version is updated
+        assertEquals("Dirty flag must be cleared after successful repair",
+            false, database.searchIndexStateDao().isDirty())
+        assertFalse("Repository must report clean index", testRepo.isIndexRebuildNeeded())
+        assertEquals("Format version must be upgraded to current version",
+            RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION, versionStorage.getIndexFormatVersion())
+
+        // Subsequent normal retrieval must not trigger rebuild
+        val normalResult = testRetriever.retrieve(RetrievalQuery("關鍵修復筆記", defaultOptions))
+        assertEquals("mem-rebuild-resilience", normalResult.items[0].memoryId)
+        assertFalse("Repository index remains clean", testRepo.isIndexRebuildNeeded())
     }
 }

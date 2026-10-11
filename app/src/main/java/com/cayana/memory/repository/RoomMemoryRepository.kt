@@ -125,6 +125,9 @@ class RoomMemoryRepository(
     override suspend fun rebuildSearchIndex(): Unit = withContext(dispatchers.io) {
         val sDao = searchDao ?: return@withContext
         searchIndexMutationMutex.withLock {
+            // Persist dirty state BEFORE clearing FTS so interruption leaves persistent index dirty
+            searchIndexStateDao?.markDirty()
+            indexNeedsRebuild = true
             try {
                 sDao.clearFts()
                 val allEntities = memoryDao.getAllMemoriesDirect()

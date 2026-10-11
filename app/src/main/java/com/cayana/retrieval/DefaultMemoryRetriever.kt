@@ -74,7 +74,19 @@ class DefaultMemoryRetriever(
 
         var subQueryCount = 0
 
-        // Tier 1: Compound & Specific Multi-Token FTS Queries (High Precision)
+        // Tier 1: Exact / Prefix Title Matches & Compound Multi-Token FTS Queries (High Precision)
+        for (term in analyzed.contentTerms.take(2)) {
+            if (subQueryCount >= RetrievalPolicy.MAX_MULTI_QUERIES) break
+            val termExpr = buildFtsMatchExpression(term)
+            if (termExpr.isNotBlank()) {
+                val titleMatches = executeFtsMatch(termExpr, term = term, limit = 10)
+                val prioritized = titleMatches.filter { it.title?.contains(term, ignoreCase = true) == true }
+                if (prioritized.isNotEmpty()) {
+                    subQueryCount++
+                    tier1SpecificCandidates.addAll(prioritized)
+                }
+            }
+        }
         if (analyzed.contentTerms.size > 1 && subQueryCount < RetrievalPolicy.MAX_MULTI_QUERIES) {
             val andExpr = buildFtsAndExpression(analyzed.contentTerms.take(4))
             if (andExpr.isNotBlank()) {
@@ -87,7 +99,7 @@ class DefaultMemoryRetriever(
             val expr = buildFtsMatchExpression(longestTerm)
             if (expr.isNotBlank()) {
                 subQueryCount++
-                tier1SpecificCandidates.addAll(executeFtsMatch(expr, limit = RetrievalPolicy.MAX_SQL_CANDIDATE_LIMIT_PER_QUERY))
+                tier1SpecificCandidates.addAll(executeFtsMatch(expr, term = longestTerm, limit = RetrievalPolicy.MAX_SQL_CANDIDATE_LIMIT_PER_QUERY))
             }
         }
 
@@ -97,7 +109,7 @@ class DefaultMemoryRetriever(
             val termExpr = buildFtsMatchExpression(term)
             if (termExpr.isNotBlank()) {
                 subQueryCount++
-                tier2TermCandidates.addAll(executeFtsMatch(termExpr, limit = 15))
+                tier2TermCandidates.addAll(executeFtsMatch(termExpr, term = term, limit = 15))
             }
         }
 
@@ -293,12 +305,13 @@ class DefaultMemoryRetriever(
 
     private suspend fun executeFtsMatch(
         ftsExpr: String,
+        term: String = "",
         limit: Int = RetrievalPolicy.MAX_SQL_CANDIDATE_LIMIT_PER_QUERY
     ): List<MemoryItem> {
         if (searchDao == null || ftsExpr.isBlank()) return emptyList()
         val clampedExpr = ftsExpr.take(RetrievalPolicy.MAX_FTS_EXPRESSION_CHARS)
         return try {
-            val entities = searchDao.searchMemoriesMatchBounded(clampedExpr, limit)
+            val entities = searchDao.searchMemoriesMatchBounded(clampedExpr, limit = limit, term = term)
             entities.map { it.toDomain() }
         } catch (e: Exception) {
             logger?.w("MemoryRetriever", "FTS match failed: ${e.javaClass.simpleName}")
@@ -499,24 +512,15 @@ class DefaultMemoryRetriever(
         if (url.isNullOrBlank()) return null
         return try {
             val uri = URI(url.trim())
-            val scheme = uri.scheme ?: "https"
-            val host = uri.host ?: return url.take(150)
+            val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: "https"
+            val host = uri.host?.lowercase(Locale.ROOT) ?: return null
+            val port = if (uri.port != -1 && uri.port != 80 && uri.port != 443) ":${uri.port}" else ""
             val path = uri.path ?: ""
-            val query = uri.query
-
-            if (query.isNullOrBlank()) {
-                "$scheme://$host$path".take(300)
-            } else {
-                val sensitiveKeys = setOf("token", "auth", "access_token", "key", "secret", "signature", "session", "ticket", "code", "sig", "apikey")
-                val safeParams = query.split('&').filter { param ->
-                    val key = param.substringBefore('=').lowercase(Locale.ROOT)
-                    key !in sensitiveKeys && !sensitiveKeys.any { key.contains(it) }
-                }
-                val safeQueryStr = if (safeParams.isNotEmpty()) "?" + safeParams.joinToString("&") else ""
-                "$scheme://$host$path$safeQueryStr".take(300)
-            }
+            // Strict transmission boundary: query, fragment, and userinfo are stripped by default.
+            // Never rely on sensitive key blacklists. Original sourceUrl is preserved in Room.
+            "$scheme://$host$port$path".take(300)
         } catch (_: Exception) {
-            url.substringBefore('?').take(300)
+            url.substringBefore('?').substringBefore('#').take(300)
         }
     }
 

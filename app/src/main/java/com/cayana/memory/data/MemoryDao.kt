@@ -33,7 +33,19 @@ interface MemoryDao {
     @Query("SELECT * FROM memories WHERE (rawText LIKE '%' || :query || '%' OR title LIKE '%' || :query || '%') ORDER BY capturedAt DESC")
     fun searchMemoriesFlow(query: String): Flow<List<MemoryEntity>>
 
-    @Query("SELECT * FROM memories WHERE (rawText LIKE '%' || :query || '%' OR title LIKE '%' || :query || '%') ORDER BY capturedAt DESC LIMIT :limit")
+    @Query("""
+        SELECT * FROM memories 
+        WHERE (rawText LIKE '%' || :query || '%' OR title LIKE '%' || :query || '%') 
+        ORDER BY (
+            CASE 
+                WHEN title = :query THEN 3
+                WHEN title LIKE :query || '%' THEN 2
+                WHEN title LIKE '%' || :query || '%' THEN 1
+                ELSE 0
+            END
+        ) DESC, capturedAt DESC 
+        LIMIT :limit
+    """)
     suspend fun searchMemoriesBounded(query: String, limit: Int): List<MemoryEntity>
 
     @Query("SELECT COUNT(*) FROM memories")
