@@ -19,4 +19,22 @@ object RetrievalPolicy {
 
     /** Hard ceiling on total combined context characters across all retrieved items */
     const val MAX_TOTAL_CONTEXT_CHARS: Int = 7000
+
+    /** Maximum allowed characters for raw query input to prevent heavy regex / memory allocation */
+    const val MAX_RAW_QUERY_CHARS: Int = 300
+
+    /** Maximum number of content terms extracted from user query */
+    const val MAX_CONTENT_TERMS: Int = 8
+
+    /** Maximum number of internal sub-queries executed during candidate generation */
+    const val MAX_MULTI_QUERIES: Int = 6
+
+    /** Maximum character length for a generated FTS match expression */
+    const val MAX_FTS_EXPRESSION_CHARS: Int = 200
+
+    /** Maximum SQL candidate limit for an individual sub-query */
+    const val MAX_SQL_CANDIDATE_LIMIT_PER_QUERY: Int = 20
+
+    /** Current search index format version (v2 includes entities, event candidates, and date tokens) */
+    const val CURRENT_INDEX_FORMAT_VERSION: Int = 2
 }

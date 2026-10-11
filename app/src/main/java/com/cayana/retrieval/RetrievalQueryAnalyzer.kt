@@ -74,6 +74,8 @@ object RetrievalQueryAnalyzer {
         Regex("講了什麼[，, ]*"),
         Regex("說了什麼[，, ]*"),
         Regex("聊了什麼[，, ]*"),
+        Regex("討論了什麼[，, ]*"),
+        Regex("討論了[，, ]*"),
         Regex("寫了什麼[，, ]*"),
         Regex("做了什麼[，, ]*"),
         Regex("是什麼[，, ]*"),
@@ -88,7 +90,7 @@ object RetrievalQueryAnalyzer {
     )
 
     fun analyze(query: RetrievalQuery): AnalyzedQuery {
-        val raw = query.text.trim()
+        val raw = query.text.trim().take(RetrievalPolicy.MAX_RAW_QUERY_CHARS)
         if (raw.isBlank()) {
             return AnalyzedQuery(
                 rawQuery = raw,
@@ -108,7 +110,7 @@ object RetrievalQueryAnalyzer {
 
         // 3. Extract content terms by stripping noise words, time hints, and explicit source labels
         val cleaned = cleanNoise(raw, timeHint?.label)
-        val contentTerms = extractTerms(cleaned)
+        val contentTerms = extractTerms(cleaned).take(RetrievalPolicy.MAX_CONTENT_TERMS)
 
         val isGenericOrEmpty = contentTerms.isEmpty() && timeHint == null && sourceHint == null
 
@@ -212,6 +214,48 @@ object RetrievalQueryAnalyzer {
             val end = LocalDate.of(y, m, lastDay).atTime(23, 59, 59, 999_000_000).atZone(zoneId).toInstant().toEpochMilli()
             val zhMonth = CHINESE_MONTHS_LIST.getOrNull(m - 1) ?: "${m}月"
             return Pair(TimeHint(start, end, "上個月"), listOf("${m}月", zhMonth, "$y"))
+        }
+
+        if (text.contains("上週") || text.contains("上星期") || text.contains("上禮拜")) {
+            val currentDayOfWeek = now.dayOfWeek.value
+            val thisWeekMonday = now.toLocalDate().minusDays((currentDayOfWeek - 1).toLong())
+            val lastWeekMonday = thisWeekMonday.minusDays(7)
+            val lastWeekSunday = lastWeekMonday.plusDays(6)
+
+            val start = lastWeekMonday.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = lastWeekSunday.atTime(23, 59, 59, 999_000_000).atZone(zoneId).toInstant().toEpochMilli()
+
+            val m = lastWeekMonday.monthValue
+            val zhMonth = CHINESE_MONTHS_LIST.getOrNull(m - 1) ?: "${m}月"
+            val tokens = listOf("上週", "上星期", "上禮拜", "${m}月", zhMonth)
+
+            val matchedLabel = when {
+                text.contains("上週") -> "上週"
+                text.contains("上星期") -> "上星期"
+                else -> "上禮拜"
+            }
+            return Pair(TimeHint(start, end, matchedLabel), tokens)
+        }
+
+        if (text.contains("這週") || text.contains("本週") || text.contains("這星期") || text.contains("這禮拜")) {
+            val currentDayOfWeek = now.dayOfWeek.value
+            val thisWeekMonday = now.toLocalDate().minusDays((currentDayOfWeek - 1).toLong())
+            val thisWeekSunday = thisWeekMonday.plusDays(6)
+
+            val start = thisWeekMonday.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = thisWeekSunday.atTime(23, 59, 59, 999_000_000).atZone(zoneId).toInstant().toEpochMilli()
+
+            val m = thisWeekMonday.monthValue
+            val zhMonth = CHINESE_MONTHS_LIST.getOrNull(m - 1) ?: "${m}月"
+            val tokens = listOf("這週", "本週", "${m}月", zhMonth)
+
+            val matchedLabel = when {
+                text.contains("這週") -> "這週"
+                text.contains("本週") -> "本週"
+                text.contains("這星期") -> "這星期"
+                else -> "這禮拜"
+            }
+            return Pair(TimeHint(start, end, matchedLabel), tokens)
         }
 
         return Pair(null, emptyList())

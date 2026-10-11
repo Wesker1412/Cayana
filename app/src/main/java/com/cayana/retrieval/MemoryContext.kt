@@ -17,4 +17,12 @@ data class MemoryContext(
     val relevanceScore: Double,
     val matchedSignals: Set<RetrievalSignal> = emptySet(),
     val eventSummary: String? = null
-)
+) {
+    fun estimatedTotalChars(): Int {
+        var count = relevantExcerpt.length
+        title?.let { count += it.length }
+        sourceUrl?.let { count += it.length }
+        eventSummary?.let { count += it.length }
+        return count
+    }
+}

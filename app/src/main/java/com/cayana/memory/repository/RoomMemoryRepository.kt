@@ -22,6 +22,7 @@ class RoomMemoryRepository(
     private val memoryDao: MemoryDao,
     private val searchDao: SearchDao? = null,
     private val searchIndexStateDao: SearchIndexStateDao? = null,
+    private val searchIndexVersionStorage: com.cayana.search.data.SearchIndexVersionStorage? = null,
     private val dispatchers: CoroutineDispatchers = com.cayana.core.common.AppDispatchers(),
     private val database: com.cayana.memory.data.CayanaDatabase? = null
 ) : MemoryRepository {
@@ -117,6 +118,10 @@ class RoomMemoryRepository(
             .flowOn(dispatchers.io)
     }
 
+    override suspend fun searchMemoriesBounded(query: String, limit: Int): List<MemoryItem> = withContext(dispatchers.io) {
+        memoryDao.searchMemoriesBounded(query, limit).map { it.toDomain() }
+    }
+
     override suspend fun rebuildSearchIndex(): Unit = withContext(dispatchers.io) {
         val sDao = searchDao ?: return@withContext
         searchIndexMutationMutex.withLock {
@@ -132,6 +137,7 @@ class RoomMemoryRepository(
                     sDao.insertAllFts(ftsList)
                 }
                 searchIndexStateDao?.forceClearDirty()
+                searchIndexVersionStorage?.setIndexFormatVersion(com.cayana.retrieval.RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION)
                 indexNeedsRebuild = false
             } catch (e: Exception) {
                 CayanaLogger.w("SearchIndex", "Failed to rebuild search index: ${e.javaClass.simpleName}")

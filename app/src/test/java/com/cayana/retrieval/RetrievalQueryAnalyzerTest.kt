@@ -114,4 +114,47 @@ class RetrievalQueryAnalyzerTest {
         // Explicit filter takes precedence
         assertEquals(SourceType.PHOTO, q.sourceHint)
     }
+
+    @Test
+    fun extractsLastWeekTimeHintWithDeterministicClock() {
+        // Reference time in defaultOptions: Thursday 2026-10-15 20:00:00 Taipei
+        // This week: Monday 2026-10-12 to Sunday 2026-10-18
+        // Last week: Monday 2026-10-05 to Sunday 2026-10-11
+        val q = RetrievalQueryAnalyzer.analyze(RetrievalQuery("上週會議討論了什麼？", defaultOptions))
+        assertNotNull(q.timeHint)
+        assertEquals("上週", q.timeHint?.label)
+        assertTrue(q.contentTerms.contains("會議"))
+
+        val expectedStart = java.time.LocalDate.of(2026, 10, 5).atStartOfDay(fixedZone).toInstant().toEpochMilli()
+        val expectedEnd = java.time.LocalDate.of(2026, 10, 11).atTime(23, 59, 59, 999_000_000).atZone(fixedZone).toInstant().toEpochMilli()
+
+        assertEquals("Last week start must be Monday 2026-10-05", expectedStart, q.timeHint?.startMillis)
+        assertEquals("Last week end must be Sunday 2026-10-11", expectedEnd, q.timeHint?.endMillis)
+    }
+
+    @Test
+    fun extractsLastWeekAcrossYearBoundary() {
+        // Friday 2026-01-02 12:00:00 Taipei
+        val newYearClock = Clock.fixed(Instant.parse("2026-01-02T04:00:00Z"), fixedZone)
+        val newYearOptions = RetrievalOptions(clock = newYearClock, zoneId = fixedZone)
+
+        // This week: Monday 2025-12-29 to Sunday 2026-01-04
+        // Last week: Monday 2025-12-22 to Sunday 2025-12-28
+        val q = RetrievalQueryAnalyzer.analyze(RetrievalQuery("上週工作回顧", newYearOptions))
+        assertNotNull(q.timeHint)
+
+        val expectedStart = java.time.LocalDate.of(2025, 12, 22).atStartOfDay(fixedZone).toInstant().toEpochMilli()
+        val expectedEnd = java.time.LocalDate.of(2025, 12, 28).atTime(23, 59, 59, 999_000_000).atZone(fixedZone).toInstant().toEpochMilli()
+
+        assertEquals("Cross-year last week start must be Monday 2025-12-22", expectedStart, q.timeHint?.startMillis)
+        assertEquals("Cross-year last week end must be Sunday 2025-12-28", expectedEnd, q.timeHint?.endMillis)
+    }
+
+    @Test
+    fun queryClampingRestrictsOversizedRawInput() {
+        val massiveText = "重要會議 ".repeat(200) // 1000 characters
+        val q = RetrievalQueryAnalyzer.analyze(RetrievalQuery(massiveText, defaultOptions))
+        assertTrue("Raw query must be clamped to policy maximum", q.rawQuery.length <= RetrievalPolicy.MAX_RAW_QUERY_CHARS)
+        assertTrue("Content terms must be bounded", q.contentTerms.size <= RetrievalPolicy.MAX_CONTENT_TERMS)
+    }
 }

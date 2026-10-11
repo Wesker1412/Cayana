@@ -610,6 +610,36 @@ class MemoryRetrieverTest {
         assertEquals("Q4 Top-1 must be Shared URL mem-acc-5", "mem-acc-5", res4.items[0].memoryId)
     }
 
+    @Test
+    fun lastWeekMeetingQuestionRetrievesRecordingFromLastWeek() = runBlocking {
+        // Thursday 2026-10-15 reference: last week is 2026-10-05 to 2026-10-11
+        val lastWeekTime = Instant.parse("2026-10-08T06:00:00Z").toEpochMilli() // Thursday Oct 8
+        val oldMeetingTime = Instant.parse("2026-08-01T06:00:00Z").toEpochMilli()
+
+        val recentMeeting = MemoryItem(
+            id = "mem-recent-meeting",
+            title = "產品架構會議",
+            rawText = "與工程團隊討論系統延遲與微服務整合架構",
+            capturedAt = lastWeekTime,
+            sourceType = SourceType.RECORDING
+        )
+        val oldMeeting = MemoryItem(
+            id = "mem-old-meeting",
+            title = "年度規劃會議",
+            rawText = "年度研討會籌備討論事項",
+            capturedAt = oldMeetingTime,
+            sourceType = SourceType.RECORDING
+        )
+        repository.saveMemory(oldMeeting)
+        repository.saveMemory(recentMeeting)
+
+        val res = retriever.retrieve(RetrievalQuery("上週會議討論了什麼？", defaultOptions))
+        assertFalse("Results must not be empty", res.items.isEmpty())
+        assertEquals("Top item must be the meeting from last week", "mem-recent-meeting", res.items[0].memoryId)
+        assertTrue("Capture date match signal must be detected", res.items[0].matchedSignals.contains(RetrievalSignal.CAPTURE_DATE_MATCH))
+        assertEquals(RetrievalConfidence.HIGH, res.confidence)
+    }
+
     // ------------------------------------------------------------------------
     // 11. Benchmark Metrics Instrumentation (Section 35)
     // ------------------------------------------------------------------------
@@ -626,5 +656,223 @@ class MemoryRetrieverTest {
         assertTrue(metrics.totalLatencyMs >= 0)
         assertTrue(metrics.candidateCount >= 1)
         assertTrue(metrics.resultCount >= 1)
+    }
+
+    // ------------------------------------------------------------------------
+    // 12. Retrieval Reliability Regressions (Section 1 - 5)
+    // ------------------------------------------------------------------------
+
+    @Test
+    fun databaseReturnsBoundedEntitiesOnLargeMatchCount() = runBlocking {
+        // Insert 1000 matching memories
+        val baseTime = Instant.parse("2026-09-01T00:00:00Z").toEpochMilli()
+        val batch = (1..1000).map { i ->
+            MemoryItem(
+                id = "mem-large-$i",
+                title = "大量日誌記錄 $i",
+                rawText = "這是一筆關於大規模資料檢索的測試記錄，包含關鍵字分散與資料庫壓力測試 $i",
+                capturedAt = baseTime + (i * 1000L),
+                sourceType = SourceType.SCREENSHOT
+            )
+        }
+        batch.chunked(100).forEach { chunk ->
+            chunk.forEach { repository.saveMemory(it) }
+        }
+
+        // Test bounded retrieval
+        val result = retriever.retrieve(RetrievalQuery("大規模資料檢索", defaultOptions))
+        assertTrue("Items must be bounded by MAX_TOP_K", result.items.size <= RetrievalPolicy.MAX_TOP_K)
+        assertTrue("Total candidates found must be bounded by MAX_CANDIDATES", result.totalCandidatesFound <= RetrievalPolicy.MAX_CANDIDATES)
+
+        // Verify direct SQL bounded query returns at most requested limit
+        val boundedMatches = database.searchDao().searchMemoriesMatchBounded("大規模*", 20)
+        assertTrue("Direct SQL query must respect limit 20", boundedMatches.size <= 20)
+    }
+
+    @Test
+    fun olderHighlyRelevantMemoryBeatsManyNewerWeakMatches() = runBlocking {
+        // Insert 500 newer weak matches (matching token '城堡', but irrelevant content)
+        val recentTime = Instant.parse("2026-10-14T00:00:00Z").toEpochMilli()
+        (1..500).forEach { i ->
+            repository.saveMemory(
+                MemoryItem(
+                    id = "mem-weak-$i",
+                    title = "日常生活碎片 $i",
+                    rawText = "今天在遊戲中蓋了一座城堡模型隨筆 $i",
+                    capturedAt = recentTime + (i * 1000L),
+                    sourceType = SourceType.SCREENSHOT
+                )
+            )
+        }
+
+        // Insert 1 older highly relevant memory (6 months older, exact compound match)
+        val olderTime = Instant.parse("2026-04-01T12:00:00Z").toEpochMilli()
+        val highlyRelevantOlder = MemoryItem(
+            id = "mem-highly-relevant-older",
+            title = "捷克布拉格城堡旅遊全攻略",
+            rawText = "親自造訪捷克布拉格城堡，聖維特大教堂與黃金巷遊覽全紀錄與重要歷史介紹",
+            capturedAt = olderTime,
+            sourceType = SourceType.SCREENSHOT
+        )
+        repository.saveMemory(highlyRelevantOlder)
+
+        val result = retriever.retrieve(RetrievalQuery("捷克布拉格城堡", defaultOptions))
+        assertFalse("Must return items", result.items.isEmpty())
+        assertEquals("Top-1 must be the older highly relevant memory, beating 500 newer weak matches",
+            "mem-highly-relevant-older", result.items[0].memoryId)
+        assertTrue("Must have title match signal", result.items[0].matchedSignals.contains(RetrievalSignal.TITLE_MATCH))
+        assertEquals(RetrievalConfidence.HIGH, result.confidence)
+    }
+
+    @Test
+    fun dateOnlyUnrelatedMemoryIsNotHighConfidence() = runBlocking {
+        // Question: "我十月有演唱會嗎？"
+        // Memory has October event (flight), but NO concert / 演唱會 mention at all
+        val octFlightTime = Instant.parse("2026-10-15T09:00:00Z").toEpochMilli()
+        val flightMemory = MemoryItem(
+            id = "mem-flight-ticket",
+            title = "台北飛東京長榮機票收據",
+            rawText = "長榮航空 BR198 台北桃園至東京成田 機票票號 123456789",
+            capturedAt = Instant.parse("2026-09-20T10:00:00Z").toEpochMilli(),
+            sourceType = SourceType.SCREENSHOT,
+            eventCandidates = listOf(
+                EventCandidate(
+                    title = "台北飛東京航班",
+                    startTimestamp = octFlightTime,
+                    location = "桃園國際機場"
+                )
+            )
+        )
+        repository.saveMemory(flightMemory)
+
+        val result = retriever.retrieve(RetrievalQuery("我十月有演唱會嗎？", defaultOptions))
+        // Must NOT be rated HIGH confidence because there is ZERO thematic evidence for '演唱會'
+        assertFalse("Date-only match with zero thematic evidence must not be HIGH confidence",
+            result.confidence == RetrievalConfidence.HIGH)
+    }
+
+    @Test
+    fun wholeSerializedContextRespectsBudget() = runBlocking {
+        // Create 8 memories with long titles, URLs, and bodies
+        (1..8).forEach { i ->
+            repository.saveMemory(
+                MemoryItem(
+                    id = "mem-budget-$i",
+                    title = "系統架構核心設計規格書與微服務拆解方案詳細報告第 $i 冊 " + "A".repeat(120),
+                    rawText = "這是系統架構詳細規格內文說明，包含多資料庫一致性保證與事件驅動設計理念。" + "內容詳述 ".repeat(150),
+                    sourceUrl = "https://internal.corp.cayana.com/docs/architecture/spec/v1/system-design-module-$i?token=secret123&client=android",
+                    sourceType = SourceType.SCREENSHOT
+                )
+            )
+        }
+
+        val result = retriever.retrieve(RetrievalQuery("系統架構核心設計規格書", defaultOptions.copy(topK = 8)))
+        assertFalse("Must return items", result.items.isEmpty())
+
+        // Calculate total characters of the whole serialized context (title, URL, excerpt, eventSummary)
+        val totalSerializedChars = result.items.sumOf { it.estimatedTotalChars() }
+        assertTrue("Whole serialized context across all items ($totalSerializedChars) must not exceed MAX_TOTAL_CONTEXT_CHARS (${RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS})",
+            totalSerializedChars <= RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS)
+
+        // Verify URL was sanitized and stripped of sensitive tokens
+        result.items.forEach { ctx ->
+            assertFalse("Sensitive token in URL must be stripped", ctx.sourceUrl?.contains("secret123") == true)
+        }
+    }
+
+    @Test
+    fun oversizedMetadataCannotBypassContextLimit() = runBlocking {
+        // Memory with 5,000 char title and 5,000 char URL
+        val massiveTitle = "惡意超長標題 ".repeat(500)
+        val massiveUrl = "https://example.com/very/long/path/" + "B".repeat(5000)
+        val massiveBody = "實質內容文字資訊 ".repeat(200)
+
+        repository.saveMemory(
+            MemoryItem(
+                id = "mem-oversized-meta",
+                title = massiveTitle,
+                rawText = massiveBody,
+                sourceUrl = massiveUrl,
+                sourceType = SourceType.SCREENSHOT
+            )
+        )
+
+        val result = retriever.retrieve(RetrievalQuery("實質內容文字資訊", defaultOptions))
+        assertEquals(1, result.items.size)
+        val item = result.items[0]
+
+        assertTrue("Title must be clamped to safe bound", (item.title?.length ?: 0) <= 200)
+        assertTrue("URL must be clamped to safe bound", (item.sourceUrl?.length ?: 0) <= 300)
+        assertTrue("Total item context must respect budget", item.estimatedTotalChars() <= RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS)
+    }
+
+    @Test
+    fun veryLongQueryIsResourceBounded() = runBlocking {
+        // Query of 10,000 characters
+        val attackQuery = "測試無效長字串查詢檢索防禦機制 ".repeat(600)
+        val start = System.currentTimeMillis()
+        val result = retriever.retrieve(RetrievalQuery(attackQuery, defaultOptions))
+        val duration = System.currentTimeMillis() - start
+
+        assertTrue("Adversarial query execution must complete within 500ms (took ${duration}ms)", duration < 500)
+        // Must not crash and must not dump entire database
+        assertTrue("Adversarial query must not return unbounded items", result.items.size <= RetrievalPolicy.MAX_TOP_K)
+    }
+
+    @Test
+    fun ftsIndexUpgradeFromV1ToV2PreservesDataAndPopulatesNewCapabilities() = runBlocking {
+        val versionStorage = com.cayana.search.data.InMemorySearchIndexVersionStorage(initialVersion = 1)
+        val upgradingRetriever = DefaultMemoryRetriever(
+            memoryRepository = repository,
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao(),
+            searchIndexVersionStorage = versionStorage,
+            logger = testLogger
+        )
+
+        val concertTime = Instant.parse("2026-11-20T12:00:00Z").toEpochMilli()
+        val entityMemory = MemoryItem(
+            id = "mem-upgrade-test",
+            title = "大會門票",
+            rawText = "大會入場憑證",
+            entities = listOf("GoogleDeepMind"),
+            eventCandidates = listOf(
+                EventCandidate(
+                    title = "AI 開發者大會",
+                    startTimestamp = concertTime,
+                    location = "台北國際會議中心"
+                )
+            ),
+            sourceType = SourceType.SCREENSHOT
+        )
+        repository.saveMemory(entityMemory)
+
+        // Clear FTS index to simulate old v1 state before entity indexing
+        database.searchDao().deleteFtsByMemoryId("mem-upgrade-test")
+        // Insert old-format FTS document missing entities/eventCandidates
+        val oldFtsDoc = com.cayana.memory.data.MemoryFtsEntity(
+            memoryId = "mem-upgrade-test",
+            title = "大會門票",
+            rawText = "大會入場憑證",
+            normalizedText = "",
+            sourceType = "SCREENSHOT",
+            sourceUrl = "",
+            host = "",
+            displayName = "",
+            searchTokens = "screenshot 大會門票 大會入場憑證"
+        )
+        database.searchDao().insertFts(oldFtsDoc)
+
+        // Verify version is 1
+        assertEquals(1, versionStorage.getIndexFormatVersion())
+
+        // Retrieve by entity "GoogleDeepMind" (which was missing in old tokens)
+        val res = upgradingRetriever.retrieve(RetrievalQuery("GoogleDeepMind", defaultOptions))
+        assertFalse("Memory must be retrieved after auto-upgrade", res.items.isEmpty())
+        assertEquals("mem-upgrade-test", res.items[0].memoryId)
+        assertTrue(res.items[0].matchedSignals.contains(RetrievalSignal.ENTITY_MATCH))
+
+        // Verify versionStorage was updated to v2
+        assertEquals(RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION, versionStorage.getIndexFormatVersion())
     }
 }

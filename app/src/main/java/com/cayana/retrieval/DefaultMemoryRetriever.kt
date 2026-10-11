@@ -9,21 +9,24 @@ import com.cayana.processing.ProcessingState
 import com.cayana.search.MemorySearchDocumentBuilder
 import com.cayana.search.data.SearchDao
 import com.cayana.search.data.SearchIndexStateDao
+import com.cayana.search.data.SearchIndexVersionStorage
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
  * Production implementation of MemoryRetriever for Stage 7A.
- * Fully deterministic, bounded, local-first retrieval layer.
- * Reuses existing Room FTS4 index without requiring a secondary canonical database.
+ * Fully deterministic, strictly resource-bounded, local-first retrieval layer.
+ * Reuses existing Room FTS4 index without requiring a secondary database.
  */
 class DefaultMemoryRetriever(
     private val memoryRepository: MemoryRepository,
     private val searchDao: SearchDao? = null,
     private val searchIndexStateDao: SearchIndexStateDao? = null,
+    private val searchIndexVersionStorage: SearchIndexVersionStorage? = null,
     private val dispatchers: CoroutineDispatchers = AppDispatchers(),
     private val logger: CayanaLogger? = null
 ) : MemoryRetriever {
@@ -31,16 +34,21 @@ class DefaultMemoryRetriever(
     override suspend fun retrieve(query: RetrievalQuery): RetrievalResult = withContext(dispatchers.io) {
         val totalStart = System.currentTimeMillis()
 
-        // 1. Repair search index if dirty
-        if (searchIndexStateDao?.isDirty() == true || memoryRepository.isIndexRebuildNeeded()) {
+        // 1. Repair search index if dirty or if persistent format version upgrade is needed
+        val currentVersion = searchIndexVersionStorage?.getIndexFormatVersion() ?: RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION
+        val isUpgradeNeeded = currentVersion < RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION
+        val isDirty = searchIndexStateDao?.isDirty() == true || memoryRepository.isIndexRebuildNeeded()
+
+        if (isDirty || isUpgradeNeeded) {
             try {
                 memoryRepository.rebuildSearchIndex()
+                searchIndexVersionStorage?.setIndexFormatVersion(RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION)
             } catch (e: Exception) {
-                logger?.w("MemoryRetriever", "Index repair trigger failed: ${e.javaClass.simpleName}")
+                logger?.w("MemoryRetriever", "Index repair / upgrade trigger failed: ${e.javaClass.simpleName}")
             }
         }
 
-        // 2. Deterministic Query Analysis
+        // 2. Deterministic Query Analysis (bounded input length, term count)
         val analyzed = RetrievalQueryAnalyzer.analyze(query)
 
         // 3. Early exit on empty or purely generic noise queries
@@ -57,68 +65,118 @@ class DefaultMemoryRetriever(
             )
         }
 
-        // 4. Candidate Generation (Bounded Multi-Query Union)
+        // 4. Candidate Generation (Bounded Multi-Query Union with Tier Prioritization)
         val candStart = System.currentTimeMillis()
-        val candidateItems = mutableListOf<MemoryItem>()
+        val tier1SpecificCandidates = mutableListOf<MemoryItem>()
+        val tier2TermCandidates = mutableListOf<MemoryItem>()
+        val tier3HintCandidates = mutableListOf<MemoryItem>()
+        val tier4SecondaryCandidates = mutableListOf<MemoryItem>()
 
-        // 4a. Content term sub-queries
-        if (analyzed.contentTerms.isNotEmpty()) {
-            for (term in analyzed.contentTerms.take(5)) {
-                val termExpr = buildFtsMatchExpression(term)
-                if (termExpr.isNotBlank()) {
-                    candidateItems.addAll(executeFtsMatch(termExpr))
-                }
+        var subQueryCount = 0
+
+        // Tier 1: Compound & Specific Multi-Token FTS Queries (High Precision)
+        if (analyzed.contentTerms.size > 1 && subQueryCount < RetrievalPolicy.MAX_MULTI_QUERIES) {
+            val andExpr = buildFtsAndExpression(analyzed.contentTerms.take(4))
+            if (andExpr.isNotBlank()) {
+                subQueryCount++
+                tier1SpecificCandidates.addAll(executeFtsMatch(andExpr, limit = RetrievalPolicy.MAX_SQL_CANDIDATE_LIMIT_PER_QUERY))
             }
-            val termFtsList = analyzed.contentTerms.map { buildFtsMatchExpression(it) }.filter { it.isNotBlank() }
-            if (termFtsList.size > 1) {
-                val orExpr = termFtsList.take(6).joinToString(" OR ")
-                candidateItems.addAll(executeFtsMatch(orExpr))
+        }
+        val longestTerm = analyzed.contentTerms.maxByOrNull { it.length }
+        if (longestTerm != null && longestTerm.length >= 4 && subQueryCount < RetrievalPolicy.MAX_MULTI_QUERIES) {
+            val expr = buildFtsMatchExpression(longestTerm)
+            if (expr.isNotBlank()) {
+                subQueryCount++
+                tier1SpecificCandidates.addAll(executeFtsMatch(expr, limit = RetrievalPolicy.MAX_SQL_CANDIDATE_LIMIT_PER_QUERY))
             }
         }
 
-        // 4b. Time token sub-queries (e.g. "十月*", "10月*")
-        if (analyzed.timeTokens.isNotEmpty()) {
+        // Tier 2: Individual Content Terms
+        for (term in analyzed.contentTerms.take(4)) {
+            if (subQueryCount >= RetrievalPolicy.MAX_MULTI_QUERIES) break
+            val termExpr = buildFtsMatchExpression(term)
+            if (termExpr.isNotBlank()) {
+                subQueryCount++
+                tier2TermCandidates.addAll(executeFtsMatch(termExpr, limit = 15))
+            }
+        }
+
+        // Tier 3: Time Token & Source Hint Sub-Queries
+        if (analyzed.timeTokens.isNotEmpty() && subQueryCount < RetrievalPolicy.MAX_MULTI_QUERIES) {
             for (token in analyzed.timeTokens.take(2)) {
+                if (subQueryCount >= RetrievalPolicy.MAX_MULTI_QUERIES) break
                 val timeExpr = buildFtsMatchExpression(token)
                 if (timeExpr.isNotBlank()) {
-                    candidateItems.addAll(executeFtsMatch(timeExpr))
+                    subQueryCount++
+                    tier3HintCandidates.addAll(executeFtsMatch(timeExpr, limit = 10))
                 }
             }
         }
-
-        // 4c. Source hint sub-query if candidate pool is still small
-        if (candidateItems.isEmpty() && analyzed.sourceHint != null) {
+        if (analyzed.sourceHint != null && subQueryCount < RetrievalPolicy.MAX_MULTI_QUERIES) {
             val srcExpr = buildFtsMatchExpression(analyzed.sourceHint.name)
             if (srcExpr.isNotBlank()) {
-                candidateItems.addAll(executeFtsMatch(srcExpr))
+                subQueryCount++
+                tier3HintCandidates.addAll(executeFtsMatch(srcExpr, limit = 10))
             }
         }
 
-        // 4d. Fallback: If FTS returned 0 candidates or was unavailable, use conservative LIKE repository search
-        if (candidateItems.isEmpty() && analyzed.contentTerms.isNotEmpty()) {
-            for (term in analyzed.contentTerms) {
+        // Tier 4: Loose OR Secondary Recall (Only used if candidates pool has headroom)
+        val initialFound = tier1SpecificCandidates.size + tier2TermCandidates.size
+        if (initialFound < RetrievalPolicy.MAX_CANDIDATES && analyzed.contentTerms.size > 1 && subQueryCount < RetrievalPolicy.MAX_MULTI_QUERIES) {
+            val termFtsList = analyzed.contentTerms.map { buildFtsMatchExpression(it) }.filter { it.isNotBlank() }
+            if (termFtsList.size > 1) {
+                val orExpr = termFtsList.take(4).joinToString(" OR ")
+                subQueryCount++
+                tier4SecondaryCandidates.addAll(executeFtsMatch(orExpr, limit = 10))
+            }
+        }
+
+        // Tier 5: Fallback if FTS was unavailable or returned 0 candidates across all tiers
+        val totalFtsCount = tier1SpecificCandidates.size + tier2TermCandidates.size + tier3HintCandidates.size + tier4SecondaryCandidates.size
+        if (totalFtsCount == 0 && analyzed.contentTerms.isNotEmpty()) {
+            for (term in analyzed.contentTerms.take(3)) {
                 try {
-                    val fallbackMatches = memoryRepository.searchMemories(term).first()
-                    candidateItems.addAll(fallbackMatches)
+                    val fallbackMatches = memoryRepository.searchMemoriesBounded(term, limit = 10)
+                    tier2TermCandidates.addAll(fallbackMatches)
                 } catch (e: Exception) {
                     logger?.w("MemoryRetriever", "Fallback query failed: ${e.javaClass.simpleName}")
                 }
             }
         }
 
+        // Bounded Union & Dedup with Tier Priority
+        val seenIds = mutableSetOf<String>()
+        val distinctCandidates = mutableListOf<MemoryItem>()
+
+        fun addCandidates(list: List<MemoryItem>, quota: Int) {
+            var added = 0
+            for (item in list) {
+                if (distinctCandidates.size >= RetrievalPolicy.MAX_CANDIDATES) break
+                if (added >= quota) break
+                if (seenIds.add(item.id)) {
+                    distinctCandidates.add(item)
+                    added++
+                }
+            }
+        }
+
+        addCandidates(tier1SpecificCandidates, quota = 25)
+        addCandidates(tier2TermCandidates, quota = 25)
+        addCandidates(tier3HintCandidates, quota = 15)
+        addCandidates(tier4SecondaryCandidates, quota = 10)
+
         val candEnd = System.currentTimeMillis()
         val candLatency = candEnd - candStart
 
-        // 5. Dedup and apply hard filters
-        var distinctCandidates = candidateItems.distinctBy { it.id }
+        // Filter by source type if explicitly requested
+        var filteredCandidates = distinctCandidates.toList()
         if (query.options.filterSourceType != null) {
-            distinctCandidates = distinctCandidates.filter { it.sourceType == query.options.filterSourceType }
+            filteredCandidates = filteredCandidates.filter { it.sourceType == query.options.filterSourceType }
         }
 
-        // Bound candidate pool to policy limit
-        val boundedCandidates = distinctCandidates.take(RetrievalPolicy.MAX_CANDIDATES)
+        val boundedCandidates = filteredCandidates.take(RetrievalPolicy.MAX_CANDIDATES)
 
-        // 6. Deterministic Reranking
+        // 5. Deterministic Reranking
         val rerankStart = System.currentTimeMillis()
         val scoredItems = boundedCandidates.map { item ->
             val scoreResult = computeRelevance(item, analyzed)
@@ -126,17 +184,18 @@ class DefaultMemoryRetriever(
                 memory = item,
                 score = scoreResult.score,
                 signals = scoreResult.signals,
+                thematicSignals = scoreResult.thematicSignals,
                 eventSummary = scoreResult.eventSummary
             )
         }
 
-        // Sort: primary by score DESC, secondary by capturedAt DESC
+        // Primary sort: score DESC, secondary sort: capturedAt DESC
         val sortedScored = scoredItems.sortedWith(
             compareByDescending<ScoredMemory> { it.score }
                 .thenByDescending { it.memory.capturedAt }
         )
 
-        // 7. Context Budget & Top-K Truncation
+        // 6. Context Budget & Top-K Truncation (Accounting for whole serialized MemoryContext)
         val effectiveTopK = (query.options.topK ?: RetrievalPolicy.DEFAULT_TOP_K)
             .coerceIn(1, RetrievalPolicy.MAX_TOP_K)
 
@@ -147,39 +206,39 @@ class DefaultMemoryRetriever(
         val allSignals = mutableSetOf<RetrievalSignal>()
 
         for (candidate in topKCandidates) {
-            allSignals.addAll(candidate.signals)
+            val safeUrl = sanitizeSourceUrl(candidate.memory.sourceUrl)
+            val safeTitle = candidate.memory.title?.take(200)
+            val safeEventSummary = candidate.eventSummary?.take(200)
+
+            val metadataChars = (safeTitle?.length ?: 0) + (safeUrl?.length ?: 0) + (safeEventSummary?.length ?: 0)
+            val remainingBudget = RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS - totalCharsAccumulated
+
+            // If remaining budget cannot fit metadata plus minimal excerpt, break
+            if (remainingBudget < metadataChars + 50) break
+
+            val maxAllowedExcerpt = (remainingBudget - metadataChars).coerceAtMost(RetrievalPolicy.MAX_EXCERPT_CHARS_PER_MEMORY)
             val excerpt = extractExcerpt(
                 item = candidate.memory,
                 contentTerms = analyzed.contentTerms,
-                maxLength = RetrievalPolicy.MAX_EXCERPT_CHARS_PER_MEMORY
+                maxLength = maxAllowedExcerpt
             )
 
-            val remainingBudget = RetrievalPolicy.MAX_TOTAL_CONTEXT_CHARS - totalCharsAccumulated
-            if (remainingBudget <= 0) break
+            val itemTotalChars = excerpt.length + metadataChars
+            totalCharsAccumulated += itemTotalChars
+            allSignals.addAll(candidate.signals)
 
-            val finalExcerpt = if (excerpt.length > remainingBudget) {
-                if (remainingBudget >= 100) {
-                    excerpt.take(remainingBudget - 3) + "..."
-                } else {
-                    break
-                }
-            } else {
-                excerpt
-            }
-
-            totalCharsAccumulated += finalExcerpt.length
             memoryContexts.add(
                 MemoryContext(
                     memoryId = candidate.memory.id,
                     sourceType = candidate.memory.sourceType,
                     capturedAt = candidate.memory.capturedAt,
-                    title = candidate.memory.title,
-                    relevantExcerpt = finalExcerpt,
-                    sourceUrl = candidate.memory.sourceUrl,
+                    title = safeTitle,
+                    relevantExcerpt = excerpt,
+                    sourceUrl = safeUrl,
                     sourceExists = candidate.memory.sourceExists,
                     relevanceScore = candidate.score,
                     matchedSignals = candidate.signals,
-                    eventSummary = candidate.eventSummary
+                    eventSummary = safeEventSummary
                 )
             )
         }
@@ -188,16 +247,24 @@ class DefaultMemoryRetriever(
         val rerankLatency = rerankEnd - rerankStart
         val totalLatency = rerankEnd - totalStart
 
-        // 8. Compute Confidence
-        val topScore = memoryContexts.firstOrNull()?.relevanceScore ?: 0.0
+        // 7. Compute Confidence (Requires thematic evidence when content terms exist)
+        val topItem = sortedScored.firstOrNull()
+        val topScore = topItem?.score ?: 0.0
+        val topThematicSignals = topItem?.thematicSignals ?: emptySet()
+        val hasThematicEvidence = topThematicSignals.isNotEmpty()
+
         val confidence = when {
             memoryContexts.isEmpty() || topScore <= 0.0 -> RetrievalConfidence.NONE
-            topScore >= 80.0 -> RetrievalConfidence.HIGH
+            // Date / source only matches without topic evidence cannot be HIGH
+            analyzed.contentTerms.isNotEmpty() && !hasThematicEvidence -> {
+                if (topScore >= 25.0) RetrievalConfidence.LOW else RetrievalConfidence.NONE
+            }
+            topScore >= 80.0 && hasThematicEvidence -> RetrievalConfidence.HIGH
             topScore >= 40.0 -> RetrievalConfidence.MEDIUM
             else -> RetrievalConfidence.LOW
         }
 
-        // 9. Structured Telemetry Logging (Zero Plaintext Leaks)
+        // 8. Structured Telemetry Logging (Zero Plaintext Leaks)
         logTelemetry(
             candidatesCount = boundedCandidates.size,
             resultsCount = memoryContexts.size,
@@ -224,10 +291,14 @@ class DefaultMemoryRetriever(
         )
     }
 
-    private suspend fun executeFtsMatch(ftsExpr: String): List<MemoryItem> {
+    private suspend fun executeFtsMatch(
+        ftsExpr: String,
+        limit: Int = RetrievalPolicy.MAX_SQL_CANDIDATE_LIMIT_PER_QUERY
+    ): List<MemoryItem> {
         if (searchDao == null || ftsExpr.isBlank()) return emptyList()
+        val clampedExpr = ftsExpr.take(RetrievalPolicy.MAX_FTS_EXPRESSION_CHARS)
         return try {
-            val entities = searchDao.searchMemoriesMatch(ftsExpr)
+            val entities = searchDao.searchMemoriesMatchBounded(clampedExpr, limit)
             entities.map { it.toDomain() }
         } catch (e: Exception) {
             logger?.w("MemoryRetriever", "FTS match failed: ${e.javaClass.simpleName}")
@@ -238,6 +309,8 @@ class DefaultMemoryRetriever(
     private fun computeRelevance(item: MemoryItem, query: AnalyzedQuery): ScoreResult {
         var score = 0.0
         val signals = mutableSetOf<RetrievalSignal>()
+        val thematicSignals = mutableSetOf<RetrievalSignal>()
+
         val titleLower = item.title?.lowercase(Locale.ROOT) ?: ""
         val rawLower = item.rawText?.lowercase(Locale.ROOT) ?: ""
         val normLower = item.normalizedText?.lowercase(Locale.ROOT) ?: ""
@@ -249,9 +322,11 @@ class DefaultMemoryRetriever(
             if (titleLower == tLower) {
                 score += 100.0
                 signals.add(RetrievalSignal.EXACT_TITLE)
+                thematicSignals.add(RetrievalSignal.EXACT_TITLE)
             } else if (titleLower.contains(tLower)) {
                 score += 70.0
                 signals.add(RetrievalSignal.TITLE_MATCH)
+                thematicSignals.add(RetrievalSignal.TITLE_MATCH)
             }
         }
 
@@ -261,6 +336,7 @@ class DefaultMemoryRetriever(
             if (rawLower.contains(tLower) || normLower.contains(tLower)) {
                 score += 50.0
                 signals.add(RetrievalSignal.BODY_MATCH)
+                thematicSignals.add(RetrievalSignal.BODY_MATCH)
             }
         }
 
@@ -272,6 +348,7 @@ class DefaultMemoryRetriever(
                 if (eLower == tLower || eLower.contains(tLower) || tLower.contains(eLower)) {
                     score += 65.0
                     signals.add(RetrievalSignal.ENTITY_MATCH)
+                    thematicSignals.add(RetrievalSignal.ENTITY_MATCH)
                 }
             }
         }
@@ -287,18 +364,21 @@ class DefaultMemoryRetriever(
                 if (evTitle.contains(tLower)) {
                     score += 75.0
                     signals.add(RetrievalSignal.EVENT_TITLE_MATCH)
+                    thematicSignals.add(RetrievalSignal.EVENT_TITLE_MATCH)
                 }
                 if (evLoc.contains(tLower)) {
                     score += 40.0
                     signals.add(RetrievalSignal.EVENT_LOCATION_MATCH)
+                    thematicSignals.add(RetrievalSignal.EVENT_LOCATION_MATCH)
                 }
             }
 
-            // Event date matching (Higher priority than capture date)
+            // Event date matching (Amplifier when thematic evidence exists, capped otherwise)
             if (query.timeHint != null) {
                 val start = event.startTimestamp
                 if (start in query.timeHint.startMillis..query.timeHint.endMillis) {
-                    score += 85.0
+                    val dateBoost = if (thematicSignals.isNotEmpty()) 60.0 else 25.0
+                    score += dateBoost
                     signals.add(RetrievalSignal.EVENT_DATE_MATCH)
                 }
             }
@@ -312,7 +392,8 @@ class DefaultMemoryRetriever(
 
         // 5. Capture date matching (Secondary to event date)
         if (query.timeHint != null && item.capturedAt in query.timeHint.startMillis..query.timeHint.endMillis) {
-            score += 25.0
+            val capBoost = if (thematicSignals.isNotEmpty()) 25.0 else 10.0
+            score += capBoost
             signals.add(RetrievalSignal.CAPTURE_DATE_MATCH)
         }
 
@@ -328,6 +409,7 @@ class DefaultMemoryRetriever(
             if (urlLower.contains(tLower)) {
                 score += 40.0
                 signals.add(RetrievalSignal.URL_MATCH)
+                thematicSignals.add(RetrievalSignal.URL_MATCH)
             }
         }
 
@@ -339,7 +421,7 @@ class DefaultMemoryRetriever(
         // 9. Recency weak tie-breaker (never overcomes semantic mismatch)
         score += (item.capturedAt.toDouble() / 1_000_000_000_000.0) * 0.001
 
-        return ScoreResult(score, signals, eventSummary)
+        return ScoreResult(score, signals, thematicSignals, eventSummary)
     }
 
     private fun extractExcerpt(item: MemoryItem, contentTerms: List<String>, maxLength: Int): String {
@@ -374,6 +456,12 @@ class DefaultMemoryRetriever(
         return snippet.take(maxLength)
     }
 
+    private fun buildFtsAndExpression(terms: List<String>): String {
+        val tokens = terms.map { buildFtsMatchExpression(it) }.filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return ""
+        return tokens.joinToString(" ").take(RetrievalPolicy.MAX_FTS_EXPRESSION_CHARS)
+    }
+
     private fun buildFtsMatchExpression(input: String): String {
         val sanitized = input.replace(Regex("[\"*\\-:\\(\\)^~]"), " ").trim()
         if (sanitized.isBlank()) return ""
@@ -404,7 +492,32 @@ class DefaultMemoryRetriever(
         }
 
         if (tokens.isEmpty()) return ""
-        return tokens.distinct().joinToString(" OR ")
+        return tokens.distinct().joinToString(" OR ").take(RetrievalPolicy.MAX_FTS_EXPRESSION_CHARS)
+    }
+
+    private fun sanitizeSourceUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        return try {
+            val uri = URI(url.trim())
+            val scheme = uri.scheme ?: "https"
+            val host = uri.host ?: return url.take(150)
+            val path = uri.path ?: ""
+            val query = uri.query
+
+            if (query.isNullOrBlank()) {
+                "$scheme://$host$path".take(300)
+            } else {
+                val sensitiveKeys = setOf("token", "auth", "access_token", "key", "secret", "signature", "session", "ticket", "code", "sig", "apikey")
+                val safeParams = query.split('&').filter { param ->
+                    val key = param.substringBefore('=').lowercase(Locale.ROOT)
+                    key !in sensitiveKeys && !sensitiveKeys.any { key.contains(it) }
+                }
+                val safeQueryStr = if (safeParams.isNotEmpty()) "?" + safeParams.joinToString("&") else ""
+                "$scheme://$host$path$safeQueryStr".take(300)
+            }
+        } catch (_: Exception) {
+            url.substringBefore('?').take(300)
+        }
     }
 
     private fun logTelemetry(
@@ -421,12 +534,14 @@ class DefaultMemoryRetriever(
         val memory: MemoryItem,
         val score: Double,
         val signals: Set<RetrievalSignal>,
+        val thematicSignals: Set<RetrievalSignal>,
         val eventSummary: String?
     )
 
     private data class ScoreResult(
         val score: Double,
         val signals: Set<RetrievalSignal>,
+        val thematicSignals: Set<RetrievalSignal>,
         val eventSummary: String?
     )
 }

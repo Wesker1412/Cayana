@@ -50,6 +50,15 @@ interface SearchDao {
     """)
     suspend fun searchMemoriesMatch(ftsQuery: String): List<MemoryEntity>
 
+    @Query("""
+        SELECT memories.* FROM memories
+        JOIN memories_fts ON memories.id = memories_fts.memoryId
+        WHERE memories_fts MATCH :ftsQuery
+        ORDER BY memories.capturedAt DESC
+        LIMIT :limit
+    """)
+    suspend fun searchMemoriesMatchBounded(ftsQuery: String, limit: Int): List<MemoryEntity>
+
     @Query("SELECT memoryId FROM memories_fts WHERE memories_fts MATCH :ftsQuery")
     suspend fun searchMemoryIds(ftsQuery: String): List<String>
 }

@@ -14,6 +14,7 @@ val repositoryModule = module {
             memoryDao = get(),
             searchDao = get(),
             searchIndexStateDao = get(),
+            searchIndexVersionStorage = getOrNull(),
             dispatchers = get(),
             database = get()
         )
@@ -31,11 +32,16 @@ val repositoryModule = module {
         )
     }
 
+    single<com.cayana.search.data.SearchIndexVersionStorage> {
+        com.cayana.search.data.SharedPrefsSearchIndexVersionStorage(context = get())
+    }
+
     single<com.cayana.retrieval.MemoryRetriever> {
         com.cayana.retrieval.DefaultMemoryRetriever(
             memoryRepository = get(),
             searchDao = get(),
             searchIndexStateDao = get(),
+            searchIndexVersionStorage = getOrNull(),
             dispatchers = get(),
             logger = getOrNull()
         )

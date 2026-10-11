@@ -26,6 +26,7 @@ interface MemoryRepository {
         origin: MutationOrigin = MutationOrigin.LOCAL
     )
     fun searchMemories(query: String): Flow<List<MemoryItem>>
+    suspend fun searchMemoriesBounded(query: String, limit: Int): List<MemoryItem> = emptyList()
     fun getMemoryCount(): Flow<Int>
     suspend fun markSourceExists(id: String, exists: Boolean)
     suspend fun getMemoriesForReconciliation(
