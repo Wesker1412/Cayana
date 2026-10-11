@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Stage 7A Deterministic Retrieval Engine (Python Exact Replica)
-Faithfully replicates Cayana Stage 7A production architecture:
-- MemorySearchDocumentBuilder: CJK n-grams + Latin tokens + Date tokens
-- SQLite FTS4 table memories_fts + canonical memories table
-- Bounded candidate selection (Tiers 1-4 with SQL LIMIT)
-- Deterministic relevance scoring (EXACT_TITLE, TITLE_MATCH, RAW_TEXT, etc.)
-- Top-K bounding & Confidence computation
+Stage 7A Python Surrogate Retriever (Offline Benchmark Simulation)
+
+IMPORTANT BENCHMARK CAVEAT:
+This is an offline Python surrogate simulation of Cayana's Stage 7A deterministic
+retrieval architecture for comparative research purposes.
+It is NOT the production Android Kotlin DefaultMemoryRetriever.
+Differences:
+1. Runtime: Python 3.12 sqlite3 in-memory FTS4 vs. Android Room + SQLite FTS4 on device.
+2. Tokenization: Python regex & Unicode range slicing vs. Kotlin CharCategory & Regex tokenizer.
+3. Query parsing: Bounded heuristic token selection in Python vs. Android Kotlin QueryAnalyzer.
+Consequently, benchmark numbers produced by this script represent a Python surrogate
+baseline and must NOT be cited as official 1:1 Kotlin production benchmark numbers.
 """
 
 import re
@@ -79,7 +84,8 @@ def add_date_tokens(ts: int, tokens: Set[str]):
     tokens.add(f"{day_num}日")
     tokens.add(f"{day_num}號")
 
-class Stage7ARetriever:
+class Stage7APythonSurrogate:
+    """Python surrogate implementation of Cayana's Stage 7A deterministic retrieval."""
     def __init__(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
@@ -141,6 +147,24 @@ class Stage7ARetriever:
         if raw_text:
             tokenize_latin_and_cjk(raw_text, tokens)
             
+        # Parse text dates (Arabic numerals and Chinese numerals)
+        combined_text = f"{title or ''} {raw_text or ''}"
+        for m in re.finditer(r"(\d{4})[年\-](\d{1,2})[月\-](\d{1,2})", combined_text):
+            y, mo, d = m.group(1), int(m.group(2)), int(m.group(3))
+            tokens.add(f"{y}-{mo:02d}-{d:02d}")
+            tokens.add(f"{mo}月")
+            tokens.add(f"{d}日")
+            tokens.add(f"{d}號")
+            if 1 <= mo <= 12:
+                tokens.add(CHINESE_MONTHS[mo - 1])
+        for m in re.finditer(r"(\d{1,2})月(\d{1,2})[日號]", combined_text):
+            mo, d = int(m.group(1)), int(m.group(2))
+            tokens.add(f"{mo}月")
+            tokens.add(f"{d}日")
+            tokens.add(f"{d}號")
+            if 1 <= mo <= 12:
+                tokens.add(CHINESE_MONTHS[mo - 1])
+
         # Entities
         for e in memory.get("entities", []):
             tokenize_latin_and_cjk(e, tokens)
@@ -367,3 +391,7 @@ class Stage7ARetriever:
             "confidence": confidence,
             "latency_ms": latency
         }
+
+# Alias for backwards compatibility
+Stage7ARetriever = Stage7APythonSurrogate
+

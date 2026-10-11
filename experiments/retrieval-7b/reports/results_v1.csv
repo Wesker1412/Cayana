@@ -1,0 +1,8 @@
+Configuration,Recall@1 (%),Recall@5 (%),MRR@5,Retrieval FP Rate (%),Answerability Rate (%),Mean Latency (ms),P50 Latency (ms),P95 Latency (ms),Indexing Time (s),Index Size (MB),Model Size (MB),INT8 Size (MB),cross_lingual R@5 (%),event_update_version R@5 (%),long_transcript_detail R@5 (%),multi_receipt_confusion R@5 (%),precise_attribute R@5 (%),refutable_negative R@5 (%),synonym_paraphrase R@5 (%),negative_distractor_event FP (%),negative_insufficient FP (%),negative_no_evidence FP (%)
+Scheme A (Stage 7A Python Surrogate),77.7,84.6,0.809,75.0,76.7,1.43,0.99,4.19,0.23,4.73,0.0,0.0,33.3,100.0,96.0,95.0,96.0,100.0,76.7,100.0,100.0,37.5
+Scheme B1 (BGE-small-zh-v1.5 Flat),65.4,73.1,0.689,70.0,67.3,18.19,17.57,23.34,21.31,3.91,91.4,54.7,13.3,100.0,52.0,100.0,88.0,100.0,76.7,100.0,100.0,25.0
+Scheme B2 (BGE-small-zh-v1.5 Chunked),67.7,74.6,0.707,70.0,68.7,17.48,17.45,20.24,24.95,4.03,91.4,54.7,13.3,100.0,60.0,100.0,88.0,100.0,76.7,100.0,100.0,25.0
+Scheme B3 (Multilingual-E5-small Flat),79.2,90.0,0.839,100.0,78.0,47.82,40.35,54.89,41.20,2.93,448.8,387.8,80.0,100.0,76.0,100.0,96.0,100.0,90.0,100.0,100.0,100.0
+Scheme B4 (Multilingual-E5-small Chunked),82.3,93.1,0.868,100.0,80.7,36.92,34.27,44.00,47.46,3.02,448.8,387.8,93.3,100.0,88.0,100.0,96.0,100.0,86.7,100.0,100.0,100.0
+Scheme C1 (Hybrid: 7A Surrogate + BGE Chunked),74.6,87.7,0.800,75.0,79.3,20.90,20.62,25.26,25.18,8.76,91.4,54.7,33.3,100.0,92.0,100.0,100.0,100.0,86.7,100.0,100.0,37.5
+Scheme C2 (Hybrid: 7A Surrogate + E5 Chunked),83.8,96.2,0.893,100.0,83.3,44.24,41.11,55.27,47.68,7.76,448.8,387.8,93.3,100.0,100.0,100.0,96.0,100.0,90.0,100.0,100.0,100.0

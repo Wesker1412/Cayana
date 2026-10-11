@@ -1,0 +1,1462 @@
+[
+  {
+    "query_id": "Q1_001",
+    "query_text": "十月五號在好市多買洗衣膠囊花費多少錢？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_002",
+    "query_text": "九月二十八日好市多內湖店發票總金額是多少？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_003",
+    "query_text": "九月十二號在好市多中和店買了無骨牛小排那張發票？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_004",
+    "query_text": "哪一次去好市多買了Dyson吸塵器濾網？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_005",
+    "query_text": "好市多哪天買了石安牧場動福蛋和鮮奶？",
+    "category": "multi_receipt_confusion",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-costco-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_006",
+    "query_text": "十月八號在大安星巴克點的大杯焦糖瑪奇朵多少錢？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_007",
+    "query_text": "星巴克信義松高店買中杯燕麥奶拿鐵發票？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_008",
+    "query_text": "哪天在星巴克點特選冷萃咖啡還加購肉桂捲？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_009",
+    "query_text": "十月一日星巴克中杯燕麥奶拿鐵花了多少錢？",
+    "category": "multi_receipt_confusion",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sbux-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_010",
+    "query_text": "大安門市星巴克那杯加鮮奶油的瑪奇朵發票？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_011",
+    "query_text": "十月九號下雨天搭 Uber 去內湖科學園區的車資是多少？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_012",
+    "query_text": "十月三號早上從信義路搭 Uber 到大安區和平東路的費用？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_013",
+    "query_text": "深夜從台北車站搭 Uber 回新店七張站花了多少？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_014",
+    "query_text": "哪趟 Uber 行程是從松山區民生東路出發的？",
+    "category": "multi_receipt_confusion",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-uber-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_015",
+    "query_text": "車資 210 元的那趟 Uber 是哪一天搭的？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_016",
+    "query_text": "在 PChome 買 Keychron Q1 客製化機械鍵盤花了多少錢？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_017",
+    "query_text": "PChome 訂單 20260920881 購買的是什麼商品？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_018",
+    "query_text": "十月十一號在 PChome 買的 50公升防潮箱訂單編號是多少？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_019",
+    "query_text": "羅技 MX Master 3S 人體工學滑鼠是在哪天訂購的？",
+    "category": "multi_receipt_confusion",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-pchome-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_020",
+    "query_text": "哪筆 PChome 訂單花了 NT$2,980？",
+    "category": "multi_receipt_confusion",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_021",
+    "query_text": "小明婚禮最終改期到哪一天舉行？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_022",
+    "query_text": "小明婚宴正式定案的飯店是哪一家？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_023",
+    "query_text": "小明喜酒最新安排的好友桌次是第幾桌？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_024",
+    "query_text": "小明婚宴最新確定的入席時間是幾點？",
+    "category": "event_update_version",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_025",
+    "query_text": "小明婚禮喜來登飯店宴會廳是哪一廳？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_026",
+    "query_text": "小明婚禮原先最早排定在君品酒店的舊日期是哪天？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v1"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_027",
+    "query_text": "小明婚宴作廢的舊通知上原本坐第幾桌？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v1"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_028",
+    "query_text": "小明婚宴原本打算在哪個酒店辦？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v1"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_029",
+    "query_text": "小明婚禮為什麼沒有在君品酒店舉辦？",
+    "category": "event_update_version",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-event-v1"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_030",
+    "query_text": "參加小明婚禮最新正式版的喜帖備忘？",
+    "category": "event_update_version",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_031",
+    "query_text": "腳踏車壞了去哪裡保養修繕？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-bike"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_032",
+    "query_text": "發工資了沒？這個月薪水進來了嗎？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-salary"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_033",
+    "query_text": "肚子痛胃不舒服要吃什麼藥？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-stomach"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_034",
+    "query_text": "單車變速器不順要上什麼潤滑劑？",
+    "category": "synonym_paraphrase",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-bike"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_035",
+    "query_text": "九月份工作獎金跟月薪撥款紀錄？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-salary"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_036",
+    "query_text": "抑制胃酸跟保護胃壁的藥名？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-stomach"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_037",
+    "query_text": "布拉格著名古堡觀光景點介紹？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-castle"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_038",
+    "query_text": "捷克聖維特教堂歷史參觀筆記？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-castle"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_039",
+    "query_text": "鐵馬前後輪胎壓要打到多少？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-bike"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_040",
+    "query_text": "耐適恩錠一天要服用幾次？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-stomach"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_041",
+    "query_text": "富邦戶頭上個月入帳多少薪俸？",
+    "category": "synonym_paraphrase",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-salary"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_042",
+    "query_text": "單車煞車橡膠磨損檢查？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-bike"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_043",
+    "query_text": "黃金巷參觀心得與拍照景點？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-castle"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_044",
+    "query_text": "胃乳懸浮液一包要什麼時候喝？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-stomach"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_045",
+    "query_text": "公司本俸津貼有沒有匯入富邦？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-salary"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_046",
+    "query_text": "登山郊遊要準備哪些防護裝備？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-hiking"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_047",
+    "query_text": "健行用的雙肩防水外套與頭燈？",
+    "category": "synonym_paraphrase",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-hiking"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_048",
+    "query_text": "遠足野外急救包跟高熱量零食？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-hiking"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_049",
+    "query_text": "去好市多採買無骨牛小排跟生鮮？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_050",
+    "query_text": "家裡吸塵器耗材濾網去哪裡補貨？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_051",
+    "query_text": "星巴克那杯濃縮咖啡肉桂捲下午茶？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_052",
+    "query_text": "下雨天叫車去內科上班的車資收據？",
+    "category": "synonym_paraphrase",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-uber-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_053",
+    "query_text": "客製化鍵盤是哪一個品牌型號？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_054",
+    "query_text": "防潮箱容量是幾公升的？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_055",
+    "query_text": "小明結婚喜酒辦在台北哪間五星飯店？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_056",
+    "query_text": "公司季度大會伺服器機房花費預算？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_057",
+    "query_text": "醫師開立的維生素D滴劑劑量？",
+    "category": "synonym_paraphrase",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_058",
+    "query_text": "洗牙後牙齦輕微出血要怎麼漱口？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_059",
+    "query_text": "零信任網路架構要求哪種憑證驗證？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_060",
+    "query_text": "微服務分散式鏈路追蹤的 TraceID 規範？",
+    "category": "synonym_paraphrase",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_061",
+    "query_text": "receipt for flight ticket from Taipei to Tokyo",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-br198"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_062",
+    "query_text": "EVA Air BR198 flight boarding gate confirmation",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-br198"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_063",
+    "query_text": "hiking packing list for weekend trip",
+    "category": "cross_lingual",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-hiking"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_064",
+    "query_text": "waterproof jacket and trekking poles for mountains",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-hiking"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_065",
+    "query_text": "Prague Castle travel guide and Golden Lane highlights",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-castle"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_066",
+    "query_text": "St. Vitus Cathedral visit records in Czech",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-castle"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_067",
+    "query_text": "monthly salary deposit confirmation from bank",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-salary"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_068",
+    "query_text": "prescription for acid reflux and stomach ache",
+    "category": "cross_lingual",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-stomach"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_069",
+    "query_text": "bicycle tire pressure and dry lube maintenance",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-bike"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_070",
+    "query_text": "flight departure time from Taoyuan to Narita airport",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-br198"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_071",
+    "query_text": "Uber ride receipt to Neihu Technology Park",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_072",
+    "query_text": "Keychron mechanical keyboard purchase order",
+    "category": "cross_lingual",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-pchome-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_073",
+    "query_text": "wedding banquet invitation card update",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_074",
+    "query_text": "quarterly server infrastructure budget report",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_075",
+    "query_text": "dental clinic ultrasonic scaling follow-up guide",
+    "category": "cross_lingual",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_076",
+    "query_text": "10月28日的牙科預約時間是幾點？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-dentist-date"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_077",
+    "query_text": "台大醫院牙髓病科預約在兒童大樓幾樓幾診間？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-dentist-date"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_078",
+    "query_text": "機車更換排氣管單獨零件費用是多少錢？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-exhaust-fee"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_079",
+    "query_text": "排氣管加換後煞車線總共花了多少錢？",
+    "category": "precise_attribute",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-exhaust-fee"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_080",
+    "query_text": "長榮航空 BR198 班機起飛時間是幾點幾分？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-br198"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_081",
+    "query_text": "BR198 機票票號是哪九碼數字？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-br198"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_082",
+    "query_text": "長榮航空 BR198 登機門是哪一個？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-br198"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_083",
+    "query_text": "10月05日撥入富邦帳戶的薪資淨額是多少元？",
+    "category": "precise_attribute",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-sem-salary"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_084",
+    "query_text": "九月十二號在好市多買無骨牛小排花了多少錢？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_085",
+    "query_text": "好市多中和店發票號碼 AB-38291045 金額？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_086",
+    "query_text": "好市多九月二十八日發票上的石安牧場動福蛋買了幾盒？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-costco-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_087",
+    "query_text": "十月五號好市多購買 Dyson 吸塵器濾網兩入組總金額？",
+    "category": "precise_attribute",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-costco-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_088",
+    "query_text": "星巴克發票載具 CD-88219401 點了什麼飲料？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_089",
+    "query_text": "十月八號星巴克大杯焦糖瑪奇朵發票金額 NT$170？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_090",
+    "query_text": "星巴克點特選冷萃咖啡 NT$145 加肉桂捲總共多少？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sbux-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_091",
+    "query_text": "十月三號搭 Uber 車資 NT$210 的行程？",
+    "category": "precise_attribute",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-uber-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_092",
+    "query_text": "十月九號大雨天 Uber 車資 NT$345 的乘車收據？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_093",
+    "query_text": "十月十號深夜從台北車站搭 Uber 車資 NT$420？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-uber-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_094",
+    "query_text": "PChome 訂單編號 20260920881 的訂購商品？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_095",
+    "query_text": "PChome 訂購 Keychron Q1 鍵盤訂單編號 20261004192？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-pchome-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_096",
+    "query_text": "PChome 訂購 50公升防潮箱花了多少金額 NT$1,890？",
+    "category": "precise_attribute",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-pchome-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_097",
+    "query_text": "光陽機車後煞車線更換工料費用是多少？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-exhaust-fee"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_098",
+    "query_text": "單車輪胎建議打到多少 PSI 胎壓？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-sem-bike"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_099",
+    "query_text": "小明婚禮正式版喜帖上的入席時間是幾點幾分？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_100",
+    "query_text": "小明婚禮在喜來登飯店宴會廳是哪一廳？",
+    "category": "precise_attribute",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-event-v2"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_101",
+    "query_text": "全體產品會議中第四季伺服器預算核定是多少錢？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_102",
+    "query_text": "產品會議中 GPU 推論叢集的預算是多少萬元？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_103",
+    "query_text": "API 平均延遲從 120ms 降低至多少毫秒？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_104",
+    "query_text": "產品會議逐字稿中金鑰輪替週期規定為幾天自動滾動一次？",
+    "category": "long_transcript_detail",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_105",
+    "query_text": "會議記錄中硬體密碼安全模組符合什麼標準？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_106",
+    "query_text": "微服務連線等待時間縮減了百分之多少？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_107",
+    "query_text": "混合檢索預計在明年第幾季推向灰度測試？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-q4budget"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_108",
+    "query_text": "醫生建議每天早餐後補充多少劑量的維生素D滴劑？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_109",
+    "query_text": "健檢報告中王先生血液常規的維生素D3濃度是多少 ng/mL？",
+    "category": "long_transcript_detail",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_110",
+    "query_text": "健檢報告中肌酸酐數值是多少？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_111",
+    "query_text": "牙醫檢查指出哪一顆牙齒有初期牙齦炎現象？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_112",
+    "query_text": "洗牙後兩天內輕微滲血要用什麼水輕柔漱口？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_113",
+    "query_text": "營養師建議王先生每日純水攝取量至少要達到多少毫升？",
+    "category": "long_transcript_detail",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_114",
+    "query_text": "收縮壓在工作高壓時期升高至多少 mmHg？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_115",
+    "query_text": "下次回診抽血檢驗預約在哪一天上午幾點？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_116",
+    "query_text": "眼科醫師建議的二十二十二十護眼法則是什麼？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-dentist"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_117",
+    "query_text": "第 1 號深度專案架構中死信隊列重試上限為幾次？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_118",
+    "query_text": "第 2 號深度專案架構中死信隊列重試上限為幾次？",
+    "category": "long_transcript_detail",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-long-extra-02"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_119",
+    "query_text": "第 3 號深度專案架構中死信隊列重試上限為幾次？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-03"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_120",
+    "query_text": "分散式交易系統採用哪種通訊協定搭配 Protobuf？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_121",
+    "query_text": "系統採用哪種演算法保證快取一致性？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_122",
+    "query_text": "儲存層主節點故障時 Raft 在幾毫秒內完成選舉切換？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_123",
+    "query_text": "單元測試覆蓋率門檻必須高於百分之多少？",
+    "category": "long_transcript_detail",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_124",
+    "query_text": "金絲雀發布流程先將百分之幾的流量導引至新節點？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_125",
+    "query_text": "災難復原演練中二進位日誌備份每隔幾分鐘執行一次？",
+    "category": "long_transcript_detail",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-long-extra-01"
+    ],
+    "answerability": "answerable_positive"
+  },
+  {
+    "query_id": "Q1_126",
+    "query_text": "上週去屏東墾丁後壁湖浮潛拍到的綠蠵龜照片？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_127",
+    "query_text": "家裡日立冷氣濾網叫修水電師傅的手機電話號碼？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_128",
+    "query_text": "特斯拉 Model Y 車載充電轉接頭收納在哪個置物箱？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_129",
+    "query_text": "媽媽六十大壽家族聚餐訂位的陶板屋餐廳時間？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_130",
+    "query_text": "上個月去好市多買的牛肉捲退貨退款明細單？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_131",
+    "query_text": "家裡的任天堂 Switch 薩爾達傳說遊戲卡匣借給誰了？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_132",
+    "query_text": "社區健身房游泳池每週水質消毒公休是星期幾？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_133",
+    "query_text": "去台南旅遊住的煙波大飯店房號是幾號？",
+    "category": "negative_no_evidence",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_no_evidence"
+  },
+  {
+    "query_id": "Q1_134",
+    "query_text": "長榮航空 BR198 班機的正駕駛機長姓名是誰？",
+    "category": "negative_insufficient",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_135",
+    "query_text": "好市多中和店收銀台結帳員的員工編號？",
+    "category": "negative_insufficient",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_136",
+    "query_text": "大安星巴克焦糖瑪奇朵使用的是哪一款牛奶品牌？",
+    "category": "negative_insufficient",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_137",
+    "query_text": "Uber 司機開的車輛年份與車牌號碼？",
+    "category": "negative_insufficient",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_138",
+    "query_text": "PChome 羅技滑鼠送貨司機的手機電話號碼？",
+    "category": "negative_insufficient",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_139",
+    "query_text": "台大醫院牙科看診的主治醫師身分證字號？",
+    "category": "negative_insufficient",
+    "split": "dev",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_140",
+    "query_text": "捷克布拉格城堡聖維特教堂的門票票價是多少克朗？",
+    "category": "negative_insufficient",
+    "split": "dev",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_insufficient"
+  },
+  {
+    "query_id": "Q1_141",
+    "query_text": "我昨天在全聯超市有買全脂鮮奶嗎？",
+    "category": "refutable_negative",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-refute-milk"
+    ],
+    "answerability": "answerable_negative_refuted"
+  },
+  {
+    "query_id": "Q1_142",
+    "query_text": "長榮航空飛東京的機票我有預約素食特別餐嗎？",
+    "category": "refutable_negative",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-refute-flight"
+    ],
+    "answerability": "answerable_negative_refuted"
+  },
+  {
+    "query_id": "Q1_143",
+    "query_text": "昨天去全聯買菜有買到牛奶嗎？",
+    "category": "refutable_negative",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-refute-milk"
+    ],
+    "answerability": "answerable_negative_refuted"
+  },
+  {
+    "query_id": "Q1_144",
+    "query_text": "長榮 BR198 機上餐有勾選吃素嗎？",
+    "category": "refutable_negative",
+    "split": "dev",
+    "target_memory_ids": [
+      "mem-refute-flight"
+    ],
+    "answerability": "answerable_negative_refuted"
+  },
+  {
+    "query_id": "Q1_145",
+    "query_text": "全聯採買食材紀錄中全脂鮮奶有沒有買到？",
+    "category": "refutable_negative",
+    "split": "test",
+    "target_memory_ids": [
+      "mem-refute-milk"
+    ],
+    "answerability": "answerable_negative_refuted"
+  },
+  {
+    "query_id": "Q1_146",
+    "query_text": "星巴克 10月01日那張發票金額是不是 NT$190？",
+    "category": "negative_distractor_event",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_distractor"
+  },
+  {
+    "query_id": "Q1_147",
+    "query_text": "十月五號在好市多買的無骨牛小排花了多少錢？",
+    "category": "negative_distractor_event",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_distractor"
+  },
+  {
+    "query_id": "Q1_148",
+    "query_text": "Uber 從民生東路搭到新店大坪林花了多少車資？",
+    "category": "negative_distractor_event",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_distractor"
+  },
+  {
+    "query_id": "Q1_149",
+    "query_text": "PChome 訂單 20261011502 買的是機械鍵盤嗎？",
+    "category": "negative_distractor_event",
+    "split": "test",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_distractor"
+  },
+  {
+    "query_id": "Q1_150",
+    "query_text": "小明婚宴 11月15日中午在喜來登大飯店的桌次？",
+    "category": "negative_distractor_event",
+    "split": "dev",
+    "target_memory_ids": [],
+    "answerability": "unanswerable_distractor"
+  }
+]

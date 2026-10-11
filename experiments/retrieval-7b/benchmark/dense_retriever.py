@@ -53,7 +53,7 @@ class DenseRetriever:
         self.index_time_sec: float = 0.0
         self.index_size_bytes: int = 0
 
-    def _chunk_text(self, text: str, chunk_size: int = 200, overlap: int = 50) -> List[str]:
+    def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
         if len(text) <= chunk_size:
             return [text]
         chunks = []
@@ -73,14 +73,18 @@ class DenseRetriever:
         
         passages: List[str] = []
         doc_ids: List[str] = []
+        num_chunked_docs = 0
+        total_chunks = 0
 
         for m in memories:
             title = m.get("title") or ""
             text = m.get("rawText") or ""
             combined = f"{title}\n{text}".strip()
 
-            if self.strategy == "chunked" and len(combined) > 300:
-                chunks = self._chunk_text(combined, chunk_size=200, overlap=50)
+            if self.strategy == "chunked" and len(combined) >= 500:
+                chunks = self._chunk_text(combined, chunk_size=500, overlap=100)
+                num_chunked_docs += 1
+                total_chunks += len(chunks)
                 for c in chunks:
                     passages.append(f"{self.passage_prefix}{title}: {c}")
                     doc_ids.append(m["id"])
@@ -104,6 +108,9 @@ class DenseRetriever:
         return {
             "total_items": len(memories),
             "total_vectors": len(passages),
+            "num_chunked_docs": num_chunked_docs,
+            "total_chunks_created": total_chunks,
+            "vector_expansion_ratio": len(passages) / len(memories) if memories else 1.0,
             "index_time_sec": self.index_time_sec,
             "index_size_mb": self.index_size_bytes / (1024 * 1024),
             "vector_dim": self.embeddings.shape[1]

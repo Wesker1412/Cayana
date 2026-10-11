@@ -1,0 +1,1302 @@
+[
+  {
+    "query_id": "Q001",
+    "query_text": "布拉格城堡的旅遊攻略",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-01"
+    ],
+    "expected_reasoning": "Target memory mem-lex-01 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q002",
+    "query_text": "BR198機票收據",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-02"
+    ],
+    "expected_reasoning": "Target memory mem-lex-02 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q003",
+    "query_text": "阿基師川菜館菜單價目表",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-03"
+    ],
+    "expected_reasoning": "Target memory mem-lex-03 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q004",
+    "query_text": "前端技術架構會議記錄",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-04"
+    ],
+    "expected_reasoning": "Target memory mem-lex-04 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q005",
+    "query_text": "榮總神經內科掛號須知",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-05"
+    ],
+    "expected_reasoning": "Target memory mem-lex-05 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q006",
+    "query_text": "GitHub 專案 Cayana 官方文件",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-06"
+    ],
+    "expected_reasoning": "Target memory mem-lex-06 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q007",
+    "query_text": "玉山銀行信用卡 9月份消費帳單",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-07"
+    ],
+    "expected_reasoning": "Target memory mem-lex-07 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q008",
+    "query_text": "停車位編號 B2-158",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-08"
+    ],
+    "expected_reasoning": "Target memory mem-lex-08 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q009",
+    "query_text": "日文檢定 N2 文法整理隨身錄音",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-09"
+    ],
+    "expected_reasoning": "Target memory mem-lex-09 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q010",
+    "query_text": "家常紅燒牛肉麵食譜配方",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-10"
+    ],
+    "expected_reasoning": "Target memory mem-lex-10 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q011",
+    "query_text": "高鐵訂票代碼 08552147",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-11"
+    ],
+    "expected_reasoning": "Target memory mem-lex-11 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q012",
+    "query_text": "Python asyncio 官方非同步指南",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-12"
+    ],
+    "expected_reasoning": "Target memory mem-lex-12 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q013",
+    "query_text": "租屋合約書水電費拆算備忘",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-13"
+    ],
+    "expected_reasoning": "Target memory mem-lex-13 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q014",
+    "query_text": "年度健檢醫師衛教醫囑摘要",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-14"
+    ],
+    "expected_reasoning": "Target memory mem-lex-14 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q015",
+    "query_text": "露營必備裝備清單完整版",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-15"
+    ],
+    "expected_reasoning": "Target memory mem-lex-15 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q016",
+    "query_text": "Uber 收據行程明細 NT$385",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-16"
+    ],
+    "expected_reasoning": "Target memory mem-lex-16 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q017",
+    "query_text": "辦公室 Wi-Fi 訪客密碼牌",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-17"
+    ],
+    "expected_reasoning": "Target memory mem-lex-17 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q018",
+    "query_text": "小提琴音階練習錄音紀錄",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-18"
+    ],
+    "expected_reasoning": "Target memory mem-lex-18 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q019",
+    "query_text": "內政部役政署出境申請須知",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-19"
+    ],
+    "expected_reasoning": "Target memory mem-lex-19 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q020",
+    "query_text": "蝦皮購物訂單編號 261010-SP4891",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-20"
+    ],
+    "expected_reasoning": "Target memory mem-lex-20 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q021",
+    "query_text": "電子鎖密碼修改備忘",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-21"
+    ],
+    "expected_reasoning": "Target memory mem-lex-21 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q022",
+    "query_text": "汽車定保維修工單明細表",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-22"
+    ],
+    "expected_reasoning": "Target memory mem-lex-22 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q023",
+    "query_text": "吉他彈唱自創曲 Demo",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-23"
+    ],
+    "expected_reasoning": "Target memory mem-lex-23 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q024",
+    "query_text": "Docker 官方生產環境優化手冊",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-24"
+    ],
+    "expected_reasoning": "Target memory mem-lex-24 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q025",
+    "query_text": "Apple 官網訂單 MacBook Pro 16",
+    "category": "lexical_exact",
+    "target_memory_ids": [
+      "mem-lex-25"
+    ],
+    "expected_reasoning": "Target memory mem-lex-25 specifically contains the answer for category lexical_exact."
+  },
+  {
+    "query_id": "Q026",
+    "query_text": "腳踏車壞了去哪裡保養修繕？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-01"
+    ],
+    "expected_reasoning": "Target memory mem-syn-01 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q027",
+    "query_text": "發工資了沒？這個月薪水進來了嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-02"
+    ],
+    "expected_reasoning": "Target memory mem-syn-02 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q028",
+    "query_text": "肚子痛胃不舒服要吃什麼藥？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-03"
+    ],
+    "expected_reasoning": "Target memory mem-syn-03 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q029",
+    "query_text": "新家客廳地板想鋪什麼材質？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-04"
+    ],
+    "expected_reasoning": "Target memory mem-syn-04 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q030",
+    "query_text": "去日本玩換日幣便宜的匯率是多少？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-05"
+    ],
+    "expected_reasoning": "Target memory mem-syn-05 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q031",
+    "query_text": "家裡寵物每天要喝多少水才夠？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-06"
+    ],
+    "expected_reasoning": "Target memory mem-syn-06 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q032",
+    "query_text": "北美館最近有什麼好看的藝術展？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-07"
+    ],
+    "expected_reasoning": "Target memory mem-syn-07 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q033",
+    "query_text": "健身課重訓還剩下幾堂課沒上？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-08"
+    ],
+    "expected_reasoning": "Target memory mem-syn-08 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q034",
+    "query_text": "急救包裡面的消毒藥水放過期了嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-09"
+    ],
+    "expected_reasoning": "Target memory mem-syn-09 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q035",
+    "query_text": "沖泡淺焙咖啡豆水溫要幾度最適當？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-10"
+    ],
+    "expected_reasoning": "Target memory mem-syn-10 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q036",
+    "query_text": "電腦液晶螢幕髒了可以用酒精消毒擦乾淨嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-11"
+    ],
+    "expected_reasoning": "Target memory mem-syn-11 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q037",
+    "query_text": "這個月家裡的電費繳了多少錢？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-12"
+    ],
+    "expected_reasoning": "Target memory mem-syn-12 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q038",
+    "query_text": "大樓管理員那邊有沒有我的冷藏快遞？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-13"
+    ],
+    "expected_reasoning": "Target memory mem-syn-13 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q039",
+    "query_text": "退租房子搬走的時候需要還幾副鑰匙？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-14"
+    ],
+    "expected_reasoning": "Target memory mem-syn-14 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q040",
+    "query_text": "剛開始爬山新手適合走哪種健行路線？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-15"
+    ],
+    "expected_reasoning": "Target memory mem-syn-15 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q041",
+    "query_text": "影音串流平台降級方案每個月扣多少？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-16"
+    ],
+    "expected_reasoning": "Target memory mem-syn-16 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q042",
+    "query_text": "多肉小盆栽夏天怎麼照顧才不會死掉爛掉？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-17"
+    ],
+    "expected_reasoning": "Target memory mem-syn-17 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q043",
+    "query_text": "摩托車今年的排氣檢查過了嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-18"
+    ],
+    "expected_reasoning": "Target memory mem-syn-18 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q044",
+    "query_text": "做手工酸種麵包起種要發酵幾天？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-19"
+    ],
+    "expected_reasoning": "Target memory mem-syn-19 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q045",
+    "query_text": "每個月定期買台灣五十ETF扣款哪一天？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-20"
+    ],
+    "expected_reasoning": "Target memory mem-syn-20 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q046",
+    "query_text": "搭飛機隨身包包帶乳液保養品容量規定？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-21"
+    ],
+    "expected_reasoning": "Target memory mem-syn-21 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q047",
+    "query_text": "洗洗衣機內膽要浸泡多久時間？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-22"
+    ],
+    "expected_reasoning": "Target memory mem-syn-22 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q048",
+    "query_text": "拔完智齒之後可以拿吸管喝飲料嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-23"
+    ],
+    "expected_reasoning": "Target memory mem-syn-23 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q049",
+    "query_text": "不要的大型舊家具廢棄物要怎麼丟？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-24"
+    ],
+    "expected_reasoning": "Target memory mem-syn-24 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q050",
+    "query_text": "美式大賣場會員卡續約一年要交多少錢？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-25"
+    ],
+    "expected_reasoning": "Target memory mem-syn-25 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q051",
+    "query_text": "在家煎牛排要煎幾分鐘才不會太熟太硬？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-26"
+    ],
+    "expected_reasoning": "Target memory mem-syn-26 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q052",
+    "query_text": "汽車輪胎磨到什麼程度一定要換新？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-27"
+    ],
+    "expected_reasoning": "Target memory mem-syn-27 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q053",
+    "query_text": "失眠睡不著醫生建議睡前不要做什麼？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-28"
+    ],
+    "expected_reasoning": "Target memory mem-syn-28 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q054",
+    "query_text": "星巴克集點卡裡面的星星可以換什麼？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-29"
+    ],
+    "expected_reasoning": "Target memory mem-syn-29 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q055",
+    "query_text": "被毒蜂叮到要怎麼把刺拔出來？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-30"
+    ],
+    "expected_reasoning": "Target memory mem-syn-30 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q056",
+    "query_text": "冬天羽絨衣可以丟洗衣機用力洗嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-31"
+    ],
+    "expected_reasoning": "Target memory mem-syn-31 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q057",
+    "query_text": "煮日式高湯昆布要在什麼時候拿起來？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-32"
+    ],
+    "expected_reasoning": "Target memory mem-syn-32 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q058",
+    "query_text": "我的 Google 雲端硬碟容量快滿了嗎？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-33"
+    ],
+    "expected_reasoning": "Target memory mem-syn-33 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q059",
+    "query_text": "保溫杯裝咖啡有臭味要用什麼洗乾淨？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-34"
+    ],
+    "expected_reasoning": "Target memory mem-syn-34 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q060",
+    "query_text": "客廳養的綠色植物葉子發黃是為什麼？",
+    "category": "synonym_paraphrase",
+    "target_memory_ids": [
+      "mem-syn-35"
+    ],
+    "expected_reasoning": "Target memory mem-syn-35 specifically contains the answer for category synonym_paraphrase."
+  },
+  {
+    "query_id": "Q061",
+    "query_text": "receipt for flight ticket from Taipei to Tokyo",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-01"
+    ],
+    "expected_reasoning": "Target memory mem-cl-01 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q062",
+    "query_text": "週末登山健行必備物品清單",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-02"
+    ],
+    "expected_reasoning": "Target memory mem-cl-02 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q063",
+    "query_text": "Tokyo Skytree observation deck ticket reservation",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-03"
+    ],
+    "expected_reasoning": "Target memory mem-cl-03 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q064",
+    "query_text": "如何解決 git 分支合併衝突",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-04"
+    ],
+    "expected_reasoning": "Target memory mem-cl-04 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q065",
+    "query_text": "Taipei Marriott Hotel room reservation confirmation",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-05"
+    ],
+    "expected_reasoning": "Target memory mem-cl-05 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q066",
+    "query_text": "道地義大利培根蛋麵做法食譜",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-06"
+    ],
+    "expected_reasoning": "Target memory mem-cl-06 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q067",
+    "query_text": "第四季邊緣運算產品規劃英文簡報錄音",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-07"
+    ],
+    "expected_reasoning": "Target memory mem-cl-07 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q068",
+    "query_text": "tax refund counter instructions for foreign travelers",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-08"
+    ],
+    "expected_reasoning": "Target memory mem-cl-08 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q069",
+    "query_text": "REST API 介面設計最佳實踐規範",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-09"
+    ],
+    "expected_reasoning": "Target memory mem-cl-09 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q070",
+    "query_text": "French croissant bakery opening hours",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-10"
+    ],
+    "expected_reasoning": "Target memory mem-cl-10 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q071",
+    "query_text": "Taiwan High Speed Rail business class ticket stub",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-11"
+    ],
+    "expected_reasoning": "Target memory mem-cl-11 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q072",
+    "query_text": "在家徒手無器材全身訓練動作菜單",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-12"
+    ],
+    "expected_reasoning": "Target memory mem-cl-12 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q073",
+    "query_text": "Kiyomizu-dera temple health amulet instructions",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-13"
+    ],
+    "expected_reasoning": "Target memory mem-cl-13 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q074",
+    "query_text": "如何安裝設定普羅米修斯與 Grafana 監控",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-14"
+    ],
+    "expected_reasoning": "Target memory mem-cl-14 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q075",
+    "query_text": "Costco gas station unleaded fuel receipt",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-15"
+    ],
+    "expected_reasoning": "Target memory mem-cl-15 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q076",
+    "query_text": "TypeScript 寫出乾淨程式碼的核心規範",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-16"
+    ],
+    "expected_reasoning": "Target memory mem-cl-16 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q077",
+    "query_text": "German daily greetings conversation audio note",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-17"
+    ],
+    "expected_reasoning": "Target memory mem-cl-17 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q078",
+    "query_text": "STARLUX Airlines premium economy baggage allowance",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-18"
+    ],
+    "expected_reasoning": "Target memory mem-cl-18 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q079",
+    "query_text": "美式烤肉煙燻豬肋排溫度與時間設定",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-19"
+    ],
+    "expected_reasoning": "Target memory mem-cl-19 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q080",
+    "query_text": "SQLite WAL 模式並行寫入與讀取原理",
+    "category": "cross_lingual",
+    "target_memory_ids": [
+      "mem-cl-20"
+    ],
+    "expected_reasoning": "Target memory mem-cl-20 specifically contains the answer for category cross_lingual."
+  },
+  {
+    "query_id": "Q081",
+    "query_text": "10月28日的牙科預約時間是幾點？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-01"
+    ],
+    "expected_reasoning": "Target memory mem-pre-01 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q082",
+    "query_text": "排氣管維修費用單獨是多少錢？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-02"
+    ],
+    "expected_reasoning": "Target memory mem-pre-02 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q083",
+    "query_text": "信義路四段那間咖啡店地址在幾巷？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-03"
+    ],
+    "expected_reasoning": "Target memory mem-pre-03 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q084",
+    "query_text": "中華航空往東京的班機編號是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-04"
+    ],
+    "expected_reasoning": "Target memory mem-pre-04 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q085",
+    "query_text": "房東國泰世華銀行的匯款帳號是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-05"
+    ],
+    "expected_reasoning": "Target memory mem-pre-05 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q086",
+    "query_text": "光世代寬頻每個月月租費是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-06"
+    ],
+    "expected_reasoning": "Target memory mem-pre-06 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q087",
+    "query_text": "資訊技術部主管辦公室分機幾號？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-07"
+    ],
+    "expected_reasoning": "Target memory mem-pre-07 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q088",
+    "query_text": "路邊停車費的繳費金額是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-08"
+    ],
+    "expected_reasoning": "Target memory mem-pre-08 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q089",
+    "query_text": "管理費從幾月幾號開始調整成每坪95元？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-09"
+    ],
+    "expected_reasoning": "Target memory mem-pre-09 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q090",
+    "query_text": "朋友新家聚會門牌號碼是央北二路幾號？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-10"
+    ],
+    "expected_reasoning": "Target memory mem-pre-10 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q091",
+    "query_text": "全家店到店包裹的寄件代碼是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-11"
+    ],
+    "expected_reasoning": "Target memory mem-pre-11 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q092",
+    "query_text": "冷氣機的壓縮機保固期是幾年？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-12"
+    ],
+    "expected_reasoning": "Target memory mem-pre-12 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q093",
+    "query_text": "加油發票的八位數發票號碼是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-13"
+    ],
+    "expected_reasoning": "Target memory mem-pre-13 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q094",
+    "query_text": "國泰醫院急診室專線分機是幾號？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-14"
+    ],
+    "expected_reasoning": "Target memory mem-pre-14 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q095",
+    "query_text": "PChome 買防潮箱花費多少金額？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-15"
+    ],
+    "expected_reasoning": "Target memory mem-pre-15 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q096",
+    "query_text": "地下機械停車位限制車輛高度是多少公分？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-16"
+    ],
+    "expected_reasoning": "Target memory mem-pre-16 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q097",
+    "query_text": "狗狗每個月幾號要吃全能狗驅蟲藥？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-17"
+    ],
+    "expected_reasoning": "Target memory mem-pre-17 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q098",
+    "query_text": "公路車後輪輪胎氣壓要打多少 PSI？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-18"
+    ],
+    "expected_reasoning": "Target memory mem-pre-18 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q099",
+    "query_text": "好市多內湖店線上提貨驗證碼是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-19"
+    ],
+    "expected_reasoning": "Target memory mem-pre-19 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q100",
+    "query_text": "九月底抄電錶的讀數是多少度？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-20"
+    ],
+    "expected_reasoning": "Target memory mem-pre-20 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q101",
+    "query_text": "10月14日早上測量的收縮壓是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-21"
+    ],
+    "expected_reasoning": "Target memory mem-pre-21 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q102",
+    "query_text": "Apple 禮品卡的兌換序號代碼是什麼？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-22"
+    ],
+    "expected_reasoning": "Target memory mem-pre-22 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q103",
+    "query_text": "瓦斯熱水器管線建議哪一年檢查更換？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-23"
+    ],
+    "expected_reasoning": "Target memory mem-pre-23 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q104",
+    "query_text": "讀書會建議股票和公債資產配置比例是多少？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-24"
+    ],
+    "expected_reasoning": "Target memory mem-pre-24 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q105",
+    "query_text": "11月22日晶華酒店婚宴我們坐在第幾桌？",
+    "category": "precise_attribute",
+    "target_memory_ids": [
+      "mem-pre-25"
+    ],
+    "expected_reasoning": "Target memory mem-pre-25 specifically contains the answer for category precise_attribute."
+  },
+  {
+    "query_id": "Q106",
+    "query_text": "全體產品會議中第四季伺服器預算核定是多少錢？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-01"
+    ],
+    "expected_reasoning": "Target memory mem-long-01 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q107",
+    "query_text": "醫生在錄音中建議每天早餐後補充多少劑量的維生素D？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-02"
+    ],
+    "expected_reasoning": "Target memory mem-long-02 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q108",
+    "query_text": "技術白皮書中本機快取最大記憶體上限設定為多少？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-03"
+    ],
+    "expected_reasoning": "Target memory mem-long-03 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q109",
+    "query_text": "充電樁研討會中每位車主安裝私樁的初期建置規費是多少？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-04"
+    ],
+    "expected_reasoning": "Target memory mem-long-04 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q110",
+    "query_text": "歷史課錄音中凡爾賽和約最具爭議的是第幾條款？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-05"
+    ],
+    "expected_reasoning": "Target memory mem-long-05 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q111",
+    "query_text": "新進員工手冊中識別證遺失補發工本費是多少錢？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-06"
+    ],
+    "expected_reasoning": "Target memory mem-long-06 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q112",
+    "query_text": "融資合約會議中創辦人離職後的競業禁止期間定為幾個月？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-07"
+    ],
+    "expected_reasoning": "Target memory mem-long-07 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q113",
+    "query_text": "諮商反思錄音中提到的放鬆呼吸法閉氣需要幾秒？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-08"
+    ],
+    "expected_reasoning": "Target memory mem-long-08 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q114",
+    "query_text": "消防檢查報告中客廳滅火器下次預計送檢日期是何時？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-09"
+    ],
+    "expected_reasoning": "Target memory mem-long-09 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q115",
+    "query_text": "留學諮詢錄音中倫敦二區北邊每個月房租預算大概多少英鎊？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-10"
+    ],
+    "expected_reasoning": "Target memory mem-long-10 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q116",
+    "query_text": "馬拉松破四訓練計畫中目標平均每公里配速是多少？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-11"
+    ],
+    "expected_reasoning": "Target memory mem-long-11 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q117",
+    "query_text": "智慧家庭自動化設定中 Zigbee 運作通道指定為第幾頻道？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-12"
+    ],
+    "expected_reasoning": "Target memory mem-long-12 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q118",
+    "query_text": "精品咖啡店訪談中單店損益兩平點每天需要賣幾杯咖啡？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-13"
+    ],
+    "expected_reasoning": "Target memory mem-long-13 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q119",
+    "query_text": "庭園造景錄音中枯山水核心石頭組合通常象徵什麼？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-14"
+    ],
+    "expected_reasoning": "Target memory mem-long-14 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q120",
+    "query_text": "鍵盤改裝手冊中更換的靜音線性軸觸發壓力是多少？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-15"
+    ],
+    "expected_reasoning": "Target memory mem-long-15 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q121",
+    "query_text": "多肉園藝演講中初期發現粉介殼蟲推薦用什麼點塗蟲體？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-16"
+    ],
+    "expected_reasoning": "Target memory mem-long-16 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q122",
+    "query_text": "歐洲自駕語音中奧地利十日高速公路通行證貼紙費用是多少歐元？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-17"
+    ],
+    "expected_reasoning": "Target memory mem-long-17 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q123",
+    "query_text": "劇院音響指南中各聲道交叉分頻點設定為多少赫茲？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-18"
+    ],
+    "expected_reasoning": "Target memory mem-long-18 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q124",
+    "query_text": "登山行前叮嚀中能高越嶺西段哪兩處大崩壁路段嚴禁停留？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-19"
+    ],
+    "expected_reasoning": "Target memory mem-long-19 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q125",
+    "query_text": "生乳捲教學中蛋白霜要打發到什麼狀態才不會捲的時候裂開？",
+    "category": "long_transcript_detail",
+    "target_memory_ids": [
+      "mem-long-20"
+    ],
+    "expected_reasoning": "Target memory mem-long-20 specifically contains the answer for category long_transcript_detail."
+  },
+  {
+    "query_id": "Q126",
+    "query_text": "我昨天買的無糖豆漿花了多少錢？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫中只有『買人體工學滑鼠』與『超市買機票』，無豆漿花費收據。"
+  },
+  {
+    "query_id": "Q127",
+    "query_text": "長榮航空飛往舊金山的航班起飛時間是幾點？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫只有 BR198 飛東京成田，沒有舊金山航班。"
+  },
+  {
+    "query_id": "Q128",
+    "query_text": "阿基師川菜館的招牌酸菜魚多少錢？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫菜單有宮保雞丁、麻婆豆腐、水煮牛肉，沒有酸菜魚。"
+  },
+  {
+    "query_id": "Q129",
+    "query_text": "MacBook Pro 14吋的訂單編號是多少？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫購買的是 MacBook Pro 16吋，沒有 14吋訂單。"
+  },
+  {
+    "query_id": "Q130",
+    "query_text": "高鐵訂票代碼 99887766 的座位在哪裡？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫訂票代碼為 08552147，無此代碼。"
+  },
+  {
+    "query_id": "Q131",
+    "query_text": "玉山銀行十月份的信用卡帳單應繳多少？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫只有九月份帳單，無十月份帳單。"
+  },
+  {
+    "query_id": "Q132",
+    "query_text": "辦公室訪客 Wi-Fi 密碼裡面的數字是 2024 嗎？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫密碼是 WelcomeSpring2026，非 2024。"
+  },
+  {
+    "query_id": "Q133",
+    "query_text": "台大醫院骨科門診預約在哪一天？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫預約的是牙髓病科，沒有骨科門診。"
+  },
+  {
+    "query_id": "Q134",
+    "query_text": "地下停車位 B1-158 的柱子顏色是什麼？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫停車位是 B2-158，沒有 B1 車位。"
+  },
+  {
+    "query_id": "Q135",
+    "query_text": "Uber 從大安區搭到新店區花了多少車資？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫 Uber 行程是信義路到和平東路，無新店行程。"
+  },
+  {
+    "query_id": "Q136",
+    "query_text": "中華電信 1G 光纖寬頻費用是多少？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫合約速率是 500M/500M，無 1G 方案。"
+  },
+  {
+    "query_id": "Q137",
+    "query_text": "蝦皮買的藍牙耳機送達門市了嗎？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫購買的是垂直滑鼠，沒有藍牙耳機。"
+  },
+  {
+    "query_id": "Q138",
+    "query_text": "好市多線上購物買的大同電鍋提貨碼？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫提貨通知無大同電鍋，只有提貨驗證碼。"
+  },
+  {
+    "query_id": "Q139",
+    "query_text": "義大利培根蛋麵做法裡面有加鮮奶油嗎？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫食譜明確寫明 No heavy cream allowed，但問的是加多少鮮奶油。"
+  },
+  {
+    "query_id": "Q140",
+    "query_text": "凡爾賽和約最具爭議的第 100 條款內容？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "記憶庫記錄的是第 231 條款，無第 100 條款。"
+  },
+  {
+    "query_id": "Q141",
+    "query_text": "上週去屏東墾丁浮潛看到的綠蠵龜照片？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無墾丁或浮潛相關記憶。"
+  },
+  {
+    "query_id": "Q142",
+    "query_text": "家裡冷氣濾網叫修師傅的手機號碼？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無叫修師傅電話。"
+  },
+  {
+    "query_id": "Q143",
+    "query_text": "特斯拉 Model Y 車載充電轉接頭放哪裡？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無特斯拉車輛相關紀錄。"
+  },
+  {
+    "query_id": "Q144",
+    "query_text": "媽媽生日聚餐訂位的陶板屋餐廳時間？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無陶板屋餐廳紀錄。"
+  },
+  {
+    "query_id": "Q145",
+    "query_text": "上個月去好市多買的牛肉捲退貨退款單？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無退貨單紀錄。"
+  },
+  {
+    "query_id": "Q146",
+    "query_text": "家裡的任天堂 Switch 遊戲卡匣借給誰了？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無 Switch 遊戲紀錄。"
+  },
+  {
+    "query_id": "Q147",
+    "query_text": "健身房游泳池每週水質消毒公休是星期幾？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無泳池消毒公休資訊。"
+  },
+  {
+    "query_id": "Q148",
+    "query_text": "去台南玩住的煙波大飯店房號幾號？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無台南煙波住宿資訊。"
+  },
+  {
+    "query_id": "Q149",
+    "query_text": "筆電被偷走去派出所報案的三聯單號碼？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無報案三聯單紀錄。"
+  },
+  {
+    "query_id": "Q150",
+    "query_text": "社區大樓中秋節烤肉晚會抽獎獎品是什麼？",
+    "category": "unanswerable_negative",
+    "target_memory_ids": [],
+    "expected_reasoning": "完全無中秋烤肉抽獎紀錄。"
+  }
+]
