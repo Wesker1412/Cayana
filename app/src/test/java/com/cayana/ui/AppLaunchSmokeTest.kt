@@ -33,6 +33,10 @@ class AppLaunchSmokeTest {
     @Test
     fun appLaunchOnboardingAndNavigateToSettingsAndBackSmokeTest() {
         // 1. Welcome Screen
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodes(hasText("Cayana"))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
         composeTestRule.onNodeWithText("Cayana").assertIsDisplayed()
         composeTestRule.onNodeWithText("把你看過的東西，\n變成找得回來的記憶。").assertIsDisplayed()
         composeTestRule.onNodeWithText("開始").performClick()

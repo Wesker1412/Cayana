@@ -10,6 +10,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.cayana.ui.ask.AskScreen
+import com.cayana.ui.ask.AskViewModel
 import com.cayana.ui.home.HomeScreen
 import com.cayana.ui.home.HomeViewModel
 import com.cayana.ui.onboarding.OnboardingScreen
@@ -62,6 +64,9 @@ fun CayanaNavHost(
                 viewModel = homeViewModel,
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
+                },
+                onNavigateToAsk = {
+                    navController.navigate(Screen.Ask.route)
                 }
             )
         }
@@ -70,6 +75,16 @@ fun CayanaNavHost(
             val settingsViewModel: SettingsViewModel = koinViewModel()
             SettingsScreen(
                 viewModel = settingsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.Ask.route) {
+            val askViewModel: AskViewModel = koinViewModel()
+            AskScreen(
+                viewModel = askViewModel,
                 onNavigateBack = {
                     navController.popBackStack()
                 }

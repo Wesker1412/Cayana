@@ -69,7 +69,8 @@ import java.util.Locale
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToAsk: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -91,6 +92,13 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToAsk) {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = "問問 Cayana (Ask)",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(
                             imageVector = Icons.Default.Settings,
@@ -399,10 +407,10 @@ private fun MemoryItemCard(
 }
 
 @Composable
-private fun MemoryDetailDialog(
+fun MemoryDetailDialog(
     memory: MemoryItem,
     onDismiss: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: (() -> Unit)? = null
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -528,11 +536,13 @@ private fun MemoryDetailDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = onDelete,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text("刪除此 Memory")
+            if (onDelete != null) {
+                TextButton(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("刪除此 Memory")
+                }
             }
         },
         dismissButton = {

@@ -38,4 +38,13 @@ val viewModelModule = module {
             screenshotWatcher = getOrNull()
         )
     }
+
+    viewModel {
+        com.cayana.ui.ask.AskViewModel(
+            localAskService = get(org.koin.core.qualifier.named("localAskService")),
+            remoteAskService = get(org.koin.core.qualifier.named("remoteAskService")),
+            authorizationGate = get(),
+            memoryRepository = get()
+        )
+    }
 }
