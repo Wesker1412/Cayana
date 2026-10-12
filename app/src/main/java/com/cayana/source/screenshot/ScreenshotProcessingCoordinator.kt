@@ -37,7 +37,8 @@ class ScreenshotProcessingCoordinator(
     private val permissionChecker: PermissionChecker,
     private val ocrEngine: OcrEngine,
     private val dispatchers: CoroutineDispatchers = AppDispatchers(),
-    private val calendarProcessingCoordinator: CalendarProcessingCoordinator? = null
+    private val calendarProcessingCoordinator: CalendarProcessingCoordinator? = null,
+    private val actionRoutingCoordinator: com.cayana.actions.coordinator.ActionRoutingCoordinator? = null
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
@@ -240,7 +241,15 @@ class ScreenshotProcessingCoordinator(
                             false
                         }
 
-                        if (!handledByCalendar) {
+                        // 10. Task / Action Routing
+                        val handledByAction = try {
+                            actionRoutingCoordinator?.process(memoryItem, rawText) ?: false
+                        } catch (e: Exception) {
+                            CayanaLogger.w("ScreenshotCoordinator", "Action routing error: ${e.message}")
+                            false
+                        }
+
+                        if (!handledByCalendar && !handledByAction) {
                             NotificationHelper.showMemoryIngestedNotification(context, memoryItem)
                         }
                     }
@@ -406,7 +415,13 @@ class ScreenshotProcessingCoordinator(
                         if (newText != null && newState == ProcessingState.COMPLETED) {
                             try {
                                 val handledByCalendar = calendarProcessingCoordinator?.process(updated, newText) ?: false
-                                if (!handledByCalendar) {
+                                val handledByAction = try {
+                                    actionRoutingCoordinator?.process(updated, newText) ?: false
+                                } catch (e: Exception) {
+                                    CayanaLogger.w("ScreenshotCoordinator", "Action routing error on OCR retry: ${e.message}")
+                                    false
+                                }
+                                if (!handledByCalendar && !handledByAction) {
                                     NotificationHelper.showMemoryIngestedNotification(context, updated)
                                 }
                             } catch (e: Exception) {

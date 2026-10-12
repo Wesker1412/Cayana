@@ -12,6 +12,9 @@ interface TaskActionDao {
     suspend fun insert(action: TaskActionEntity): Long
 
     @Query("SELECT * FROM task_actions WHERE id = :id")
+    suspend fun getActionById(id: String): TaskActionEntity?
+
+    @Query("SELECT * FROM task_actions WHERE id = :id")
     suspend fun getById(id: String): TaskActionEntity?
 
     @Query("SELECT * FROM task_actions WHERE sourceMemoryId = :sourceMemoryId AND actionType = :actionType AND taskListId = :taskListId LIMIT 1")
@@ -36,11 +39,28 @@ interface TaskActionDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
-    @Query("UPDATE task_actions SET status = 'CREATING', attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id AND (status = 'FAILED' OR status = 'CREATING_ERROR')")
+    @Query("UPDATE task_actions SET status = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateStatus(
+        id: String,
+        status: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
+    @Query("UPDATE task_actions SET status = 'CREATING', attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id AND (status = 'FAILED' OR status = 'CREATING_ERROR') AND attemptCount < :maxAttempts")
     suspend fun claimRetryAction(
+        id: String,
+        maxAttempts: Int = 3,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
+    @Query("UPDATE task_actions SET status = 'CREATING', attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id AND status = 'CONFIRM_PENDING'")
+    suspend fun claimConfirmAction(
         id: String,
         updatedAt: Long = System.currentTimeMillis()
     ): Int
+
+    @Query("SELECT * FROM task_actions WHERE status = 'CONFIRM_PENDING' ORDER BY createdAt ASC")
+    suspend fun getPendingConfirmActions(): List<TaskActionEntity>
 
     @Query("SELECT * FROM task_actions WHERE status = 'CREATING' ORDER BY createdAt ASC LIMIT :limit")
     suspend fun getInFlightCreatingActions(limit: Int = 10): List<TaskActionEntity>

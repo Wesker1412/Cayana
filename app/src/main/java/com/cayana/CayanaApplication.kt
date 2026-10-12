@@ -30,6 +30,7 @@ class CayanaApplication : Application() {
     private val calendarCoordinator: com.cayana.calendar.CalendarProcessingCoordinator by inject()
     private val recordingCoordinator: com.cayana.source.recording.RecordingProcessingCoordinator by inject()
     private val photoCoordinator: com.cayana.source.photo.PhotoProcessingCoordinator by inject()
+    private val actionRoutingCoordinator: com.cayana.actions.coordinator.ActionRoutingCoordinator by inject()
 
     override fun onCreate() {
         super.onCreate()
@@ -45,6 +46,9 @@ class CayanaApplication : Application() {
         scope.launch {
             try {
                 calendarCoordinator.reconcilePendingCreatingActions()
+            } catch (_: Exception) {}
+            try {
+                actionRoutingCoordinator.reconcileInFlightActions()
             } catch (_: Exception) {}
             try {
                 recordingCoordinator.reconcileInFlightRecordings()

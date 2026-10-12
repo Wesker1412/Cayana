@@ -247,4 +247,105 @@ object NotificationHelper {
             false
         }
     }
+
+    fun showTaskAddedNotification(
+        context: Context,
+        notificationId: Int,
+        actionId: String,
+        title: String,
+        formattedDue: String
+    ): Boolean {
+        if (!canPostCalendarActionNotification(context)) {
+            return false
+        }
+
+        ensureChannel(context)
+
+        val contentText = if (formattedDue.isNotBlank()) {
+            "$title · 截止：$formattedDue"
+        } else {
+            title
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("已加入 Google Tasks")
+            .setContentText(contentText)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        return try {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+            CayanaLogger.i("NotificationHelper", "Posted task added notification id=$notificationId")
+            true
+        } catch (e: Exception) {
+            CayanaLogger.w("NotificationHelper", "Exception posting task added notification: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    fun showTaskConfirmNotification(
+        context: Context,
+        notificationId: Int,
+        actionId: String,
+        memoryId: String,
+        title: String,
+        formattedDue: String
+    ): Boolean {
+        if (!canPostCalendarActionNotification(context)) {
+            return false
+        }
+
+        ensureChannel(context)
+
+        val contentText = if (formattedDue.isNotBlank()) {
+            "$title · 截止：$formattedDue"
+        } else {
+            title
+        }
+
+        val confirmIntent = Intent(context, com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver::class.java).apply {
+            putExtra(com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.EXTRA_DECISION, com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.DECISION_CONFIRM)
+            putExtra(com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.EXTRA_ACTION_ID, actionId)
+            putExtra(com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val confirmPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 37 + 1,
+            confirmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val ignoreIntent = Intent(context, com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver::class.java).apply {
+            putExtra(com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.EXTRA_DECISION, com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.DECISION_IGNORE)
+            putExtra(com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.EXTRA_ACTION_ID, actionId)
+            putExtra(com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val ignorePendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 37 + 2,
+            ignoreIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("發現可能的待辦事項")
+            .setContentText(contentText)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .addAction(0, "加入待辦", confirmPendingIntent)
+            .addAction(0, "忽略", ignorePendingIntent)
+            .build()
+
+        return try {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+            CayanaLogger.i("NotificationHelper", "Posted task confirm notification id=$notificationId")
+            true
+        } catch (e: Exception) {
+            CayanaLogger.w("NotificationHelper", "Exception posting task confirm notification: ${e.javaClass.simpleName}")
+            false
+        }
+    }
 }

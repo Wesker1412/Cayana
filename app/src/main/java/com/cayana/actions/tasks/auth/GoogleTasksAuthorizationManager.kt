@@ -75,7 +75,7 @@ class GoogleTasksAuthorizationManager(
                 }
             }
         } catch (e: Exception) {
-            CayanaLogger.w("TasksAuth", "Failed to obtain Google Tasks access token: ${e.message}")
+            CayanaLogger.w("TasksAuth", "Failed to obtain Google Tasks access token: ${e.javaClass.simpleName}")
             _authStatus.value = TasksAuthStatus.AUTH_REQUIRED
             Result.Error(e)
         }
@@ -101,6 +101,7 @@ class GoogleTasksAuthorizationManager(
                 }
             }
         } catch (e: Exception) {
+            CayanaLogger.w("TasksAuth", "Failed getting intent sender: ${e.javaClass.simpleName}")
             _authStatus.value = TasksAuthStatus.AUTH_REQUIRED
             Result.Error(e)
         }
@@ -130,7 +131,7 @@ class GoogleTasksAuthorizationManager(
                 Result.Success(Unit)
             }
         } catch (e: Exception) {
-            CayanaLogger.w("TasksAuth", "解析授權 Intent 結果失敗: ${e.message}")
+            CayanaLogger.w("TasksAuth", "解析授權 Intent 結果失敗: ${e.javaClass.simpleName}")
             _authStatus.value = TasksAuthStatus.DISCONNECTED
             Result.Error(e)
         }
@@ -143,6 +144,22 @@ class GoogleTasksAuthorizationManager(
             try {
                 GoogleAuthUtil.clearToken(context, oldToken)
             } catch (_: Exception) {}
+        }
+    }
+
+    override suspend fun refreshAuthStatus(): TasksAuthStatus {
+        if (!inMemoryAccessToken.isNullOrBlank()) {
+            _authStatus.value = TasksAuthStatus.CONNECTED
+            return TasksAuthStatus.CONNECTED
+        }
+        return when (getAccessToken()) {
+            is Result.Success -> {
+                _authStatus.value = TasksAuthStatus.CONNECTED
+                TasksAuthStatus.CONNECTED
+            }
+            else -> {
+                _authStatus.value
+            }
         }
     }
 
@@ -161,17 +178,22 @@ class GoogleTasksAuthorizationManager(
         }
 
         try {
-            val url = URL("$revokeUrlBase?token=$tokenToRevoke")
+            val url = URL(revokeUrlBase)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 10000
                 readTimeout = 10000
                 doOutput = true
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+            }
+            val postData = "token=" + java.net.URLEncoder.encode(tokenToRevoke, "UTF-8")
+            conn.outputStream.use { os ->
+                os.write(postData.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
+                os.flush()
             }
             val responseCode = conn.responseCode
             if (responseCode != 200) {
-                val err = conn.errorStream?.bufferedReader()?.readText() ?: ""
-                return@withContext Result.Error(IOException("Google 權限撤銷失敗：HTTP $responseCode - $err"))
+                return@withContext Result.Error(IOException("Google 權限撤銷失敗：HTTP $responseCode"))
             }
             try {
                 GoogleAuthUtil.clearToken(context, tokenToRevoke)
@@ -180,7 +202,7 @@ class GoogleTasksAuthorizationManager(
             _authStatus.value = TasksAuthStatus.DISCONNECTED
             Result.Success(Unit)
         } catch (e: Exception) {
-            CayanaLogger.w("TasksAuth", "撤銷 Google Tasks 授權失敗: ${e.message}")
+            CayanaLogger.w("TasksAuth", "撤銷 Google Tasks 授權失敗: ${e.javaClass.simpleName}")
             Result.Error(e)
         }
     }

@@ -33,7 +33,9 @@ class SettingsViewModel(
     private val recordingCoordinator: RecordingProcessingCoordinator? = null,
     private val backupManager: com.cayana.backup.manager.BackupManager? = null,
     private val driveAuthManager: com.cayana.backup.drive.DriveAuthorizationManager? = null,
-    private val recoveryKeyStorage: com.cayana.backup.crypto.RecoveryKeyStorage? = null
+    private val recoveryKeyStorage: com.cayana.backup.crypto.RecoveryKeyStorage? = null,
+    private val tasksAuthManager: com.cayana.actions.tasks.auth.TasksAuthorizationManager? = null,
+    private val tasksClient: com.cayana.actions.tasks.client.GoogleTasksClient? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -89,6 +91,7 @@ class SettingsViewModel(
         }
         checkCalendarPermission()
         checkModelStatus()
+        checkGoogleTasksAuthStatus()
     }
 
     private fun createSourceItem(
@@ -176,6 +179,7 @@ class SettingsViewModel(
             }
             refreshSources(userSettings)
             checkCalendarPermission()
+            checkGoogleTasksAuthStatus()
             syncScreenshotWatcher(userSettings)
         }
     }
@@ -504,5 +508,133 @@ class SettingsViewModel(
 
     fun clearBackupState() {
         _uiState.update { it.copy(backupState = BackupUiState.Idle) }
+    }
+
+    fun checkGoogleTasksAuthStatus() {
+        val authManager = tasksAuthManager ?: return
+        viewModelScope.launch {
+            val settings = settingsRepository.getSettings().first()
+            if (settings.isGoogleTasksConnected) {
+                val status = authManager.refreshAuthStatus()
+                if (status != settings.googleTasksAuthStatus) {
+                    settingsRepository.updateGoogleTasksAuthStatus(status)
+                }
+            }
+        }
+    }
+
+    fun startConnectGoogleTasks(launcher: (android.content.IntentSender) -> Unit) {
+        val authManager = tasksAuthManager ?: return
+        viewModelScope.launch {
+            when (val res = authManager.getAuthorizationIntentSender()) {
+                is com.cayana.core.common.Result.Success -> {
+                    val sender = res.data
+                    if (sender != null) {
+                        launcher(sender)
+                    } else {
+                        settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED)
+                        loadTaskLists()
+                    }
+                }
+                is com.cayana.core.common.Result.Error -> {
+                    _uiState.update { it.copy(tasksError = "無法取得 Google Tasks 授權請求。") }
+                }
+                com.cayana.core.common.Result.Loading -> Unit
+            }
+        }
+    }
+
+    fun onGoogleTasksAuthorizationResult(success: Boolean, data: android.content.Intent? = null) {
+        val authManager = tasksAuthManager ?: return
+        viewModelScope.launch {
+            if (success) {
+                val res = authManager.handleAuthorizationResult(data)
+                if (res is com.cayana.core.common.Result.Success) {
+                    settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED)
+                    _uiState.update { it.copy(tasksError = null) }
+                    loadTaskLists()
+                } else {
+                    settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.AUTH_REQUIRED)
+                    _uiState.update { it.copy(tasksError = "授權失敗或缺少 Tasks 權限。") }
+                }
+            } else {
+                settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED)
+            }
+        }
+    }
+
+    fun loadTaskLists() {
+        val client = tasksClient ?: return
+        val authManager = tasksAuthManager ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingTaskLists = true, tasksError = null) }
+            when (val tokenRes = authManager.getAccessToken()) {
+                is com.cayana.core.common.Result.Success -> {
+                    when (val listRes = client.getTaskLists(tokenRes.data)) {
+                        is com.cayana.core.common.Result.Success -> {
+                            val lists = listRes.data
+                            _uiState.update {
+                                it.copy(
+                                    availableTaskLists = lists,
+                                    isLoadingTaskLists = false
+                                )
+                            }
+                            val currentSettings = settingsRepository.getSettings().first()
+                            if (currentSettings.selectedTaskListId.isNullOrBlank() && lists.isNotEmpty()) {
+                                val defaultList = lists.first()
+                                settingsRepository.updateSelectedTaskList(defaultList.id, defaultList.title)
+                            }
+                        }
+                        is com.cayana.core.common.Result.Error -> {
+                            _uiState.update {
+                                it.copy(
+                                    isLoadingTaskLists = false,
+                                    tasksError = "讀取待辦清單失敗。"
+                                )
+                            }
+                        }
+                        com.cayana.core.common.Result.Loading -> Unit
+                    }
+                }
+                is com.cayana.core.common.Result.Error -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoadingTaskLists = false,
+                            tasksError = "授權已失效，請重新連線。"
+                        )
+                    }
+                    settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.AUTH_REQUIRED)
+                }
+                com.cayana.core.common.Result.Loading -> Unit
+            }
+        }
+    }
+
+    fun selectTaskList(taskList: com.cayana.actions.tasks.client.GoogleTaskList) {
+        viewModelScope.launch {
+            settingsRepository.updateSelectedTaskList(taskList.id, taskList.title)
+        }
+    }
+
+    fun toggleAutoTasks(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateAutoTasksEnabled(enabled)
+        }
+    }
+
+    fun disconnectGoogleTasks() {
+        val authManager = tasksAuthManager ?: return
+        viewModelScope.launch {
+            authManager.disconnect()
+            settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED)
+            settingsRepository.updateAutoTasksEnabled(false)
+            settingsRepository.updateSelectedTaskList(null, null)
+            _uiState.update {
+                it.copy(
+                    availableTaskLists = emptyList(),
+                    tasksError = null
+                )
+            }
+        }
     }
 }

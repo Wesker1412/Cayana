@@ -33,7 +33,7 @@ class GoogleTasksDestination(
         private const val TAG = "GoogleTasksDestination"
         const val ACTION_TYPE_CREATE = "GOOGLE_TASKS_CREATE"
         private const val MAX_TITLE_LENGTH = 200
-        private const val MAX_NOTES_SNIPPET_LENGTH = 300
+        private const val MAX_NOTES_SNIPPET_LENGTH = 1000
 
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }
@@ -46,7 +46,18 @@ class GoogleTasksDestination(
     }
 
     override suspend fun isAuthorized(): Boolean {
-        return tasksAuthManager.authStatus.value == TasksAuthStatus.CONNECTED
+        if (tasksAuthManager.authStatus.value == TasksAuthStatus.CONNECTED) {
+            return true
+        }
+        val settings = runCatching { settingsRepository.getSettings().first() }.getOrNull()
+        if (settings?.googleTasksAuthStatus != TasksAuthStatus.CONNECTED) {
+            return false
+        }
+        val refreshed = tasksAuthManager.refreshAuthStatus()
+        if (refreshed != TasksAuthStatus.CONNECTED) {
+            settingsRepository.updateGoogleTasksAuthStatus(refreshed)
+        }
+        return refreshed == TasksAuthStatus.CONNECTED
     }
 
     override suspend fun createTask(candidate: ActionCandidate): DestinationExecutionResult {
@@ -103,17 +114,63 @@ class GoogleTasksDestination(
                     )
                 }
                 "NEEDS_ATTENTION" -> {
-                    logger.w(TAG, "Existing task action in NEEDS_ATTENTION state for memory ${candidate.sourceMemoryId}")
+                    logger.w(TAG, "Existing task action in NEEDS_ATTENTION state for memory ${candidate.sourceMemoryId}; attempting reconciliation")
+                    val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
+                        is Result.Success -> tokenResult.data
+                        else -> return@withContext DestinationExecutionResult.NeedsAttention(
+                            reason = existingAction.lastError ?: "Previous task creation state requires attention"
+                        )
+                    }
+                    val reconcileResult = reconcileUncertainPost(
+                        existingAction.id,
+                        token,
+                        taskListId,
+                        candidate,
+                        existingAction.title
+                    )
+                    if (reconcileResult is DestinationExecutionResult.Success) {
+                        return@withContext reconcileResult
+                    }
                     return@withContext DestinationExecutionResult.NeedsAttention(
-                        reason = existingAction.lastError ?: "Previous task creation state requires attention"
+                        reason = "無法確認 Google Tasks 是否已建立待辦；為避免重複，不會自動重送。"
                     )
                 }
                 "CREATING" -> {
-                    logger.w(TAG, "Task creation is currently in progress for memory ${candidate.sourceMemoryId}")
-                    return@withContext DestinationExecutionResult.Failure(
-                        reason = "Task creation is currently in progress",
-                        canRetry = false
-                    )
+                    val isStale = (System.currentTimeMillis() - existingAction.createdAt) > 30_000L
+                    if (isStale) {
+                        logger.w(TAG, "Stale CREATING action found for memory ${candidate.sourceMemoryId}; reconciling with remote list")
+                        val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
+                            is Result.Success -> tokenResult.data
+                            else -> {
+                                taskActionDao.updateStatusAndError(existingAction.id, "NEEDS_ATTENTION", "Reconciliation: auth missing")
+                                return@withContext DestinationExecutionResult.NeedsAttention("Google Tasks 授權失效。")
+                            }
+                        }
+                        return@withContext reconcileUncertainPost(
+                            existingAction.id,
+                            token,
+                            taskListId,
+                            candidate,
+                            existingAction.title
+                        )
+                    } else {
+                        logger.w(TAG, "Task creation is currently in progress for memory ${candidate.sourceMemoryId}")
+                        return@withContext DestinationExecutionResult.Failure(
+                            reason = "Task creation is currently in progress",
+                            canRetry = false
+                        )
+                    }
+                }
+                "CONFIRM_PENDING" -> {
+                    val claimed = taskActionDao.claimConfirmAction(existingAction.id)
+                    if (claimed != 1) {
+                        logger.i(TAG, "Another execution claimed confirm action for ${existingAction.id}")
+                        return@withContext DestinationExecutionResult.Failure(
+                            reason = "Another execution claimed confirm action",
+                            canRetry = false
+                        )
+                    }
+                    actionId = existingAction.id
                 }
                 else -> {
                     // Status is FAILED or CREATING_ERROR: atomic claim

@@ -39,5 +39,8 @@ data class SettingsUiState(
     val recoveryKeyConfirmationError: String? = null,
     val showRestoreDialog: Boolean = false,
     val availableBackups: List<DriveBackupMetadata> = emptyList(),
-    val isFetchingBackups: Boolean = false
+    val isFetchingBackups: Boolean = false,
+    val availableTaskLists: List<com.cayana.actions.tasks.client.GoogleTaskList> = emptyList(),
+    val isLoadingTaskLists: Boolean = false,
+    val tasksError: String? = null
 )

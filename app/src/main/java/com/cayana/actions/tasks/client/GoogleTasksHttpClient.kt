@@ -64,7 +64,7 @@ class GoogleTasksHttpClient(
                 Result.Error(ex)
             }
         } catch (e: Exception) {
-            logger.w(TAG, "Network failure during getTaskLists: ${e.message}")
+            logger.w(TAG, "Network failure during getTaskLists: ${e.javaClass.simpleName}")
             Result.Error(e)
         }
     }
@@ -123,7 +123,7 @@ class GoogleTasksHttpClient(
                 Result.Error(ex)
             }
         } catch (e: Exception) {
-            logger.w(TAG, "Network failure during createTask: ${e.message}")
+            logger.w(TAG, "Network failure during createTask: ${e.javaClass.simpleName}")
             Result.Error(e)
         }
     }
@@ -134,51 +134,72 @@ class GoogleTasksHttpClient(
         sourceMemoryId: String,
         title: String
     ): Result<GoogleTaskItem?> = withContext(Dispatchers.IO) {
-        val endpoint = "$baseUrl/lists/$taskListId/tasks?maxResults=50"
-        try {
-            val url = URL(endpoint)
-            val connection = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = connectTimeoutMs
-                readTimeout = readTimeoutMs
-                setRequestProperty("Authorization", "Bearer $accessToken")
-                setRequestProperty("Accept", "application/json")
-            }
+        var pageToken: String? = null
+        var pagesChecked = 0
+        val maxPages = 5
+        val memoryRefPattern = "cayana://memory/$sourceMemoryId"
 
-            val statusCode = connection.responseCode
-            if (statusCode in 200..299) {
-                val responseText = readStream(connection.inputStream)
-                val json = JSONObject(responseText)
-                val itemsArray = json.optJSONArray("items") ?: JSONArray()
-                val memoryRefPattern = "cayana://memory/$sourceMemoryId"
-
-                for (i in 0 until itemsArray.length()) {
-                    val itemJson = itemsArray.getJSONObject(i)
-                    val itemNotes = itemJson.optString("notes", "")
-                    val itemTitle = itemJson.optString("title", "")
-
-                    if (itemNotes.contains(memoryRefPattern) || (itemTitle == title && itemNotes.contains(sourceMemoryId))) {
-                        val found = GoogleTaskItem(
-                            id = itemJson.getString("id"),
-                            title = itemTitle,
-                            notes = itemNotes,
-                            due = itemJson.optNullableString("due"),
-                            status = itemJson.optNullableString("status")
-                        )
-                        return@withContext Result.Success(found)
-                    }
+        do {
+            pagesChecked++
+            val endpoint = buildString {
+                append("$baseUrl/lists/$taskListId/tasks?maxResults=100")
+                if (!pageToken.isNullOrBlank()) {
+                    append("&pageToken=").append(pageToken)
                 }
-                Result.Success(null)
-            } else {
-                val errorBody = readStream(connection.errorStream)
-                val ex = parseHttpException(statusCode, errorBody)
-                logger.w(TAG, "findTaskByMemoryRef failed with status $statusCode")
-                Result.Error(ex)
             }
-        } catch (e: Exception) {
-            logger.w(TAG, "Network failure during findTaskByMemoryRef: ${e.message}")
-            Result.Error(e)
-        }
+
+            val pageOutcome = try {
+                val url = URL(endpoint)
+                val connection = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = connectTimeoutMs
+                    readTimeout = readTimeoutMs
+                    setRequestProperty("Authorization", "Bearer $accessToken")
+                    setRequestProperty("Accept", "application/json")
+                }
+
+                val statusCode = connection.responseCode
+                if (statusCode in 200..299) {
+                    val responseText = readStream(connection.inputStream)
+                    val json = JSONObject(responseText)
+                    val itemsArray = json.optJSONArray("items") ?: JSONArray()
+                    val nextPage = json.optNullableString("nextPageToken")
+
+                    var foundItem: GoogleTaskItem? = null
+                    for (i in 0 until itemsArray.length()) {
+                        val itemJson = itemsArray.getJSONObject(i)
+                        val itemNotes = itemJson.optString("notes", "")
+                        val itemTitle = itemJson.optString("title", "")
+
+                        if (itemNotes.contains(memoryRefPattern) || (itemTitle == title && itemNotes.contains(sourceMemoryId))) {
+                            foundItem = GoogleTaskItem(
+                                id = itemJson.getString("id"),
+                                title = itemTitle,
+                                notes = itemNotes,
+                                due = itemJson.optNullableString("due"),
+                                status = itemJson.optNullableString("status")
+                            )
+                            break
+                        }
+                    }
+                    Pair(foundItem, nextPage)
+                } else {
+                    val ex = parseHttpException(statusCode, "HTTP $statusCode")
+                    logger.w(TAG, "findTaskByMemoryRef page $pagesChecked failed with status $statusCode")
+                    return@withContext Result.Error(ex)
+                }
+            } catch (e: Exception) {
+                logger.w(TAG, "Network failure during findTaskByMemoryRef page $pagesChecked: ${e.javaClass.simpleName}")
+                return@withContext Result.Error(e)
+            }
+
+            if (pageOutcome.first != null) {
+                return@withContext Result.Success(pageOutcome.first)
+            }
+            pageToken = pageOutcome.second
+        } while (!pageToken.isNullOrBlank() && pagesChecked < maxPages)
+
+        Result.Success(null)
     }
 
     private fun readStream(inputStream: java.io.InputStream?): String {
@@ -189,12 +210,11 @@ class GoogleTasksHttpClient(
     }
 
     private fun parseHttpException(statusCode: Int, body: String): TasksHttpException {
-        val msg = body.take(300)
         return when (statusCode) {
-            401 -> TasksHttpException.Unauthorized(statusCode, msg)
-            429 -> TasksHttpException.RateLimited(statusCode, msg)
-            in 500..599 -> TasksHttpException.ServerError(statusCode, msg)
-            else -> TasksHttpException.ClientError(statusCode, msg)
+            401 -> TasksHttpException.Unauthorized(statusCode, "Unauthorized")
+            429 -> TasksHttpException.RateLimited(statusCode, "Rate limited")
+            in 500..599 -> TasksHttpException.ServerError(statusCode, "Server error: HTTP $statusCode")
+            else -> TasksHttpException.ClientError(statusCode, "Client error: HTTP $statusCode")
         }
     }
 }

@@ -65,6 +65,10 @@
         <receiver
             android:name="com.cayana.calendar.receiver.ConfirmCalendarEventReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name="com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

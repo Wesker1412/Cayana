@@ -96,12 +96,22 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showCalendarDialog by remember { mutableStateOf(false) }
+    var showTaskListDialog by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val driveAuthLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         viewModel.onDriveAuthorizationResult(
+            result.resultCode == Activity.RESULT_OK,
+            result.data
+        )
+    }
+
+    val googleTasksAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onGoogleTasksAuthorizationResult(
             result.resultCode == Activity.RESULT_OK,
             result.data
         )
@@ -452,6 +462,160 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ---------------------------------------------------------------
+            // Section 3B: Google Tasks
+            // ---------------------------------------------------------------
+            Text(
+                text = "Google Tasks 待辦整合",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Google Tasks",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Status Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val statusIcon = when (uiState.settings.googleTasksAuthStatus) {
+                            com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED -> Icons.Default.Check
+                            com.cayana.actions.tasks.auth.TasksAuthStatus.AUTH_REQUIRED -> Icons.Default.Warning
+                            com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED -> Icons.Default.CloudQueue
+                        }
+                        val statusTint = when (uiState.settings.googleTasksAuthStatus) {
+                            com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED -> MaterialTheme.colorScheme.primary
+                            com.cayana.actions.tasks.auth.TasksAuthStatus.AUTH_REQUIRED -> MaterialTheme.colorScheme.error
+                            com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = null,
+                            tint = statusTint,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            val statusText = when (uiState.settings.googleTasksAuthStatus) {
+                                com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED -> "已連接"
+                                com.cayana.actions.tasks.auth.TasksAuthStatus.AUTH_REQUIRED -> "需要重新授權"
+                                com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED -> "未連接"
+                            }
+                            Text(
+                                text = "狀態：$statusText",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            if (uiState.tasksError != null) {
+                                Text(
+                                    text = uiState.tasksError ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (!uiState.settings.isGoogleTasksConnected) {
+                        Button(
+                            onClick = {
+                                viewModel.startConnectGoogleTasks { sender ->
+                                    googleTasksAuthLauncher.launch(IntentSenderRequest.Builder(sender).build())
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (uiState.settings.googleTasksAuthStatus == com.cayana.actions.tasks.auth.TasksAuthStatus.AUTH_REQUIRED) "重新授權 Google Tasks" else "連接 Google Tasks")
+                        }
+                    } else {
+                        // Connected: Target Task List
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Target Task List",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = uiState.settings.selectedTaskListTitle ?: "尚未設定",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.loadTaskLists()
+                                    showTaskListDialog = true
+                                }
+                            ) {
+                                Text("變更")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Auto-Tasks Switch
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "自動加入待辦清單",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = "截圖偵測到待辦事項時自動建立待辦",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.settings.autoTasksEnabled,
+                                onCheckedChange = { checked ->
+                                    viewModel.toggleAutoTasks(checked)
+                                }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        TextButton(
+                            onClick = { viewModel.disconnectGoogleTasks() },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("中斷連接", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ---------------------------------------------------------------
             // Section 4: Backup
             // ---------------------------------------------------------------
             Text(
@@ -747,6 +911,61 @@ fun SettingsScreen(
                     showCalendarDialog = false
                 }) {
                     Text("清除選擇")
+                }
+            }
+        )
+    }
+
+    // Google Task List Selection Dialog
+    if (showTaskListDialog) {
+        AlertDialog(
+            onDismissRequest = { showTaskListDialog = false },
+            title = { Text("選擇待辦清單 Target") },
+            text = {
+                if (uiState.isLoadingTaskLists) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (uiState.availableTaskLists.isEmpty()) {
+                    Text("尚未發現可用的待辦清單。")
+                } else {
+                    Column {
+                        uiState.availableTaskLists.forEach { taskList ->
+                            val isSelected = taskList.id == uiState.settings.selectedTaskListId
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.selectTaskList(taskList)
+                                        showTaskListDialog = false
+                                    }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.selectTaskList(taskList)
+                                        showTaskListDialog = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = taskList.title,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTaskListDialog = false }) {
+                    Text("關閉")
                 }
             }
         )

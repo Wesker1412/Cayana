@@ -96,7 +96,7 @@ val appModule = module {
         )
     }
 
-    single<com.cayana.actions.destination.TaskDestination> {
+    single {
         com.cayana.actions.tasks.destination.GoogleTasksDestination(
             taskActionDao = get(),
             tasksAuthManager = get(),
@@ -104,6 +104,10 @@ val appModule = module {
             settingsRepository = get(),
             logger = get()
         )
+    }
+
+    single<com.cayana.actions.destination.TaskDestination> {
+        get<com.cayana.actions.tasks.destination.GoogleTasksDestination>()
     }
 
     single<com.cayana.actions.destination.NoteDestination> {
@@ -137,6 +141,16 @@ val appModule = module {
         )
     }
 
+    single {
+        com.cayana.actions.coordinator.ActionRoutingCoordinator(
+            context = androidContext(),
+            actionRouter = get(),
+            taskActionDao = get(),
+            googleTasksDestination = get(),
+            settingsRepository = get(),
+            logger = get()
+        )
+    }
 
     single<com.cayana.processing.OcrEngine> {
         com.cayana.processing.ocr.MlKitOcrEngine(
@@ -153,7 +167,8 @@ val appModule = module {
             permissionChecker = get(),
             ocrEngine = get(),
             dispatchers = get(),
-            calendarProcessingCoordinator = get()
+            calendarProcessingCoordinator = get(),
+            actionRoutingCoordinator = get()
         )
     }
 

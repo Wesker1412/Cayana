@@ -26,7 +26,9 @@ val viewModelModule = module {
             recordingCoordinator = getOrNull(),
             backupManager = getOrNull(),
             driveAuthManager = getOrNull(),
-            recoveryKeyStorage = getOrNull()
+            recoveryKeyStorage = getOrNull(),
+            tasksAuthManager = getOrNull(),
+            tasksClient = getOrNull()
         )
     }
 

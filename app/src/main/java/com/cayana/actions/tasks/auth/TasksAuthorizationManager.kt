@@ -12,5 +12,6 @@ interface TasksAuthorizationManager {
     suspend fun handleAuthorizationResult(data: Intent?): Result<Unit>
     suspend fun invalidateCachedAccessToken()
     suspend fun disconnect(): Result<Unit>
+    suspend fun refreshAuthStatus(): TasksAuthStatus
     fun markAuthRequired()
 }

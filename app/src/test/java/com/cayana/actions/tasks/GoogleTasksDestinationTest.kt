@@ -451,6 +451,8 @@ class GoogleTasksDestinationTest {
             return Result.Success(Unit)
         }
 
+        override suspend fun refreshAuthStatus(): TasksAuthStatus = _authStatus.value
+
         override fun markAuthRequired() {
             _authStatus.value = TasksAuthStatus.AUTH_REQUIRED
         }
