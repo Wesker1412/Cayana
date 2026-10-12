@@ -101,6 +101,10 @@ open class ActionRoutingCoordinator(
 
             when (decision) {
                 is RoutingDecision.RouteAuto -> {
+                    if (!isMemoryEligibleForAutoTasks(memoryItem, settings.autoTasksEligibilityEpoch)) {
+                        logger.i(TAG, "Memory ${memoryItem.id} is ineligible for auto tasks (capturedAt=${memoryItem.capturedAt}, epoch=${settings.autoTasksEligibilityEpoch}); auto-route skipped")
+                        continue
+                    }
                     val targetListId = settings.selectedTaskListId ?: "@default"
                     val existing = dao.getAction(memoryItem.id, ACTION_TYPE_CREATE, targetListId)
                     if (existing != null && (existing.status == "CONFIRM_PENDING" || existing.status == "IGNORED" || existing.status == "CREATED")) {
@@ -262,38 +266,36 @@ open class ActionRoutingCoordinator(
         }
 
         // Recovery Eligibility Boundary:
-        // Must be authorized, connected, and have a valid eligibility epoch.
-        if (!settings.isGoogleTasksConnected || settings.googleTasksAuthStatus != com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED || settings.googleTasksEligibilityEpoch <= 0L) {
-            logger.d(TAG, "recoverUnroutedMemories: Tasks not connected or no eligibility epoch; skipping recovery")
+        // Must be connected, auto-tasks enabled, and have a valid auto-tasks eligibility epoch.
+        if (!settings.isGoogleTasksConnected ||
+            settings.googleTasksAuthStatus != com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED ||
+            !settings.autoTasksEnabled ||
+            settings.autoTasksEligibilityEpoch <= 0L) {
+            logger.d(TAG, "recoverUnroutedMemories: Tasks not connected/auto-enabled or no eligibility epoch; skipping recovery")
             return@withContext 0
         }
 
-        val recentMemories = try {
-            repo.getAllMemories().first()
+        val eligibleMemories = try {
+            repo.getMemoriesCapturedSince(
+                sourceType = SourceType.SCREENSHOT,
+                sinceCapturedAt = settings.autoTasksEligibilityEpoch,
+                limit = 50
+            )
         } catch (e: Exception) {
             logger.w(TAG, "Failed reading memories for recovery: ${e.javaClass.simpleName}")
             return@withContext 0
         }
 
         var recoveredCount = 0
-        var scannedCount = 0
-        val maxScanLimit = 50
 
-        for (memory in recentMemories) {
-            if (++scannedCount > maxScanLimit) {
-                break
+        for (memory in eligibleMemories) {
+            // Apply the unified eligibility rule:
+            // Screenshots captured or created before the eligibility epoch are strictly ineligible.
+            if (!isMemoryEligibleForAutoTasks(memory, settings.autoTasksEligibilityEpoch)) {
+                continue
             }
 
-            // Reliable eligibility boundary:
-            // Only memories created/captured AT OR AFTER the eligibility epoch (when tasks was authorized) are eligible!
-            // Memories are ordered newest-first (capturedAt DESC), so as soon as memoryTime < eligibilityEpoch,
-            // all subsequent memories are older historical memories -> break immediately!
-            val memoryTime = memory.createdAt.takeIf { it > 0 } ?: memory.capturedAt
-            if (memoryTime < settings.googleTasksEligibilityEpoch) {
-                break
-            }
-
-            if (memory.sourceType == SourceType.SCREENSHOT && !memory.rawText.isNullOrBlank()) {
+            if (!memory.rawText.isNullOrBlank()) {
                 val existing = dao.getActionsForMemory(memory.id)
                 if (existing.isEmpty()) {
                     logger.i(TAG, "Recovering eligible unrouted memory ${memory.id}")
@@ -305,5 +307,12 @@ open class ActionRoutingCoordinator(
             }
         }
         recoveredCount
+    }
+
+    fun isMemoryEligibleForAutoTasks(memory: MemoryItem, eligibilityEpoch: Long): Boolean {
+        if (eligibilityEpoch <= 0L) return false
+        if (memory.capturedAt < eligibilityEpoch) return false
+        if (memory.createdAt > 0L && memory.createdAt < eligibilityEpoch) return false
+        return true
     }
 }

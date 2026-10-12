@@ -59,8 +59,10 @@ data class UserSettings(
     val autoTasksEnabled: Boolean = false,
     val selectedTaskListId: String? = null,
     val selectedTaskListTitle: String? = null,
-    val googleTasksEligibilityEpoch: Long = 0L
-)
+    val autoTasksEligibilityEpoch: Long = 0L
+) {
+    val googleTasksEligibilityEpoch: Long get() = autoTasksEligibilityEpoch
+}
 
 interface SettingsRepository {
     fun getSettings(): Flow<UserSettings>
@@ -101,6 +103,7 @@ interface SettingsRepository {
     suspend fun updateLastBackupTimestamp(timestamp: Long)
     suspend fun updateHasRecoveryKey(hasKey: Boolean)
     suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus)
+    suspend fun updateAutoTasksEligibilityEpoch(epoch: Long)
     suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long)
     suspend fun updateAutoTasksEnabled(enabled: Boolean)
     suspend fun updateSelectedTaskList(listId: String?, listTitle: String?)
@@ -310,27 +313,38 @@ class InMemorySettingsRepository(
 
     override suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus) {
         _settings.update {
-            val epoch = if (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED) {
-                if (it.googleTasksEligibilityEpoch <= 0L) System.currentTimeMillis() else it.googleTasksEligibilityEpoch
-            } else if (status == com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED) {
-                0L
-            } else {
-                it.googleTasksEligibilityEpoch
-            }
+            val isConnected = (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED)
+            val autoEnabled = if (!isConnected) false else it.autoTasksEnabled
+            val epoch = if (!isConnected) 0L else it.autoTasksEligibilityEpoch
             it.copy(
                 googleTasksAuthStatus = status,
-                isGoogleTasksConnected = (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED),
-                googleTasksEligibilityEpoch = epoch
+                isGoogleTasksConnected = isConnected,
+                autoTasksEnabled = autoEnabled,
+                autoTasksEligibilityEpoch = epoch
             )
         }
     }
 
-    override suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long) {
-        _settings.update { it.copy(googleTasksEligibilityEpoch = epoch) }
+    override suspend fun updateAutoTasksEnabled(enabled: Boolean) {
+        _settings.update {
+            val epoch = if (enabled) {
+                System.currentTimeMillis()
+            } else {
+                0L
+            }
+            it.copy(
+                autoTasksEnabled = enabled,
+                autoTasksEligibilityEpoch = epoch
+            )
+        }
     }
 
-    override suspend fun updateAutoTasksEnabled(enabled: Boolean) {
-        _settings.update { it.copy(autoTasksEnabled = enabled) }
+    override suspend fun updateAutoTasksEligibilityEpoch(epoch: Long) {
+        _settings.update { it.copy(autoTasksEligibilityEpoch = epoch) }
+    }
+
+    override suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long) {
+        updateAutoTasksEligibilityEpoch(epoch)
     }
 
     override suspend fun updateSelectedTaskList(listId: String?, listTitle: String?) {

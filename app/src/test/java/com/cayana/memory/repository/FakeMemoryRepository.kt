@@ -91,6 +91,17 @@ class FakeMemoryRepository : MemoryRepository {
         return remaining.take(limit)
     }
 
+    override suspend fun getMemoriesCapturedSince(
+        sourceType: com.cayana.source.SourceType,
+        sinceCapturedAt: Long,
+        limit: Int
+    ): List<MemoryItem> {
+        return memoriesMap.value.values
+            .filter { it.sourceType == sourceType && it.capturedAt >= sinceCapturedAt }
+            .sortedWith(compareByDescending<MemoryItem> { it.capturedAt }.thenByDescending { it.id })
+            .take(limit)
+    }
+
     override suspend fun clearAll() {
         memoriesMap.update { emptyMap() }
     }

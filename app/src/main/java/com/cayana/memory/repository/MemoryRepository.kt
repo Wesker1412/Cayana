@@ -40,6 +40,11 @@ interface MemoryRepository {
         cursorId: String,
         limit: Int = 25
     ): List<MemoryItem>
+    suspend fun getMemoriesCapturedSince(
+        sourceType: com.cayana.source.SourceType,
+        sinceCapturedAt: Long,
+        limit: Int = 50
+    ): List<MemoryItem> = emptyList()
     suspend fun clearAll()
     suspend fun rebuildSearchIndex()
     fun isIndexRebuildNeeded(): Boolean = false

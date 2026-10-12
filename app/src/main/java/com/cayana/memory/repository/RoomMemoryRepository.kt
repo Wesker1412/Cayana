@@ -197,6 +197,14 @@ class RoomMemoryRepository(
         entities.map { it.toDomain() }
     }
 
+    override suspend fun getMemoriesCapturedSince(
+        sourceType: com.cayana.source.SourceType,
+        sinceCapturedAt: Long,
+        limit: Int
+    ): List<MemoryItem> = withContext(dispatchers.io) {
+        memoryDao.getMemoriesCapturedSince(sourceType.name, sinceCapturedAt, limit).map { it.toDomain() }
+    }
+
     override suspend fun clearAll(): Unit = withContext(dispatchers.io) {
         searchIndexMutationMutex.withLock {
             memoryDao.clearAll()

@@ -62,6 +62,7 @@ class DataStoreSettingsRepository(
         val KEY_AUTO_TASKS_ENABLED = booleanPreferencesKey("auto_tasks_enabled")
         val KEY_SELECTED_TASK_LIST_ID = stringPreferencesKey("selected_task_list_id")
         val KEY_SELECTED_TASK_LIST_TITLE = stringPreferencesKey("selected_task_list_title")
+        val KEY_AUTO_TASKS_ELIGIBILITY_EPOCH = longPreferencesKey("auto_tasks_eligibility_epoch")
         val KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH = longPreferencesKey("google_tasks_eligibility_epoch")
     }
 
@@ -195,7 +196,7 @@ class DataStoreSettingsRepository(
                     autoTasksEnabled = preferences[KEY_AUTO_TASKS_ENABLED] ?: false,
                     selectedTaskListId = preferences[KEY_SELECTED_TASK_LIST_ID],
                     selectedTaskListTitle = preferences[KEY_SELECTED_TASK_LIST_TITLE],
-                    googleTasksEligibilityEpoch = preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] ?: 0L
+                    autoTasksEligibilityEpoch = preferences[KEY_AUTO_TASKS_ELIGIBILITY_EPOCH] ?: preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] ?: 0L
                 )
             }
     }
@@ -444,26 +445,31 @@ class DataStoreSettingsRepository(
     override suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus) {
         dataStore.edit { preferences ->
             preferences[KEY_GOOGLE_TASKS_AUTH_STATUS] = status.name
-            if (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED) {
-                val currentEpoch = preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] ?: 0L
-                if (currentEpoch <= 0L) {
-                    preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
-                }
-            } else if (status == com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED) {
+            if (status != com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED) {
+                preferences[KEY_AUTO_TASKS_ENABLED] = false
+                preferences[KEY_AUTO_TASKS_ELIGIBILITY_EPOCH] = 0L
                 preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] = 0L
             }
         }
     }
 
-    override suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long) {
+    override suspend fun updateAutoTasksEligibilityEpoch(epoch: Long) {
         dataStore.edit { preferences ->
+            preferences[KEY_AUTO_TASKS_ELIGIBILITY_EPOCH] = epoch
             preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] = epoch
         }
+    }
+
+    override suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long) {
+        updateAutoTasksEligibilityEpoch(epoch)
     }
 
     override suspend fun updateAutoTasksEnabled(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[KEY_AUTO_TASKS_ENABLED] = enabled
+            val epoch = if (enabled) System.currentTimeMillis() else 0L
+            preferences[KEY_AUTO_TASKS_ELIGIBILITY_EPOCH] = epoch
+            preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] = epoch
         }
     }
 

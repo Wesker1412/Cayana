@@ -99,7 +99,7 @@ class ActionRoutingCoordinatorTest {
                 autoTasksEnabled = true,
                 selectedTaskListId = "list-test-1",
                 selectedTaskListTitle = "測試清單",
-                googleTasksEligibilityEpoch = 1L
+                autoTasksEligibilityEpoch = 1L
             )
         )
 
@@ -550,6 +550,195 @@ class ActionRoutingCoordinatorTest {
         val m2Actions = taskActionDao.getActionsForMemory(m2Eligible.id)
         assertEquals(1, m2Actions.size)
         assertEquals("CREATED", m2Actions.first().status)
+    }
+
+    @Test
+    fun delayedHistoricalScreenshotNeverUploads() = runTest {
+        val epochTime = 50_000L
+        settingsRepository.updateAutoTasksEnabled(true)
+        settingsRepository.updateAutoTasksEligibilityEpoch(epochTime)
+
+        // Historical screenshot taken before authorization (capturedAt = 10_000L)
+        // but imported/saved to DB later (createdAt = 60_000L > epochTime)
+        val delayedHistorical = MemoryItem(
+            id = "mem-delayed-historical",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 10_000L,
+            createdAt = 60_000L,
+            title = "延遲匯入歷史待辦",
+            rawText = "TODO: 歷史延遲待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(delayedHistorical)
+
+        // Run recovery
+        coordinator.reconcileInFlightActions(recoverMemories = true)
+
+        // Must never upload delayed historical screenshot
+        assertEquals("Delayed historical screenshot must not create task", 0, fakeTasksClient.createdTasks.size)
+        assertTrue("No action should be created for delayed historical", taskActionDao.getActionsForMemory(delayedHistorical.id).isEmpty())
+    }
+
+    @Test
+    fun eligibilityOrderingMatchesQuery() = runTest {
+        val epochTime = 50_000L
+        settingsRepository.updateAutoTasksEnabled(true)
+        settingsRepository.updateAutoTasksEligibilityEpoch(epochTime)
+
+        val mOld = MemoryItem(
+            id = "mem-order-old",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 20_000L,
+            createdAt = 20_000L,
+            title = "舊記憶",
+            rawText = "TODO: 舊記憶 截止: 2026-10-25 18:00"
+        )
+        val mNewer = MemoryItem(
+            id = "mem-order-newer",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 60_000L,
+            createdAt = 60_000L,
+            title = "較新記憶",
+            rawText = "TODO: 較新記憶 截止: 2026-10-25 18:00"
+        )
+        val mNewest = MemoryItem(
+            id = "mem-order-newest",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 80_000L,
+            createdAt = 80_000L,
+            title = "最新記憶",
+            rawText = "TODO: 最新記憶 截止: 2026-10-25 18:00"
+        )
+
+        memoryRepository.saveMemory(mOld)
+        memoryRepository.saveMemory(mNewer)
+        memoryRepository.saveMemory(mNewest)
+
+        // Verify the query ordering directly: capturedAt DESC, id DESC
+        val queried = memoryRepository.getMemoriesCapturedSince(SourceType.SCREENSHOT, sinceCapturedAt = epochTime, limit = 50)
+        assertEquals(2, queried.size)
+        assertEquals("mem-order-newest", queried[0].id)
+        assertEquals("mem-order-newer", queried[1].id)
+
+        // Run recovery: both eligible memories are processed in order, mOld is untouched
+        val recovered = coordinator.recoverUnroutedMemories(memoryRepository)
+        assertEquals(2, recovered)
+        assertEquals(2, fakeTasksClient.createdTasks.size)
+        assertTrue(taskActionDao.getActionsForMemory(mOld.id).isEmpty())
+    }
+
+    @Test
+    fun connectionWithoutAutoEnableDoesNotBackfill() = runTest {
+        // Connected to OAuth, but autoTasksEnabled = false
+        settingsRepository.updateGoogleTasksAuthStatus(TasksAuthStatus.CONNECTED)
+        settingsRepository.updateAutoTasksEnabled(false)
+
+        val memory = MemoryItem(
+            id = "mem-no-auto-backfill",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 60_000L,
+            createdAt = 60_000L,
+            title = "未開啟自動傳送待辦",
+            rawText = "TODO: 未開啟自動傳送待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Run recovery
+        val recovered = coordinator.recoverUnroutedMemories(memoryRepository)
+        assertEquals("Must not recover or upload when autoTasksEnabled is false", 0, recovered)
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+        assertTrue(taskActionDao.getActionsForMemory(memory.id).isEmpty())
+    }
+
+    @Test
+    fun reEnableDoesNotBackfillDisabledInterval() = runTest {
+        // 1. Initial enable
+        settingsRepository.updateAutoTasksEnabled(true)
+        val initialEpoch = settingsRepository.getSettings().first().autoTasksEligibilityEpoch
+        assertTrue(initialEpoch > 0)
+
+        // 2. User disables auto tasks
+        settingsRepository.updateAutoTasksEnabled(false)
+        assertEquals(0L, settingsRepository.getSettings().first().autoTasksEligibilityEpoch)
+
+        // 3. While disabled, a screenshot is captured and saved
+        val disabledIntervalTime = System.currentTimeMillis()
+        val disabledMemory = MemoryItem(
+            id = "mem-disabled-interval",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = disabledIntervalTime,
+            createdAt = disabledIntervalTime,
+            title = "停用期間拍攝的待辦",
+            rawText = "TODO: 停用期間待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(disabledMemory)
+
+        // Simulate a tiny delay so re-enable epoch > disabledIntervalTime
+        Thread.sleep(10)
+
+        // 4. User re-enables auto tasks: epoch is reset to current time
+        settingsRepository.updateAutoTasksEnabled(true)
+        val reEnabledEpoch = settingsRepository.getSettings().first().autoTasksEligibilityEpoch
+        assertTrue("Re-enabled epoch must be after disabled screenshot", reEnabledEpoch > disabledIntervalTime)
+
+        // 5. Run recovery
+        val recovered = coordinator.recoverUnroutedMemories(memoryRepository)
+        assertEquals("Screenshots captured in disabled interval must not be backfilled", 0, recovered)
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+        assertTrue(taskActionDao.getActionsForMemory(disabledMemory.id).isEmpty())
+    }
+
+    @Test
+    fun eligibleProcessDeathStillRecovers() = runTest {
+        val epochTime = 50_000L
+        settingsRepository.updateAutoTasksEnabled(true)
+        settingsRepository.updateAutoTasksEligibilityEpoch(epochTime)
+
+        // Memory captured after epoch
+        val eligibleMemory = MemoryItem(
+            id = "mem-process-death-eligible",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 60_000L,
+            createdAt = 60_000L,
+            title = "待恢復待辦",
+            rawText = "TODO: 待恢復待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(eligibleMemory)
+
+        // Process death: no actions recorded yet
+        assertTrue(taskActionDao.getActionsForMemory(eligibleMemory.id).isEmpty())
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+
+        // On reboot/restart, recovery runs
+        val recovered = coordinator.recoverUnroutedMemories(memoryRepository)
+        assertEquals(1, recovered)
+        assertEquals(1, fakeTasksClient.createdTasks.size)
+        val actions = taskActionDao.getActionsForMemory(eligibleMemory.id)
+        assertEquals(1, actions.size)
+        assertEquals("CREATED", actions.first().status)
+    }
+
+    @Test
+    fun normalIngestionRespectsEligibilityBoundary() = runTest {
+        val epochTime = 50_000L
+        settingsRepository.updateAutoTasksEnabled(true)
+        settingsRepository.updateAutoTasksEligibilityEpoch(epochTime)
+
+        // Historical memory captured before epoch (20_000L < 50_000L)
+        val historicalMemory = MemoryItem(
+            id = "mem-normal-ingestion-historical",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = 20_000L,
+            createdAt = 20_000L,
+            title = "歷史截圖",
+            rawText = "TODO: 歷史截圖普通進程 截止: 2026-10-25 18:00"
+        )
+
+        // Directly call coordinator.process() as normal ingestion would
+        val handled = coordinator.process(historicalMemory, historicalMemory.rawText)
+
+        // Must respect boundary: not uploaded to Google Tasks
+        assertFalse("Normal ingestion must not auto-route ineligible historical memory", handled)
+        assertEquals("No remote task created for historical memory", 0, fakeTasksClient.createdTasks.size)
     }
 
     private class FakeCalendarDestination : CalendarDestination {

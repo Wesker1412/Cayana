@@ -87,4 +87,27 @@ class MemoryRepositoryTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    @Test
+    fun `getMemoriesCapturedSince returns bounded items sorted by capturedAt DESC and id DESC`() = runTest {
+        val m1 = MemoryItem(id = "m1", sourceType = SourceType.SCREENSHOT, capturedAt = 100L)
+        val m2 = MemoryItem(id = "m2", sourceType = SourceType.SCREENSHOT, capturedAt = 200L)
+        val m3 = MemoryItem(id = "m3", sourceType = SourceType.SCREENSHOT, capturedAt = 300L)
+        val mRecording = MemoryItem(id = "m4", sourceType = SourceType.RECORDING, capturedAt = 300L)
+
+        repository.saveMemory(m1)
+        repository.saveMemory(m2)
+        repository.saveMemory(m3)
+        repository.saveMemory(mRecording)
+
+        val results = repository.getMemoriesCapturedSince(SourceType.SCREENSHOT, sinceCapturedAt = 200L, limit = 10)
+        assertEquals(2, results.size)
+        assertEquals("m3", results[0].id)
+        assertEquals("m2", results[1].id)
+
+        val limited = repository.getMemoriesCapturedSince(SourceType.SCREENSHOT, sinceCapturedAt = 100L, limit = 2)
+        assertEquals(2, limited.size)
+        assertEquals("m3", limited[0].id)
+        assertEquals("m2", limited[1].id)
+    }
 }

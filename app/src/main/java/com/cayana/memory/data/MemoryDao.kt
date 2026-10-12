@@ -78,6 +78,19 @@ interface MemoryDao {
         limit: Int
     ): List<MemoryEntity>
 
+    @Query("""
+        SELECT * FROM memories 
+        WHERE sourceType = :sourceType 
+          AND capturedAt >= :sinceCapturedAt 
+        ORDER BY capturedAt DESC, id DESC 
+        LIMIT :limit
+    """)
+    suspend fun getMemoriesCapturedSince(
+        sourceType: String = "SCREENSHOT",
+        sinceCapturedAt: Long,
+        limit: Int = 50
+    ): List<MemoryEntity>
+
     @Delete
     suspend fun delete(entity: MemoryEntity)
 
