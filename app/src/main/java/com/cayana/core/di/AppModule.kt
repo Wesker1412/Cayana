@@ -148,6 +148,7 @@ val appModule = module {
             taskActionDao = get(),
             googleTasksDestination = get(),
             settingsRepository = get(),
+            memoryRepository = get(),
             logger = get()
         )
     }

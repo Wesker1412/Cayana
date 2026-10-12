@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -199,6 +200,29 @@ class SettingsViewModelTasksTest {
             assertNotNull("UI must reflect remote revoke failure", state.tasksError)
             assertTrue(state.tasksError!!.contains("遠端授權撤銷未完成"))
         }
+    }
+
+    @Test
+    fun disconnectBlocksNewTransmissionImmediately() = runTest {
+        repository.updateGoogleTasksAuthStatus(TasksAuthStatus.CONNECTED)
+        repository.updateAutoTasksEnabled(true)
+        repository.updateSelectedTaskList("list-1", "工作待辦")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Verify connected beforehand
+        assertTrue(repository.getSettings().first().isGoogleTasksConnected)
+        assertTrue(repository.getSettings().first().autoTasksEnabled)
+
+        // Simulate slow/failing remote disconnect
+        fakeAuthManager.shouldRevokeFail = true
+        viewModel.disconnectGoogleTasks()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val settings = repository.getSettings().first()
+        assertFalse("Local transmission must be blocked immediately", settings.isGoogleTasksConnected)
+        assertFalse("Auto tasks must be disabled immediately", settings.autoTasksEnabled)
+        assertEquals(TasksAuthStatus.DISCONNECTED, settings.googleTasksAuthStatus)
+        assertNull(settings.selectedTaskListId)
     }
 
     private class FakeTasksAuthManager : TasksAuthorizationManager {

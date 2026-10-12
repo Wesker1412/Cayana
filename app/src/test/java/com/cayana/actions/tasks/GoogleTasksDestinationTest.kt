@@ -576,6 +576,134 @@ class GoogleTasksDestinationTest {
         assertEquals("NEEDS_ATTENTION", reloaded?.status)
     }
 
+    @Test
+    fun staleActionNeverRedirectsToNewTaskList() = runTest {
+        val now = System.currentTimeMillis()
+        val memory = MemoryItem(
+            id = "mem-stale-redirect-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 機密資料備份"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Action was started on original list "list-personal-1"
+        val staleAction = TaskActionEntity(
+            id = "action-stale-redirect-1",
+            sourceMemoryId = memory.id,
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CREATING",
+            title = "機密資料備份",
+            createdAt = now - 60_000L,
+            updatedAt = now - 40_000L,
+            attemptCount = 1
+        )
+        taskActionDao.insert(staleAction)
+
+        // User subsequently switches active task list in settings to "list-work-2"
+        settingsRepository.updateSelectedTaskList("list-work-2", "公開工作清單")
+
+        // Calling createTask for this memory must reconcile against original list and never POST to new list
+        val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "機密資料備份")
+        val result = destination.createTask(candidate)
+
+        assertEquals("Must not make any POST requests to new list", 0, fakeTasksClient.postRequests.size)
+        assertTrue("Unconfirmed remote post must return NeedsAttention", result is DestinationExecutionResult.NeedsAttention)
+
+        val reloaded = taskActionDao.getActionById("action-stale-redirect-1")
+        assertEquals("NEEDS_ATTENTION", reloaded?.status)
+        assertEquals("list-personal-1", reloaded?.taskListId)
+    }
+
+    @Test
+    fun staleActionCannotCreateDuplicateTask() = runTest {
+        val now = System.currentTimeMillis()
+        val memory = MemoryItem(
+            id = "mem-stale-duplicate-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 買咖啡豆"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Remote task was actually created previously
+        val remoteItem = GoogleTaskItem(
+            id = "remote-coffee-1",
+            title = "買咖啡豆",
+            notes = "cayana://memory/${memory.id}"
+        )
+        fakeTasksClient.remoteTasks.add(remoteItem)
+
+        // But local state was left in CREATING (e.g. process died or network timed out after POST succeeded)
+        val staleAction = TaskActionEntity(
+            id = "action-stale-dup-1",
+            sourceMemoryId = memory.id,
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CREATING",
+            title = "買咖啡豆",
+            createdAt = now - 60_000L,
+            updatedAt = now - 40_000L,
+            attemptCount = 1
+        )
+        taskActionDao.insert(staleAction)
+
+        val initialPostCount = fakeTasksClient.postRequests.size
+
+        val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "買咖啡豆")
+        val result = destination.createTask(candidate)
+
+        // Must succeed by discovering existing remote task, NOT by creating duplicate
+        assertTrue("Reconciled existing remote task must succeed", result is DestinationExecutionResult.Success)
+        assertEquals("Zero new POST requests should be issued", initialPostCount, fakeTasksClient.postRequests.size)
+
+        val reloaded = taskActionDao.getActionById("action-stale-dup-1")
+        assertEquals("CREATED", reloaded?.status)
+        assertEquals("remote-coffee-1", reloaded?.destinationTaskId)
+    }
+
+    @Test
+    fun confirmedTaskThrownExceptionReconcilesSafely() = runTest {
+        val actionId = UUID.randomUUID().toString()
+        val memory = MemoryItem(
+            id = "mem-throw-test-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 送出報價單"
+        )
+        memoryRepository.saveMemory(memory)
+
+        val action = TaskActionEntity(
+            id = actionId,
+            sourceMemoryId = memory.id,
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CONFIRM_PENDING",
+            title = "送出報價單",
+            attemptCount = 0
+        )
+        taskActionDao.insert(action)
+
+        // Configure client to throw SocketTimeoutException during createTask
+        fakeTasksClient.shouldThrowTimeoutOnCreate = true
+        fakeTasksClient.timeoutDeliveredBeforeDisconnect = false // Remote task was NOT delivered
+
+        val result = destination.executeConfirmedTask(actionId)
+
+        // Destination must catch the thrown exception, reconcile via findTaskByMemoryRef,
+        // and when not found remotely, safely mark NEEDS_ATTENTION instead of crashing or staying CREATING
+        assertTrue("Execution must result in NeedsAttention or Failure without crashing", result is DestinationExecutionResult.NeedsAttention)
+
+        val reloaded = taskActionDao.getActionById(actionId)
+        assertNotNull(reloaded)
+        assertEquals("NEEDS_ATTENTION", reloaded?.status)
+        assertFalse("Error message must not contain private sensitive data", reloaded?.lastError?.contains("cayana://") == true)
+    }
+
     // Test fakes
     class FakeTasksAuthorizationManager(
         initialStatus: TasksAuthStatus = TasksAuthStatus.DISCONNECTED,

@@ -142,7 +142,8 @@ class ActionRoutingCoordinatorTest {
             taskActionDao = taskActionDao,
             googleTasksDestination = googleTasksDestination,
             settingsRepository = settingsRepository,
-            logger = logger
+            logger = logger,
+            memoryRepository = memoryRepository
         )
     }
 
@@ -422,6 +423,62 @@ class ActionRoutingCoordinatorTest {
         assertNotNull(action)
         assertEquals("NEEDS_ATTENTION", action!!.status)
         assertTrue(action.lastError?.contains("通知未開啟或發送失敗") == true)
+    }
+
+    @Test
+    fun processDeathAfterMemoryPersistRecoversRouting() = runTest {
+        // Step 1: Memory was saved to database (e.g. screenshot OCR succeeded and persisted)
+        val memory = MemoryItem(
+            id = "mem-process-death-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 提交專案結案報告 截止: 2026-10-30 17:00"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Step 2: But process died before coordinator.process() could run!
+        // No TaskActionEntity exists for this memory yet.
+        assertTrue(taskActionDao.getActionsForMemory(memory.id).isEmpty())
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+
+        // Step 3: App restarts / coordinator recovers in-flight actions
+        coordinator.reconcileInFlightActions(recoverMemories = true)
+
+        // Step 4: Routing must be recovered and task created!
+        assertEquals(1, fakeTasksClient.createdTasks.size)
+        val created = fakeTasksClient.createdTasks.first()
+        assertTrue(created.title.contains("提交專案結案報告"))
+
+        val actions = taskActionDao.getActionsForMemory(memory.id)
+        assertFalse(actions.isEmpty())
+        val action = actions.find { it.actionType == GoogleTasksDestination.ACTION_TYPE_CREATE }
+        assertNotNull(action)
+        assertEquals("CREATED", action!!.status)
+    }
+
+    @Test
+    fun duplicateWorkDoesNotDuplicatePOST() = runTest {
+        val memory = MemoryItem(
+            id = "mem-duplicate-work-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 買牛奶 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // First execution routes and creates the task
+        val handled1 = coordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        assertTrue(handled1)
+        assertEquals(1, fakeTasksClient.createdTasks.size)
+
+        // Second duplicate call with the same memory (e.g. repeated worker, duplicate event)
+        val handled2 = coordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        assertFalse("Duplicate work must be skipped", handled2)
+        assertEquals("Zero additional POSTs must be made", 1, fakeTasksClient.createdTasks.size)
+
+        // Even if reconcileInFlightActions runs, it must not duplicate
+        coordinator.reconcileInFlightActions(recoverMemories = true)
+        assertEquals("Reconciliation must not create duplicate POST", 1, fakeTasksClient.createdTasks.size)
     }
 
     private class FakeCalendarDestination : CalendarDestination {

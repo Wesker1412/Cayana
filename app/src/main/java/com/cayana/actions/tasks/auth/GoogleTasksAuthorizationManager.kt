@@ -176,6 +176,9 @@ class GoogleTasksAuthorizationManager(
                 Result.Loading -> return@withContext Result.Error(IOException("Token loading"))
             }
         }
+        // Immediately block new local callers before making the remote network call
+        inMemoryAccessToken = null
+        _authStatus.value = TasksAuthStatus.DISCONNECTED
 
         var revokeFailed = false
         var failureException: Exception? = null

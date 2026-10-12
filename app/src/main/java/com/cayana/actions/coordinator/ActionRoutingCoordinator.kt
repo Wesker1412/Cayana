@@ -13,6 +13,8 @@ import com.cayana.core.logging.CayanaLogger
 import com.cayana.core.logging.DefaultCayanaLogger
 import com.cayana.core.notification.NotificationHelper
 import com.cayana.memory.model.MemoryItem
+import com.cayana.memory.repository.MemoryRepository
+import com.cayana.source.SourceType
 import com.cayana.ui.settings.repository.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -27,6 +29,7 @@ open class ActionRoutingCoordinator(
     private val taskActionDao: TaskActionDao? = null,
     private val googleTasksDestination: GoogleTasksDestination? = null,
     private val settingsRepository: SettingsRepository? = null,
+    private val memoryRepository: MemoryRepository? = null,
     private val logger: CayanaLogger = DefaultCayanaLogger()
 ) {
     companion object {
@@ -55,6 +58,13 @@ open class ActionRoutingCoordinator(
         val router = actionRouter ?: return@withContext false
         val dao = taskActionDao ?: return@withContext false
 
+        // Idempotency check: if already processed or has action in any state, skip
+        val existingActions = dao.getActionsForMemory(memoryItem.id)
+        if (existingActions.any { it.status == "CREATED" || it.status == "CONFIRM_PENDING" || it.status == "IGNORED" || it.status == "CREATING" || it.status == "COMPLETED" }) {
+            logger.i(TAG, "Task action already recorded for memory ${memoryItem.id}; skipping")
+            return@withContext false
+        }
+
         val settings = try {
             settingsRepo.getSettings().first()
         } catch (e: Exception) {
@@ -62,9 +72,9 @@ open class ActionRoutingCoordinator(
             return@withContext false
         }
 
-        // Bounded reconciliation of any pending CREATING actions
+        // Bounded reconciliation of any pending CREATING actions (non-recursive)
         try {
-            reconcileInFlightActions()
+            reconcileInFlightActions(recoverMemories = false)
         } catch (e: Exception) {
             logger.w(TAG, "Reconciling in-flight actions error: ${e.javaClass.simpleName}")
         }
@@ -173,14 +183,43 @@ open class ActionRoutingCoordinator(
 
                 is RoutingDecision.MemoryOnly -> {
                     logger.d(TAG, "Task candidate routed to MemoryOnly: ${decision.reason}")
+                    if (dao.getActionsForMemory(memoryItem.id).isEmpty()) {
+                        val marker = TaskActionEntity(
+                            id = UUID.randomUUID().toString(),
+                            sourceMemoryId = memoryItem.id,
+                            actionType = "ROUTED",
+                            taskListId = "@none",
+                            taskListTitle = null,
+                            destinationTaskId = null,
+                            status = "COMPLETED",
+                            title = memoryItem.title ?: "MemoryOnly",
+                            attemptCount = 0
+                        )
+                        dao.insert(marker)
+                    }
                 }
             }
+        }
+
+        if (!handled && dao.getActionsForMemory(memoryItem.id).isEmpty()) {
+            val marker = TaskActionEntity(
+                id = UUID.randomUUID().toString(),
+                sourceMemoryId = memoryItem.id,
+                actionType = "ROUTED",
+                taskListId = "@none",
+                taskListTitle = null,
+                destinationTaskId = null,
+                status = "COMPLETED",
+                title = memoryItem.title ?: "MemoryOnly",
+                attemptCount = 0
+            )
+            dao.insert(marker)
         }
 
         handled
     }
 
-    suspend fun reconcileInFlightActions(): Int = withContext(Dispatchers.IO) {
+    suspend fun reconcileInFlightActions(recoverMemories: Boolean = true): Int = withContext(Dispatchers.IO) {
         val dao = taskActionDao ?: return@withContext 0
         val destination = googleTasksDestination ?: return@withContext 0
 
@@ -188,7 +227,7 @@ open class ActionRoutingCoordinator(
             dao.getInFlightCreatingActions(limit = 10)
         } catch (e: Exception) {
             logger.w(TAG, "Failed querying in-flight actions: ${e.javaClass.simpleName}")
-            return@withContext 0
+            emptyList()
         }
 
         var count = 0
@@ -196,28 +235,44 @@ open class ActionRoutingCoordinator(
         for (action in creatingActions) {
             // Stale CREATING action (older than 30 seconds since last state update)
             if (now - action.updatedAt > 30_000L) {
-                // Check if Google Tasks is authorized
-                if (!destination.isAuthorized()) {
-                    dao.updateStatusAndError(action.id, "NEEDS_ATTENTION", "Reconciliation: auth missing")
-                    count++
-                    continue
-                }
-
-                val candidate = ActionCandidate(
-                    type = ActionCandidateType.TASK,
-                    title = action.title,
-                    confidence = 1.0f,
-                    dueAt = action.originalDueAt?.let { Instant.ofEpochMilli(it) },
-                    notes = action.notes,
-                    sourceMemoryId = action.sourceMemoryId
-                )
-
-                val result = destination.createTask(candidate)
+                val result = destination.reconcileAction(action)
                 if (result is DestinationExecutionResult.Success) {
                     count++
                 }
             }
         }
+
+        if (recoverMemories) {
+            count += recoverUnroutedMemories()
+        }
+
         count
+    }
+
+    suspend fun recoverUnroutedMemories(memoryRepo: MemoryRepository? = null): Int = withContext(Dispatchers.IO) {
+        val repo = memoryRepo ?: memoryRepository ?: return@withContext 0
+        val dao = taskActionDao ?: return@withContext 0
+
+        val recentMemories = try {
+            repo.getAllMemories().first()
+        } catch (e: Exception) {
+            logger.w(TAG, "Failed reading memories for recovery: ${e.javaClass.simpleName}")
+            return@withContext 0
+        }
+
+        var recoveredCount = 0
+        for (memory in recentMemories) {
+            if (memory.sourceType == SourceType.SCREENSHOT && !memory.rawText.isNullOrBlank()) {
+                val existing = dao.getActionsForMemory(memory.id)
+                if (existing.isEmpty()) {
+                    logger.i(TAG, "Recovering unrouted memory ${memory.id}")
+                    val handled = process(memory, memory.rawText)
+                    if (handled) {
+                        recoveredCount++
+                    }
+                }
+            }
+        }
+        recoveredCount
     }
 }

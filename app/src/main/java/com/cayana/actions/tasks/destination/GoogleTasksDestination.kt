@@ -98,9 +98,10 @@ class GoogleTasksDestination(
 
         // 3. Persistent Deduplication and atomic reservation
         val existingAction = try {
-            taskActionDao.getAction(candidate.sourceMemoryId, ACTION_TYPE_CREATE, taskListId)
+            val actions = taskActionDao.getActionsForMemory(candidate.sourceMemoryId)
+            actions.firstOrNull { it.actionType == ACTION_TYPE_CREATE }
         } catch (e: Exception) {
-            logger.w(TAG, "Failed to query existing task action: ${e.javaClass.simpleName}")
+            logger.w(TAG, "Failed to query existing task actions: ${e.javaClass.simpleName}")
             null
         }
 
@@ -108,52 +109,21 @@ class GoogleTasksDestination(
         if (existingAction != null) {
             when (existingAction.status) {
                 "CREATED" -> {
-                    logger.i(TAG, "Task already created for memory ${candidate.sourceMemoryId} in list $taskListId")
+                    logger.i(TAG, "Task already created for memory ${candidate.sourceMemoryId} in list ${existingAction.taskListId}")
                     return@withContext DestinationExecutionResult.Success(
                         destinationReferenceId = existingAction.destinationTaskId,
                         message = "Task already created (idempotent)"
                     )
                 }
                 "NEEDS_ATTENTION" -> {
-                    logger.w(TAG, "Existing task action in NEEDS_ATTENTION state for memory ${candidate.sourceMemoryId}; attempting reconciliation")
-                    val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
-                        is Result.Success -> tokenResult.data
-                        else -> return@withContext DestinationExecutionResult.NeedsAttention(
-                            reason = existingAction.lastError ?: "Previous task creation state requires attention"
-                        )
-                    }
-                    val reconcileResult = reconcileUncertainPost(
-                        existingAction.id,
-                        token,
-                        taskListId,
-                        candidate,
-                        existingAction.title
-                    )
-                    if (reconcileResult is DestinationExecutionResult.Success) {
-                        return@withContext reconcileResult
-                    }
-                    return@withContext DestinationExecutionResult.NeedsAttention(
-                        reason = "無法確認 Google Tasks 是否已建立待辦；為避免重複，不會自動重送。"
-                    )
+                    logger.w(TAG, "Existing task action in NEEDS_ATTENTION state for memory ${candidate.sourceMemoryId}; reconciling against original list ${existingAction.taskListId}")
+                    return@withContext reconcileAction(existingAction)
                 }
                 "CREATING" -> {
                     val isStale = (System.currentTimeMillis() - existingAction.updatedAt) > 30_000L
                     if (isStale) {
-                        logger.w(TAG, "Stale CREATING action found for memory ${candidate.sourceMemoryId}; reconciling with remote list")
-                        val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
-                            is Result.Success -> tokenResult.data
-                            else -> {
-                                taskActionDao.updateStatusAndError(existingAction.id, "NEEDS_ATTENTION", "Reconciliation: auth missing")
-                                return@withContext DestinationExecutionResult.NeedsAttention("Google Tasks 授權失效。")
-                            }
-                        }
-                        return@withContext reconcileUncertainPost(
-                            existingAction.id,
-                            token,
-                            taskListId,
-                            candidate,
-                            existingAction.title
-                        )
+                        logger.w(TAG, "Stale CREATING action found for memory ${candidate.sourceMemoryId}; reconciling with remote list ${existingAction.taskListId}")
+                        return@withContext reconcileAction(existingAction)
                     } else {
                         logger.w(TAG, "Task creation is currently in progress for memory ${candidate.sourceMemoryId}")
                         return@withContext DestinationExecutionResult.Failure(
@@ -169,6 +139,13 @@ class GoogleTasksDestination(
                 "IGNORED" -> {
                     logger.i(TAG, "Task action for memory ${candidate.sourceMemoryId} was ignored by user; skipping")
                     return@withContext DestinationExecutionResult.Skipped
+                }
+                "CANCELLED" -> {
+                    logger.i(TAG, "Task action for memory ${candidate.sourceMemoryId} was cancelled; skipping")
+                    return@withContext DestinationExecutionResult.Failure(
+                        reason = "Task action was cancelled: ${existingAction.lastError}",
+                        canRetry = false
+                    )
                 }
                 else -> {
                     // Status is FAILED or CREATING_ERROR: atomic claim
@@ -262,6 +239,45 @@ class GoogleTasksDestination(
     }
 
     /**
+     * Bounded reconciliation of a persisted TaskActionEntity.
+     * Strictly verifies against the ORIGINAL action.taskListId and never creates a task
+     * on a newly selected list. If remote lookup cannot verify existence, retains NEEDS_ATTENTION.
+     */
+    suspend fun reconcileAction(action: TaskActionEntity): DestinationExecutionResult = withContext(Dispatchers.IO) {
+        if (!isAuthorized()) {
+            logger.w(TAG, "reconcileAction: Google Tasks auth missing for action ${action.id}")
+            taskActionDao.updateStatusAndError(action.id, "NEEDS_ATTENTION", "Reconciliation: auth missing")
+            return@withContext DestinationExecutionResult.NeedsAttention("Google Tasks 授權失效。")
+        }
+
+        val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
+            is Result.Success -> tokenResult.data
+            else -> {
+                taskActionDao.updateStatusAndError(action.id, "NEEDS_ATTENTION", "Reconciliation: token acquisition failed")
+                return@withContext DestinationExecutionResult.NeedsAttention("無法取得 Google Tasks 授權權杖。")
+            }
+        }
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.TASK,
+            title = action.title,
+            confidence = 1.0f,
+            dueAt = action.originalDueAt?.let { Instant.ofEpochMilli(it) },
+            notes = action.notes,
+            sourceMemoryId = action.sourceMemoryId,
+            requiresConfirmation = false
+        )
+
+        reconcileUncertainPost(
+            actionId = action.id,
+            token = token,
+            taskListId = action.taskListId,
+            candidate = candidate,
+            cleanTitle = action.title
+        )
+    }
+
+    /**
      * Executes a task action that was explicitly confirmed by the user.
      * Atomically claims the action from CONFIRM_PENDING to CREATING,
      * verifies destination task list consistency, and creates the remote task.
@@ -290,16 +306,20 @@ class GoogleTasksDestination(
             )
         }
 
-        if (!isAuthorized()) {
-            logger.w(TAG, "executeConfirmedTask: Google Tasks authorization missing")
-            return@withContext DestinationExecutionResult.NeedsAttention("Google Tasks 授權失效")
-        }
-
         val settings = try {
             settingsRepository.getSettings().first()
         } catch (e: Exception) {
             logger.w(TAG, "executeConfirmedTask: failed loading settings: ${e.javaClass.simpleName}")
             return@withContext DestinationExecutionResult.Failure("Failed loading settings", canRetry = true)
+        }
+
+        if (!isAuthorized() || !settings.isGoogleTasksConnected || settings.googleTasksAuthStatus != TasksAuthStatus.CONNECTED) {
+            logger.w(TAG, "executeConfirmedTask: Google Tasks authorization missing or disconnected")
+            taskActionDao.updateStatusAndError(actionId, "CANCELLED", "Google Tasks 連線已中斷，確認已失效")
+            return@withContext DestinationExecutionResult.Failure(
+                reason = "Google Tasks 連線已中斷，無法執行待辦建立",
+                canRetry = false
+            )
         }
 
         // Destination consistency check: must match action.taskListId!
@@ -341,13 +361,17 @@ class GoogleTasksDestination(
 
         val finalNotes = buildNotes(candidate, ZoneId.systemDefault())
 
-        val postResult = tasksClient.createTask(
-            accessToken = token,
-            taskListId = action.taskListId,
-            title = action.title,
-            notes = finalNotes,
-            dueRfc3339 = action.googleDue
-        )
+        val postResult = try {
+            tasksClient.createTask(
+                accessToken = token,
+                taskListId = action.taskListId,
+                title = action.title,
+                notes = finalNotes,
+                dueRfc3339 = action.googleDue
+            )
+        } catch (e: Exception) {
+            Result.Error(e)
+        }
 
         when (postResult) {
             is Result.Success -> {
