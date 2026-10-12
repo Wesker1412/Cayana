@@ -262,20 +262,30 @@ class GoogleTasksDestinationTest {
     }
 
     @Test
-    fun httpErrorHandling429And500CanRetry() = runTest {
-        // 429 Rate limited
-        fakeTasksClient.shouldFailWithHttpException = TasksHttpException.RateLimited(429, "Too Many Requests")
-        val candidate429 = createTestTaskCandidate()
-        val result429 = destination.createTaskInternal(candidate429, zoneId)
-        assertTrue(result429 is DestinationExecutionResult.Failure)
-        assertTrue((result429 as DestinationExecutionResult.Failure).canRetry)
+    fun ambiguousHttp429And500DoNotBlindlyRetry() = runTest {
+        // A response code alone cannot prove whether a POST was committed remotely.
+        for (exception in listOf(
+            TasksHttpException.RateLimited(429, "Too Many Requests"),
+            TasksHttpException.ServerError(500, "Internal Server Error")
+        )) {
+            val candidate = createTestTaskCandidate(sourceMemoryId = "memory-${exception.statusCode}")
+            fakeTasksClient.shouldFailWithHttpException = exception
 
-        // 500 Server Error
-        fakeTasksClient.shouldFailWithHttpException = TasksHttpException.ServerError(500, "Internal Server Error")
-        val candidate500 = createTestTaskCandidate()
-        val result500 = destination.createTaskInternal(candidate500, zoneId)
-        assertTrue(result500 is DestinationExecutionResult.Failure)
-        assertTrue((result500 as DestinationExecutionResult.Failure).canRetry)
+            val first = destination.createTaskInternal(candidate, zoneId)
+            assertTrue(first is DestinationExecutionResult.NeedsAttention)
+
+            val persisted = taskActionDao.getAction(
+                candidate.sourceMemoryId,
+                GoogleTasksDestination.ACTION_TYPE_CREATE,
+                "list-personal-1"
+            )
+            assertEquals("NEEDS_ATTENTION", persisted?.status)
+
+            val postCount = fakeTasksClient.postRequests.size
+            val repeated = destination.createTaskInternal(candidate, zoneId)
+            assertTrue(repeated is DestinationExecutionResult.NeedsAttention)
+            assertEquals("Uncertain POST must not be blindly retried", postCount, fakeTasksClient.postRequests.size)
+        }
     }
 
     // 7. Response lost does not blindly duplicate (recovers if exists, needs attention if unconfirmed)
