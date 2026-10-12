@@ -60,7 +60,7 @@ class GoogleTasksDestination(
         val settings = try {
             settingsRepository.getSettings().first()
         } catch (e: Exception) {
-            logger.w(TAG, "Failed loading user settings: ${e.message}")
+            logger.w(TAG, "Failed loading user settings: ${e.javaClass.simpleName}")
             return@withContext DestinationExecutionResult.Failure("Settings unavailable", canRetry = false)
         }
 
@@ -88,7 +88,7 @@ class GoogleTasksDestination(
         val existingAction = try {
             taskActionDao.getAction(candidate.sourceMemoryId, ACTION_TYPE_CREATE, taskListId)
         } catch (e: Exception) {
-            logger.w(TAG, "Failed to query existing task action: ${e.message}")
+            logger.w(TAG, "Failed to query existing task action: ${e.javaClass.simpleName}")
             null
         }
 
@@ -152,10 +152,11 @@ class GoogleTasksDestination(
             try {
                 taskActionDao.insert(reservation)
             } catch (e: Exception) {
-                logger.w(TAG, "Duplicate task action reservation prevented: ${e.message}")
-                return@withContext DestinationExecutionResult.Success(
-                    destinationReferenceId = null,
-                    message = "Duplicate reservation prevented"
+                // A uniqueness conflict means another attempt owns the reservation, not that
+                // the remote task was created. A database error is likewise never success.
+                logger.w(TAG, "Task reservation not acquired: ${e.javaClass.simpleName}")
+                return@withContext DestinationExecutionResult.NeedsAttention(
+                    reason = "無法確認待辦建立狀態；不會重複送出。"
                 )
             }
         }
@@ -164,10 +165,10 @@ class GoogleTasksDestination(
         val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
             is Result.Success -> tokenResult.data
             is Result.Error -> {
-                logger.w(TAG, "Failed obtaining access token: ${tokenResult.exception.message}")
-                taskActionDao.updateStatusAndError(actionId, "FAILED", tokenResult.exception.message)
+                logger.w(TAG, "Failed obtaining access token: ${tokenResult.exception.javaClass.simpleName}")
+                taskActionDao.updateStatusAndError(actionId, "FAILED", "Authorization required")
                 return@withContext DestinationExecutionResult.NeedsAttention(
-                    reason = "Google Tasks access token required: ${tokenResult.exception.message}"
+                    reason = "Google Tasks 授權失效，需要重新授權。"
                 )
             }
             Result.Loading -> return@withContext DestinationExecutionResult.Failure("Token loading", canRetry = true)
@@ -198,7 +199,10 @@ class GoogleTasksDestination(
                 val ex = createResult.exception
                 handleCreateFailure(actionId, token, taskListId, candidate, cleanTitle, ex)
             }
-            Result.Loading -> DestinationExecutionResult.Failure("Creating task", canRetry = true)
+            Result.Loading -> {
+                taskActionDao.updateStatusAndError(actionId, "NEEDS_ATTENTION", "Remote result unavailable")
+                DestinationExecutionResult.NeedsAttention("待辦建立結果尚未確認；請先確認遠端狀態。")
+            }
         }
     }
 
@@ -210,61 +214,58 @@ class GoogleTasksDestination(
         cleanTitle: String,
         exception: Throwable
     ): DestinationExecutionResult {
-        when (exception) {
+        return when (exception) {
             is TasksHttpException.Unauthorized -> {
                 logger.w(TAG, "Received 401 Unauthorized from Google Tasks API; invalidating token")
                 tasksAuthManager.invalidateCachedAccessToken()
                 tasksAuthManager.markAuthRequired()
                 taskActionDao.updateStatusAndError(actionId, "FAILED", "401 Unauthorized")
-                return DestinationExecutionResult.NeedsAttention("Google Tasks 授權已失效，需要重新驗證。")
+                DestinationExecutionResult.NeedsAttention("Google Tasks 授權已失效，需要重新驗證。")
             }
-            is TasksHttpException.RateLimited -> {
-                logger.w(TAG, "Received 429 Rate Limited from Google Tasks API")
-                taskActionDao.updateStatusAndError(actionId, "FAILED", "429 Rate Limited")
-                return DestinationExecutionResult.Failure("Google Tasks 請求過於頻繁，請稍後重試。", canRetry = true)
-            }
-            is TasksHttpException.ServerError -> {
-                logger.w(TAG, "Received 5xx Server Error from Google Tasks API: ${exception.message}")
-                taskActionDao.updateStatusAndError(actionId, "FAILED", exception.message)
-                return DestinationExecutionResult.Failure("Google Tasks 伺服器暫時發生錯誤，請稍後重試。", canRetry = true)
-            }
-            is IOException -> {
-                // Network timeout or connection interrupted: POST may have been delivered!
-                // DO NOT blindly retry POST. Query remote task list to verify first.
-                logger.w(TAG, "POST timed out or connection lost; querying remote list to avoid duplicate creation")
-                val queryResult = try {
-                    tasksClient.findTaskByMemoryRef(token, taskListId, candidate.sourceMemoryId, cleanTitle)
-                } catch (e: Exception) {
-                    Result.Error(e)
-                }
-
-                if (queryResult is Result.Success && queryResult.data != null) {
-                    val recoveredTask = queryResult.data
-                    taskActionDao.updateStatusAndTaskId(actionId, "CREATED", recoveredTask.id)
-                    logger.i(TAG, "Recovered task ${recoveredTask.id} after timeout without duplicate creation")
-                    return DestinationExecutionResult.Success(
-                        destinationReferenceId = recoveredTask.id,
-                        message = "已建立至 Google Tasks（連線中斷後已自動確認並復原，未重複建立）。"
-                    )
-                }
-
-                // If remote task status cannot be confirmed, mark as NEEDS_ATTENTION. Never blindly retry!
-                logger.e(TAG, "Remote task status unconfirmed after network failure; marking NEEDS_ATTENTION")
-                taskActionDao.updateStatusAndError(
-                    actionId,
-                    "NEEDS_ATTENTION",
-                    "POST delivered but response timed out; remote task unconfirmed: ${exception.message}"
-                )
-                return DestinationExecutionResult.NeedsAttention(
-                    reason = "待辦事項建立逾時且無法確認遠端狀態，已標記為 NeedsAttention 以防重複建立。"
-                )
+            is TasksHttpException.ClientError -> {
+                // An explicit non-retryable 4xx response is not an uncertain POST outcome.
+                logger.w(TAG, "Google Tasks rejected create request: HTTP ${exception.statusCode}")
+                taskActionDao.updateStatusAndError(actionId, "FAILED", "HTTP ${exception.statusCode}")
+                DestinationExecutionResult.Failure("Google Tasks 拒絕建立待辦。", canRetry = false)
             }
             else -> {
-                logger.e(TAG, "Unexpected error creating task: ${exception.message}")
-                taskActionDao.updateStatusAndError(actionId, "FAILED", exception.message)
-                return DestinationExecutionResult.Failure("建立待辦事項失敗：${exception.message}", canRetry = true)
+                // An HTTP 429/5xx, timeout, malformed response or unexpected transport
+                // failure may follow a successful remote write. Never blindly POST again.
+                logger.w(TAG, "Google Tasks create outcome uncertain: ${exception.javaClass.simpleName}")
+                reconcileUncertainPost(actionId, token, taskListId, candidate, cleanTitle)
             }
         }
+    }
+
+    private suspend fun reconcileUncertainPost(
+        actionId: String,
+        token: String,
+        taskListId: String,
+        candidate: ActionCandidate,
+        cleanTitle: String
+    ): DestinationExecutionResult {
+        val remoteResult = try {
+            tasksClient.findTaskByMemoryRef(token, taskListId, candidate.sourceMemoryId, cleanTitle)
+        } catch (e: Exception) {
+            logger.w(TAG, "Remote task reconciliation failed: ${e.javaClass.simpleName}")
+            Result.Error(e)
+        }
+
+        if (remoteResult is Result.Success && remoteResult.data != null) {
+            val recoveredTask = remoteResult.data
+            taskActionDao.updateStatusAndTaskId(actionId, "CREATED", recoveredTask.id)
+            return DestinationExecutionResult.Success(
+                destinationReferenceId = recoveredTask.id,
+                message = "已確認遠端待辦建立成功，未重複建立。"
+            )
+        }
+
+        // A negative/incomplete remote list query is NOT proof the POST was rejected:
+        // the list can be paginated, stale, or temporarily unavailable.
+        taskActionDao.updateStatusAndError(actionId, "NEEDS_ATTENTION", "Remote POST outcome unconfirmed")
+        return DestinationExecutionResult.NeedsAttention(
+            reason = "無法確認 Google Tasks 是否已建立待辦；為避免重複，不會自動重送。"
+        )
     }
 
     private fun formatGoogleDue(dueAt: Instant, zoneId: ZoneId): String {
