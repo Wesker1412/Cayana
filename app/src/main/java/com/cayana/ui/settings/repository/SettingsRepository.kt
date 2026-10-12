@@ -58,7 +58,8 @@ data class UserSettings(
     val googleTasksAuthStatus: com.cayana.actions.tasks.auth.TasksAuthStatus = com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED,
     val autoTasksEnabled: Boolean = false,
     val selectedTaskListId: String? = null,
-    val selectedTaskListTitle: String? = null
+    val selectedTaskListTitle: String? = null,
+    val googleTasksEligibilityEpoch: Long = 0L
 )
 
 interface SettingsRepository {
@@ -100,6 +101,7 @@ interface SettingsRepository {
     suspend fun updateLastBackupTimestamp(timestamp: Long)
     suspend fun updateHasRecoveryKey(hasKey: Boolean)
     suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus)
+    suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long)
     suspend fun updateAutoTasksEnabled(enabled: Boolean)
     suspend fun updateSelectedTaskList(listId: String?, listTitle: String?)
     suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings)
@@ -308,11 +310,23 @@ class InMemorySettingsRepository(
 
     override suspend fun updateGoogleTasksAuthStatus(status: com.cayana.actions.tasks.auth.TasksAuthStatus) {
         _settings.update {
+            val epoch = if (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED) {
+                if (it.googleTasksEligibilityEpoch <= 0L) System.currentTimeMillis() else it.googleTasksEligibilityEpoch
+            } else if (status == com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED) {
+                0L
+            } else {
+                it.googleTasksEligibilityEpoch
+            }
             it.copy(
                 googleTasksAuthStatus = status,
-                isGoogleTasksConnected = (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED)
+                isGoogleTasksConnected = (status == com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED),
+                googleTasksEligibilityEpoch = epoch
             )
         }
+    }
+
+    override suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long) {
+        _settings.update { it.copy(googleTasksEligibilityEpoch = epoch) }
     }
 
     override suspend fun updateAutoTasksEnabled(enabled: Boolean) {

@@ -149,6 +149,19 @@ class GoogleTasksDestination(
                 }
                 else -> {
                     // Status is FAILED or CREATING_ERROR: atomic claim
+                    // Destination consistency check: must match existingAction.taskListId!
+                    if (existingAction.taskListId != taskListId) {
+                        logger.w(TAG, "Destination task list mismatch for retry (original=${existingAction.taskListId}, current=$taskListId); stopping retry to prevent altering destination")
+                        taskActionDao.updateStatusAndError(
+                            existingAction.id,
+                            "NEEDS_ATTENTION",
+                            "目標待辦清單已變更（原清單：${existingAction.taskListTitle}），已停止重試。"
+                        )
+                        return@withContext DestinationExecutionResult.NeedsAttention(
+                            reason = "目標待辦清單已變更，為避免傳送至錯誤清單，已停止重試。"
+                        )
+                    }
+
                     val claimed = taskActionDao.claimRetryAction(existingAction.id)
                     if (claimed != 1) {
                         logger.i(TAG, "Another execution claimed retry for action ${existingAction.id}")
@@ -193,6 +206,8 @@ class GoogleTasksDestination(
             }
         }
 
+        val targetListId = existingAction?.taskListId ?: taskListId
+
         // 4. Acquire valid Access Token
         val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
             is Result.Success -> tokenResult.data
@@ -206,13 +221,27 @@ class GoogleTasksDestination(
             Result.Loading -> return@withContext DestinationExecutionResult.Failure("Token loading", canRetry = true)
         }
 
+        // Pre-POST Disconnect Gate (Race condition check)
+        val currentSettings = try {
+            settingsRepository.getSettings().first()
+        } catch (_: Exception) { null }
+
+        if (!isAuthorized() || tasksAuthManager.authStatus.value != TasksAuthStatus.CONNECTED || currentSettings?.isGoogleTasksConnected != true) {
+            logger.w(TAG, "Tasks connection revoked before auto POST dispatch; aborting transmission for action $actionId")
+            taskActionDao.updateStatusAndError(actionId, "CANCELLED", "Google Tasks 已中斷連線，已停止自動建立")
+            return@withContext DestinationExecutionResult.Failure(
+                reason = "Google Tasks 已中斷連線，已停止自動建立",
+                canRetry = false
+            )
+        }
+
         // 5. Dispatch to Google Tasks API
         val cleanTitle = candidate.title.trim().take(MAX_TITLE_LENGTH)
         val googleDue = candidate.dueAt?.let { formatGoogleDue(it, zoneId) }
         val notesToSend = buildNotes(candidate, zoneId)
 
         val createResult = try {
-            tasksClient.createTask(token, taskListId, cleanTitle, notesToSend, googleDue)
+            tasksClient.createTask(token, targetListId, cleanTitle, notesToSend, googleDue)
         } catch (e: Exception) {
             Result.Error(e)
         }
@@ -360,6 +389,20 @@ class GoogleTasksDestination(
         )
 
         val finalNotes = buildNotes(candidate, ZoneId.systemDefault())
+
+        // Pre-POST Disconnect Gate (Race condition check for confirmed tasks)
+        val currentSettings = try {
+            settingsRepository.getSettings().first()
+        } catch (_: Exception) { null }
+
+        if (!isAuthorized() || tasksAuthManager.authStatus.value != TasksAuthStatus.CONNECTED || currentSettings?.isGoogleTasksConnected != true) {
+            logger.w(TAG, "Tasks connection revoked before confirmed POST dispatch; cancelling action $actionId")
+            taskActionDao.updateStatusAndError(actionId, "CANCELLED", "Google Tasks 連線已中斷，確認已失效")
+            return@withContext DestinationExecutionResult.Failure(
+                reason = "Google Tasks 連線已中斷，無法執行待辦建立",
+                canRetry = false
+            )
+        }
 
         val postResult = try {
             tasksClient.createTask(

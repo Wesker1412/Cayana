@@ -98,7 +98,8 @@ class ActionRoutingCoordinatorTest {
                 googleTasksAuthStatus = TasksAuthStatus.CONNECTED,
                 autoTasksEnabled = true,
                 selectedTaskListId = "list-test-1",
-                selectedTaskListTitle = "測試清單"
+                selectedTaskListTitle = "測試清單",
+                googleTasksEligibilityEpoch = 1L
             )
         )
 
@@ -479,6 +480,76 @@ class ActionRoutingCoordinatorTest {
         // Even if reconcileInFlightActions runs, it must not duplicate
         coordinator.reconcileInFlightActions(recoverMemories = true)
         assertEquals("Reconciliation must not create duplicate POST", 1, fakeTasksClient.createdTasks.size)
+    }
+
+    @Test
+    fun historicalMemoryNeverAutomaticallyBackfilled() = runTest {
+        val now = System.currentTimeMillis()
+        // Historical memory captured 7 days ago (before Google Tasks was enabled)
+        val historicalMemory = MemoryItem(
+            id = "mem-hist-backfill-1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = now - 7 * 24 * 3600_000L,
+            capturedAt = now - 7 * 24 * 3600_000L,
+            title = "待辦",
+            rawText = "TODO: 一週前的重要歷史待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(historicalMemory)
+
+        // User enables Google Tasks now: eligibility epoch is set to current time
+        settingsRepository.updateGoogleTasksEligibilityEpoch(now)
+
+        // Reconciliation / recovery runs
+        coordinator.reconcileInFlightActions(recoverMemories = true)
+
+        // Historical memory must NEVER be backfilled or uploaded to Google Tasks
+        assertEquals("Historical memory must not create remote task", 0, fakeTasksClient.createdTasks.size)
+        assertTrue("No action entity should be created for historical memory", taskActionDao.getActionsForMemory(historicalMemory.id).isEmpty())
+    }
+
+    @Test
+    fun processDeathRecoversOnlyEligibleMemory() = runTest {
+        val epochTime = 50_000L
+        settingsRepository.updateGoogleTasksEligibilityEpoch(epochTime)
+
+        // M1: Historical memory created before epoch (e.g. 10_000L)
+        val m1Historical = MemoryItem(
+            id = "mem-eligible-test-m1",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 10_000L,
+            capturedAt = 10_000L,
+            title = "歷史待辦",
+            rawText = "TODO: 歷史舊待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(m1Historical)
+
+        // M2: Eligible memory captured during active connection after epoch (e.g. 60_000L)
+        val m2Eligible = MemoryItem(
+            id = "mem-eligible-test-m2",
+            sourceType = SourceType.SCREENSHOT,
+            createdAt = 60_000L,
+            capturedAt = 60_000L,
+            title = "新拍攝待辦",
+            rawText = "TODO: 新拍攝待辦 截止: 2026-10-25 18:00"
+        )
+        memoryRepository.saveMemory(m2Eligible)
+
+        // Process death occurred before either could be routed
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+        assertTrue(taskActionDao.getActionsForMemory(m1Historical.id).isEmpty())
+        assertTrue(taskActionDao.getActionsForMemory(m2Eligible.id).isEmpty())
+
+        // Recovery runs on restart
+        coordinator.reconcileInFlightActions(recoverMemories = true)
+
+        // Only M2 is recovered and created; M1 is untouched
+        assertEquals("Only eligible memory M2 should be created remotely", 1, fakeTasksClient.createdTasks.size)
+        assertTrue("Created task must belong to M2", fakeTasksClient.createdTasks.first().title.contains("新拍攝待辦"))
+
+        assertTrue("M1 must have zero actions", taskActionDao.getActionsForMemory(m1Historical.id).isEmpty())
+        val m2Actions = taskActionDao.getActionsForMemory(m2Eligible.id)
+        assertEquals(1, m2Actions.size)
+        assertEquals("CREATED", m2Actions.first().status)
     }
 
     private class FakeCalendarDestination : CalendarDestination {

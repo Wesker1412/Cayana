@@ -252,6 +252,21 @@ open class ActionRoutingCoordinator(
     suspend fun recoverUnroutedMemories(memoryRepo: MemoryRepository? = null): Int = withContext(Dispatchers.IO) {
         val repo = memoryRepo ?: memoryRepository ?: return@withContext 0
         val dao = taskActionDao ?: return@withContext 0
+        val settingsRepo = settingsRepository ?: return@withContext 0
+
+        val settings = try {
+            settingsRepo.getSettings().first()
+        } catch (e: Exception) {
+            logger.w(TAG, "Failed reading settings for recovery: ${e.javaClass.simpleName}")
+            return@withContext 0
+        }
+
+        // Recovery Eligibility Boundary:
+        // Must be authorized, connected, and have a valid eligibility epoch.
+        if (!settings.isGoogleTasksConnected || settings.googleTasksAuthStatus != com.cayana.actions.tasks.auth.TasksAuthStatus.CONNECTED || settings.googleTasksEligibilityEpoch <= 0L) {
+            logger.d(TAG, "recoverUnroutedMemories: Tasks not connected or no eligibility epoch; skipping recovery")
+            return@withContext 0
+        }
 
         val recentMemories = try {
             repo.getAllMemories().first()
@@ -261,11 +276,27 @@ open class ActionRoutingCoordinator(
         }
 
         var recoveredCount = 0
+        var scannedCount = 0
+        val maxScanLimit = 50
+
         for (memory in recentMemories) {
+            if (++scannedCount > maxScanLimit) {
+                break
+            }
+
+            // Reliable eligibility boundary:
+            // Only memories created/captured AT OR AFTER the eligibility epoch (when tasks was authorized) are eligible!
+            // Memories are ordered newest-first (capturedAt DESC), so as soon as memoryTime < eligibilityEpoch,
+            // all subsequent memories are older historical memories -> break immediately!
+            val memoryTime = memory.createdAt.takeIf { it > 0 } ?: memory.capturedAt
+            if (memoryTime < settings.googleTasksEligibilityEpoch) {
+                break
+            }
+
             if (memory.sourceType == SourceType.SCREENSHOT && !memory.rawText.isNullOrBlank()) {
                 val existing = dao.getActionsForMemory(memory.id)
                 if (existing.isEmpty()) {
-                    logger.i(TAG, "Recovering unrouted memory ${memory.id}")
+                    logger.i(TAG, "Recovering eligible unrouted memory ${memory.id}")
                     val handled = process(memory, memory.rawText)
                     if (handled) {
                         recoveredCount++

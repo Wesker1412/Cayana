@@ -704,6 +704,100 @@ class GoogleTasksDestinationTest {
         assertFalse("Error message must not contain private sensitive data", reloaded?.lastError?.contains("cayana://") == true)
     }
 
+    @Test
+    fun failedActionCannotChangeDestinationOnRetry() = runTest {
+        val memory = MemoryItem(
+            id = "mem-failed-retry-dest-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 重試失敗任務"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Action previously failed on original list "list-personal-1"
+        val failedAction = TaskActionEntity(
+            id = "action-failed-retry-1",
+            sourceMemoryId = memory.id,
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "FAILED",
+            title = "重試失敗任務",
+            attemptCount = 1,
+            lastError = "Original network failure"
+        )
+        taskActionDao.insert(failedAction)
+
+        // User subsequently switches active task list in settings to "list-work-2"
+        settingsRepository.updateSelectedTaskList("list-work-2", "工作清單")
+
+        val initialPostCount = fakeTasksClient.postRequests.size
+
+        // Retry is triggered via createTask
+        val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "重試失敗任務")
+        val result = destination.createTask(candidate)
+
+        // Destination mismatch must safely stop retry to avoid changing destination
+        assertTrue("Retry must require attention when destination changed", result is DestinationExecutionResult.NeedsAttention)
+        assertEquals("Zero POST requests must be made to the new list", initialPostCount, fakeTasksClient.postRequests.size)
+
+        val reloaded = taskActionDao.getActionById("action-failed-retry-1")
+        assertEquals("NEEDS_ATTENTION", reloaded?.status)
+        assertEquals("list-personal-1", reloaded?.taskListId)
+    }
+
+    @Test
+    fun disconnectBeforePostBlocksTransmission() = runTest {
+        // Scenario A: Auto Execution - Token acquired, but user disconnected before POST dispatch
+        val memoryAuto = MemoryItem(
+            id = "mem-race-auto-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 自動建立機密待辦"
+        )
+        memoryRepository.saveMemory(memoryAuto)
+
+        fakeAuthManager.disconnectOnTokenAcquired = true
+        val candidateAuto = createTestTaskCandidate(sourceMemoryId = memoryAuto.id, title = "自動建立機密待辦")
+        val resultAuto = destination.createTask(candidateAuto)
+
+        assertTrue("Auto execution must fail when disconnected before POST", resultAuto is DestinationExecutionResult.Failure)
+        assertEquals(0, fakeTasksClient.postRequests.size)
+
+        val autoAction = taskActionDao.getActionsForMemory(memoryAuto.id).firstOrNull()
+        assertNotNull(autoAction)
+        assertEquals("CANCELLED", autoAction?.status)
+        assertTrue(autoAction?.lastError?.contains("已停止自動建立") == true)
+
+        // Scenario B: Manual Confirmation - Token acquired, but user disconnected before confirmed POST dispatch
+        val actionId = UUID.randomUUID().toString()
+        val pendingAction = TaskActionEntity(
+            id = actionId,
+            sourceMemoryId = "mem-race-manual-1",
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CONFIRM_PENDING",
+            title = "手動確認機密待辦",
+            attemptCount = 0
+        )
+        taskActionDao.insert(pendingAction)
+
+        // Reset auth manager to connected before executeConfirmedTask, but disconnect on token acquired
+        fakeAuthManager.setStatus(TasksAuthStatus.CONNECTED)
+        fakeAuthManager.disconnectOnTokenAcquired = true
+
+        val resultManual = destination.executeConfirmedTask(actionId)
+
+        assertTrue("Confirmed task must fail when disconnected before POST", resultManual is DestinationExecutionResult.Failure)
+        assertEquals(0, fakeTasksClient.postRequests.size)
+
+        val manualAction = taskActionDao.getActionById(actionId)
+        assertNotNull(manualAction)
+        assertEquals("CANCELLED", manualAction?.status)
+        assertTrue(manualAction?.lastError?.contains("確認已失效") == true)
+    }
+
     // Test fakes
     class FakeTasksAuthorizationManager(
         initialStatus: TasksAuthStatus = TasksAuthStatus.DISCONNECTED,
@@ -712,6 +806,7 @@ class GoogleTasksDestinationTest {
         private val _authStatus = MutableStateFlow(initialStatus)
         override val authStatus: StateFlow<TasksAuthStatus> = _authStatus.asStateFlow()
         var invalidateTokenCallCount = 0
+        var disconnectOnTokenAcquired: Boolean = false
 
         fun setStatus(status: TasksAuthStatus) {
             _authStatus.value = status
@@ -720,6 +815,9 @@ class GoogleTasksDestinationTest {
         override suspend fun getAccessToken(): Result<String> {
             val t = tokenToReturn
             return if (_authStatus.value == TasksAuthStatus.CONNECTED && t != null) {
+                if (disconnectOnTokenAcquired) {
+                    _authStatus.value = TasksAuthStatus.DISCONNECTED
+                }
                 Result.Success(t)
             } else {
                 _authStatus.value = TasksAuthStatus.AUTH_REQUIRED
