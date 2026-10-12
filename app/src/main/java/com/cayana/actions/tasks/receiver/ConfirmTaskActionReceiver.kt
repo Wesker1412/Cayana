@@ -64,7 +64,7 @@ class ConfirmTaskActionReceiver(
 
         try {
             if (decision == DECISION_IGNORE) {
-                val affected = dao.updateStatus(actionId, "IGNORED")
+                val affected = dao.claimIgnoreAction(actionId)
                 CayanaLogger.i(TAG, "Task action ignored for actionId=$actionId (affected=$affected)")
                 return
             }
@@ -75,39 +75,25 @@ class ConfirmTaskActionReceiver(
                     CayanaLogger.w(TAG, "Task action not found for actionId=$actionId")
                     return
                 }
-                if (action.status != "CONFIRM_PENDING") {
-                    CayanaLogger.i(TAG, "Confirm task action not pending for actionId=$actionId (status=${action.status})")
-                    return
-                }
 
-                val candidate = ActionCandidate(
-                    type = ActionCandidateType.TASK,
-                    title = action.title,
-                    confidence = 1.0f,
-                    dueAt = action.originalDueAt?.let { Instant.ofEpochMilli(it) },
-                    notes = action.notes,
-                    sourceMemoryId = action.sourceMemoryId,
-                    requiresConfirmation = false
-                )
-
-                when (val result = destination.createTask(candidate)) {
+                when (val result = destination.executeConfirmedTask(actionId)) {
                     is DestinationExecutionResult.Success -> {
-                        val formattedDue = candidate.dueAt?.let {
-                            NotificationHelper.formatEventDateTime(it, false, ZoneId.systemDefault())
+                        val formattedDue = action.originalDueAt?.let {
+                            NotificationHelper.formatEventDateTime(Instant.ofEpochMilli(it), false, ZoneId.systemDefault())
                         } ?: ""
                         NotificationHelper.showTaskAddedNotification(
                             context = context,
                             notificationId = if (notificationId != -1) notificationId else action.sourceMemoryId.hashCode() + 100,
                             actionId = actionId,
-                            title = candidate.title,
+                            title = action.title,
                             formattedDue = formattedDue
                         )
                     }
                     is DestinationExecutionResult.NeedsAttention -> {
-                        CayanaLogger.w(TAG, "Task confirmed by user but destination requires attention")
+                        CayanaLogger.w(TAG, "Task confirmed by user but destination requires attention: ${result.reason}")
                     }
                     is DestinationExecutionResult.Failure -> {
-                        CayanaLogger.w(TAG, "Task confirmed by user but destination failed")
+                        CayanaLogger.w(TAG, "Task confirmed by user but destination failed: ${result.reason}")
                     }
                     DestinationExecutionResult.Skipped -> Unit
                 }

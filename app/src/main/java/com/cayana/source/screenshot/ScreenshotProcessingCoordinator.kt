@@ -20,7 +20,10 @@ import com.cayana.processing.OcrEngine
 import com.cayana.processing.ProcessingState
 import com.cayana.source.SourceType
 import com.cayana.ui.settings.repository.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -38,7 +41,8 @@ class ScreenshotProcessingCoordinator(
     private val ocrEngine: OcrEngine,
     private val dispatchers: CoroutineDispatchers = AppDispatchers(),
     private val calendarProcessingCoordinator: CalendarProcessingCoordinator? = null,
-    private val actionRoutingCoordinator: com.cayana.actions.coordinator.ActionRoutingCoordinator? = null
+    private val actionRoutingCoordinator: com.cayana.actions.coordinator.ActionRoutingCoordinator? = null,
+    private val routingScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatchers.io)
 ) {
     private val processingMutex = Mutex()
     var mediaStoreVersionProvider: (Context) -> String? = { getMediaStoreVersion(it) }
@@ -241,15 +245,18 @@ class ScreenshotProcessingCoordinator(
                             false
                         }
 
-                        // 10. Task / Action Routing
-                        val handledByAction = try {
-                            actionRoutingCoordinator?.process(memoryItem, rawText) ?: false
-                        } catch (e: Exception) {
-                            CayanaLogger.w("ScreenshotCoordinator", "Action routing error: ${e.message}")
-                            false
+                        // 10. Task / Action Routing (Dispatched in background so external network latency never blocks memory ingestion)
+                        if (actionRoutingCoordinator != null) {
+                            routingScope.launch {
+                                try {
+                                    actionRoutingCoordinator.process(memoryItem, rawText)
+                                } catch (e: Exception) {
+                                    CayanaLogger.w("ScreenshotCoordinator", "Action routing error: ${e.message}")
+                                }
+                            }
                         }
 
-                        if (!handledByCalendar && !handledByAction) {
+                        if (!handledByCalendar) {
                             NotificationHelper.showMemoryIngestedNotification(context, memoryItem)
                         }
                     }
@@ -415,13 +422,16 @@ class ScreenshotProcessingCoordinator(
                         if (newText != null && newState == ProcessingState.COMPLETED) {
                             try {
                                 val handledByCalendar = calendarProcessingCoordinator?.process(updated, newText) ?: false
-                                val handledByAction = try {
-                                    actionRoutingCoordinator?.process(updated, newText) ?: false
-                                } catch (e: Exception) {
-                                    CayanaLogger.w("ScreenshotCoordinator", "Action routing error on OCR retry: ${e.message}")
-                                    false
+                                if (actionRoutingCoordinator != null) {
+                                    routingScope.launch {
+                                        try {
+                                            actionRoutingCoordinator.process(updated, newText)
+                                        } catch (e: Exception) {
+                                            CayanaLogger.w("ScreenshotCoordinator", "Action routing error on OCR retry: ${e.message}")
+                                        }
+                                    }
                                 }
-                                if (!handledByCalendar && !handledByAction) {
+                                if (!handledByCalendar) {
                                     NotificationHelper.showMemoryIngestedNotification(context, updated)
                                 }
                             } catch (e: Exception) {

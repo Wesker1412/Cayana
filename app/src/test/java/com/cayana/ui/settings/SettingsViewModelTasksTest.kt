@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -178,10 +179,33 @@ class SettingsViewModelTasksTest {
         }
     }
 
+    @Test
+    fun disconnectRevokeFailureHandled() = runTest {
+        repository.updateGoogleTasksAuthStatus(TasksAuthStatus.CONNECTED)
+        repository.updateAutoTasksEnabled(true)
+        repository.updateSelectedTaskList("list-1", "工作待辦")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        fakeAuthManager.shouldRevokeFail = true
+        viewModel.disconnectGoogleTasks()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.uiState.test {
+            val state = awaitItem()
+            assertFalse("Local transmission must immediately stop", state.settings.isGoogleTasksConnected)
+            assertEquals(TasksAuthStatus.DISCONNECTED, state.settings.googleTasksAuthStatus)
+            assertFalse(state.settings.autoTasksEnabled)
+            assertNull(state.settings.selectedTaskListId)
+            assertNotNull("UI must reflect remote revoke failure", state.tasksError)
+            assertTrue(state.tasksError!!.contains("遠端授權撤銷未完成"))
+        }
+    }
+
     private class FakeTasksAuthManager : TasksAuthorizationManager {
         private val _authStatus = MutableStateFlow(TasksAuthStatus.DISCONNECTED)
         override val authStatus: StateFlow<TasksAuthStatus> = _authStatus.asStateFlow()
         var statusToReturnOnRefresh: TasksAuthStatus = TasksAuthStatus.CONNECTED
+        var shouldRevokeFail: Boolean = false
 
         override suspend fun getAccessToken(): Result<String> {
             return if (_authStatus.value == TasksAuthStatus.CONNECTED) {
@@ -204,6 +228,9 @@ class SettingsViewModelTasksTest {
 
         override suspend fun disconnect(): Result<Unit> {
             _authStatus.value = TasksAuthStatus.DISCONNECTED
+            if (shouldRevokeFail) {
+                return Result.Error(java.io.IOException("Remote revoke failed: 500"))
+            }
             return Result.Success(Unit)
         }
 

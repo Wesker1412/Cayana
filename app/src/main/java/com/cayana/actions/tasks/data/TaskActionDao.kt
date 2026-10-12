@@ -31,7 +31,7 @@ interface TaskActionDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
-    @Query("UPDATE task_actions SET status = :status, lastError = :lastError, updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE task_actions SET status = :status, lastError = :lastError, updatedAt = :updatedAt WHERE id = :id AND status NOT IN ('CREATED', 'IGNORED')")
     suspend fun updateStatusAndError(
         id: String,
         status: String,
@@ -39,7 +39,7 @@ interface TaskActionDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
-    @Query("UPDATE task_actions SET status = :status, updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE task_actions SET status = :status, updatedAt = :updatedAt WHERE id = :id AND status NOT IN ('CREATED', 'IGNORED')")
     suspend fun updateStatus(
         id: String,
         status: String,
@@ -59,10 +59,16 @@ interface TaskActionDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
+    @Query("UPDATE task_actions SET status = 'IGNORED', updatedAt = :updatedAt WHERE id = :id AND status = 'CONFIRM_PENDING'")
+    suspend fun claimIgnoreAction(
+        id: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
     @Query("SELECT * FROM task_actions WHERE status = 'CONFIRM_PENDING' ORDER BY createdAt ASC")
     suspend fun getPendingConfirmActions(): List<TaskActionEntity>
 
-    @Query("SELECT * FROM task_actions WHERE status = 'CREATING' ORDER BY createdAt ASC LIMIT :limit")
+    @Query("SELECT * FROM task_actions WHERE status = 'CREATING' ORDER BY updatedAt ASC LIMIT :limit")
     suspend fun getInFlightCreatingActions(limit: Int = 10): List<TaskActionEntity>
 
     @Update

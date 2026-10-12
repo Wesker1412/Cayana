@@ -2,6 +2,7 @@ package com.cayana.actions.tasks.destination
 
 import com.cayana.actions.destination.TaskDestination
 import com.cayana.actions.model.ActionCandidate
+import com.cayana.actions.model.ActionCandidateType
 import com.cayana.actions.model.DestinationExecutionResult
 import com.cayana.actions.tasks.auth.TasksAuthStatus
 import com.cayana.actions.tasks.auth.TasksAuthorizationManager
@@ -136,7 +137,7 @@ class GoogleTasksDestination(
                     )
                 }
                 "CREATING" -> {
-                    val isStale = (System.currentTimeMillis() - existingAction.createdAt) > 30_000L
+                    val isStale = (System.currentTimeMillis() - existingAction.updatedAt) > 30_000L
                     if (isStale) {
                         logger.w(TAG, "Stale CREATING action found for memory ${candidate.sourceMemoryId}; reconciling with remote list")
                         val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
@@ -162,15 +163,12 @@ class GoogleTasksDestination(
                     }
                 }
                 "CONFIRM_PENDING" -> {
-                    val claimed = taskActionDao.claimConfirmAction(existingAction.id)
-                    if (claimed != 1) {
-                        logger.i(TAG, "Another execution claimed confirm action for ${existingAction.id}")
-                        return@withContext DestinationExecutionResult.Failure(
-                            reason = "Another execution claimed confirm action",
-                            canRetry = false
-                        )
-                    }
-                    actionId = existingAction.id
+                    logger.i(TAG, "Task action for memory ${candidate.sourceMemoryId} is awaiting user confirmation; auto-execution forbidden")
+                    return@withContext DestinationExecutionResult.Skipped
+                }
+                "IGNORED" -> {
+                    logger.i(TAG, "Task action for memory ${candidate.sourceMemoryId} was ignored by user; skipping")
+                    return@withContext DestinationExecutionResult.Skipped
                 }
                 else -> {
                     // Status is FAILED or CREATING_ERROR: atomic claim
@@ -255,6 +253,116 @@ class GoogleTasksDestination(
             is Result.Error -> {
                 val ex = createResult.exception
                 handleCreateFailure(actionId, token, taskListId, candidate, cleanTitle, ex)
+            }
+            Result.Loading -> {
+                taskActionDao.updateStatusAndError(actionId, "NEEDS_ATTENTION", "Remote result unavailable")
+                DestinationExecutionResult.NeedsAttention("待辦建立結果尚未確認；請先確認遠端狀態。")
+            }
+        }
+    }
+
+    /**
+     * Executes a task action that was explicitly confirmed by the user.
+     * Atomically claims the action from CONFIRM_PENDING to CREATING,
+     * verifies destination task list consistency, and creates the remote task.
+     */
+    suspend fun executeConfirmedTask(actionId: String): DestinationExecutionResult = withContext(Dispatchers.IO) {
+        val action = taskActionDao.getById(actionId)
+        if (action == null) {
+            logger.w(TAG, "executeConfirmedTask: action not found for id=$actionId")
+            return@withContext DestinationExecutionResult.Failure("Action not found", canRetry = false)
+        }
+
+        if (action.status == "CREATED") {
+            return@withContext DestinationExecutionResult.Success(
+                destinationReferenceId = action.destinationTaskId,
+                message = "Task already created"
+            )
+        }
+        if (action.status == "IGNORED") {
+            return@withContext DestinationExecutionResult.Failure("Action was ignored", canRetry = false)
+        }
+        if (action.status != "CONFIRM_PENDING") {
+            logger.w(TAG, "executeConfirmedTask: action $actionId is in state ${action.status}, not CONFIRM_PENDING")
+            return@withContext DestinationExecutionResult.Failure(
+                "Action is not pending confirmation (status=${action.status})",
+                canRetry = false
+            )
+        }
+
+        if (!isAuthorized()) {
+            logger.w(TAG, "executeConfirmedTask: Google Tasks authorization missing")
+            return@withContext DestinationExecutionResult.NeedsAttention("Google Tasks 授權失效")
+        }
+
+        val settings = try {
+            settingsRepository.getSettings().first()
+        } catch (e: Exception) {
+            logger.w(TAG, "executeConfirmedTask: failed loading settings: ${e.javaClass.simpleName}")
+            return@withContext DestinationExecutionResult.Failure("Failed loading settings", canRetry = true)
+        }
+
+        // Destination consistency check: must match action.taskListId!
+        if (settings.selectedTaskListId != action.taskListId) {
+            logger.w(TAG, "executeConfirmedTask: destination task list mismatch (current=${settings.selectedTaskListId}, action=${action.taskListId})")
+            taskActionDao.updateStatusAndError(actionId, "CANCELLED", "目標待辦清單已變更，舊確認已失效")
+            return@withContext DestinationExecutionResult.Failure(
+                reason = "目標待辦清單已變更，舊確認已失效",
+                canRetry = false
+            )
+        }
+
+        val claimed = taskActionDao.claimConfirmAction(actionId)
+        if (claimed != 1) {
+            logger.i(TAG, "executeConfirmedTask: action $actionId already claimed or decided")
+            return@withContext DestinationExecutionResult.Failure(
+                reason = "Another execution claimed or decided this action",
+                canRetry = false
+            )
+        }
+
+        val token = when (val tokenResult = tasksAuthManager.getAccessToken()) {
+            is Result.Success -> tokenResult.data
+            else -> {
+                taskActionDao.updateStatusAndError(actionId, "NEEDS_ATTENTION", "Token acquisition failed")
+                return@withContext DestinationExecutionResult.NeedsAttention("無法取得 Google Tasks 授權權杖")
+            }
+        }
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.TASK,
+            title = action.title,
+            confidence = 1.0f,
+            dueAt = action.originalDueAt?.let { Instant.ofEpochMilli(it) },
+            notes = action.notes,
+            sourceMemoryId = action.sourceMemoryId,
+            requiresConfirmation = false
+        )
+
+        val finalNotes = buildNotes(candidate, ZoneId.systemDefault())
+
+        val postResult = tasksClient.createTask(
+            accessToken = token,
+            taskListId = action.taskListId,
+            title = action.title,
+            notes = finalNotes,
+            dueRfc3339 = action.googleDue
+        )
+
+        when (postResult) {
+            is Result.Success -> {
+                val createdItem = postResult.data
+                taskActionDao.updateStatusAndTaskId(actionId, "CREATED", createdItem.id)
+                logger.i(TAG, "executeConfirmedTask: successfully created task ${createdItem.id} for action $actionId")
+                DestinationExecutionResult.Success(
+                    destinationReferenceId = createdItem.id,
+                    message = "已建立至 Google Tasks。"
+                )
+            }
+            is Result.Error -> {
+                val ex = postResult.exception
+                logger.w(TAG, "executeConfirmedTask: remote creation failed: ${ex.javaClass.simpleName}")
+                handleCreateFailure(actionId, token, action.taskListId, candidate, action.title, ex)
             }
             Result.Loading -> {
                 taskActionDao.updateStatusAndError(actionId, "NEEDS_ATTENTION", "Remote result unavailable")

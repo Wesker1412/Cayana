@@ -625,14 +625,16 @@ class SettingsViewModel(
     fun disconnectGoogleTasks() {
         val authManager = tasksAuthManager ?: return
         viewModelScope.launch {
-            authManager.disconnect()
+            val revokeResult = authManager.disconnect()
             settingsRepository.updateGoogleTasksAuthStatus(com.cayana.actions.tasks.auth.TasksAuthStatus.DISCONNECTED)
             settingsRepository.updateAutoTasksEnabled(false)
             settingsRepository.updateSelectedTaskList(null, null)
             _uiState.update {
                 it.copy(
                     availableTaskLists = emptyList(),
-                    tasksError = null
+                    tasksError = if (revokeResult is com.cayana.core.common.Result.Error) {
+                        "遠端授權撤銷未完成（請至 Google 帳戶安全性設定手動撤銷），本機已停止連線與自動傳輸。"
+                    } else null
                 )
             }
         }

@@ -410,6 +410,172 @@ class GoogleTasksDestinationTest {
         assertEquals("Remote tasks must strictly remain 1", 1, fakeTasksClient.remoteTasks.size)
     }
 
+    @Test
+    fun repeatedIgnoreCannotOverwriteCreated() = runTest {
+        val memory = MemoryItem(
+            id = "mem-created-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 完成專案報告"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // 1. Create task successfully -> CREATED status
+        val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "完成專案報告")
+        val execResult = destination.createTask(candidate)
+        assertTrue(execResult is DestinationExecutionResult.Success)
+
+        val createdAction = taskActionDao.getAction(memory.id, GoogleTasksDestination.ACTION_TYPE_CREATE, "list-personal-1")
+        assertNotNull(createdAction)
+        assertEquals("CREATED", createdAction!!.status)
+
+        // 2. An old notification or duplicate event attempts to claim or update to IGNORED
+        val rowsAffected = taskActionDao.claimIgnoreAction(createdAction.id)
+        assertEquals("claimIgnoreAction must affect 0 rows when status is already CREATED", 0, rowsAffected)
+
+        val updateStatusRows = taskActionDao.updateStatus(createdAction.id, "IGNORED")
+        assertEquals("updateStatus must not overwrite terminal CREATED status", 0, updateStatusRows)
+
+        val reloaded = taskActionDao.getActionById(createdAction.id)
+        assertEquals("Status must remain strictly CREATED", "CREATED", reloaded?.status)
+    }
+
+    @Test
+    fun concurrentConfirmAndIgnoreIsAtomic() = runTest {
+        val actionId = UUID.randomUUID().toString()
+        val action = TaskActionEntity(
+            id = actionId,
+            sourceMemoryId = "mem-atomic-race-1",
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CONFIRM_PENDING",
+            title = "待辦項目",
+            attemptCount = 0
+        )
+        taskActionDao.insert(action)
+
+        // Atomically claim in racing order: exactly one succeeds
+        val confirmClaimed = taskActionDao.claimConfirmAction(actionId)
+        val ignoreClaimed = taskActionDao.claimIgnoreAction(actionId)
+
+        assertEquals("First claim (confirm) must succeed", 1, confirmClaimed)
+        assertEquals("Second claim (ignore) must fail because status is no longer CONFIRM_PENDING", 0, ignoreClaimed)
+
+        val finalAction = taskActionDao.getActionById(actionId)
+        assertEquals("CREATING", finalAction?.status)
+    }
+
+    @Test
+    fun changedTaskListCannotRedirectPendingAction() = runTest {
+        val actionId = UUID.randomUUID().toString()
+        val pendingAction = TaskActionEntity(
+            id = actionId,
+            sourceMemoryId = "mem-changed-list-1",
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CONFIRM_PENDING",
+            title = "機密工作待辦",
+            attemptCount = 0
+        )
+        taskActionDao.insert(pendingAction)
+
+        // User switches the destination task list in Settings to "list-work-2"
+        settingsRepository.updateSelectedTaskList("list-work-2", "公開工作清單")
+
+        // User now triggers confirmation for the pending action
+        val result = destination.executeConfirmedTask(actionId)
+
+        // Must reject execution to avoid sending private data to the wrong destination list!
+        assertTrue("Execution must fail when destination task list changed", result is DestinationExecutionResult.Failure)
+        assertEquals(0, fakeTasksClient.remoteTasks.size)
+
+        val updatedAction = taskActionDao.getActionById(actionId)
+        assertEquals("CANCELLED", updatedAction?.status)
+        assertTrue(updatedAction?.lastError?.contains("目標待辦清單已變更") == true)
+    }
+
+    @Test
+    fun staleCreatingUsesLastStateTransition() = runTest {
+        val now = System.currentTimeMillis()
+        val memory = MemoryItem(
+            id = "mem-stale-test-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 繳交報告"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Case 1: Action created 60 seconds ago, BUT last state transition (updatedAt) was 5 seconds ago
+        val recentAction = TaskActionEntity(
+            id = "action-recent-update",
+            sourceMemoryId = memory.id,
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "CREATING",
+            title = "繳交報告",
+            createdAt = now - 60_000L,
+            updatedAt = now - 5_000L,
+            attemptCount = 1
+        )
+        taskActionDao.insert(recentAction)
+
+        val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "繳交報告")
+        val resultRecent = destination.createTask(candidate)
+        // Since updatedAt is only 5s ago (< 30s), it is in flight and NOT stale!
+        assertTrue("Recent state transition must not be marked stale", resultRecent is DestinationExecutionResult.Failure)
+        assertEquals("Task creation is currently in progress", (resultRecent as DestinationExecutionResult.Failure).reason)
+
+        // Case 2: Action updatedAt is 40 seconds ago (> 30s) -> it IS stale and should be reconciled
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE task_actions SET updatedAt = ${now - 40_000L} WHERE id = 'action-recent-update'"
+        )
+
+        // Now createTask should detect stale CREATING action and reconcile
+        val resultStale = destination.createTask(candidate)
+        // Since remote item is not found, reconcileUncertainPost returns NeedsAttention without creating duplicate
+        assertTrue("Stale CREATING action must trigger reconciliation", resultStale is DestinationExecutionResult.NeedsAttention)
+    }
+
+    @Test
+    fun unconfirmedPostNeverBlindlyRetries() = runTest {
+        val memory = MemoryItem(
+            id = "mem-unconfirmed-post-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "TODO: 重要款項轉帳"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // Simulate an action that was previously attempted but entered NEEDS_ATTENTION due to ambiguous POST
+        val uncertainAction = TaskActionEntity(
+            id = "action-uncertain-1",
+            sourceMemoryId = memory.id,
+            actionType = GoogleTasksDestination.ACTION_TYPE_CREATE,
+            taskListId = "list-personal-1",
+            taskListTitle = "個人待辦",
+            status = "NEEDS_ATTENTION",
+            title = "重要款項轉帳",
+            attemptCount = 1,
+            lastError = "Remote POST outcome unconfirmed"
+        )
+        taskActionDao.insert(uncertainAction)
+
+        val initialPostCount = fakeTasksClient.postRequests.size
+
+        val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "重要款項轉帳")
+        val result = destination.createTask(candidate)
+
+        // Must return NeedsAttention and NEVER blindly call createTask again!
+        assertTrue("Unconfirmed action must require attention instead of blind retry", result is DestinationExecutionResult.NeedsAttention)
+        assertEquals("Remote POST count must not increase", initialPostCount, fakeTasksClient.postRequests.size)
+
+        val reloaded = taskActionDao.getActionById("action-uncertain-1")
+        assertEquals("NEEDS_ATTENTION", reloaded?.status)
+    }
+
     // Test fakes
     class FakeTasksAuthorizationManager(
         initialStatus: TasksAuthStatus = TasksAuthStatus.DISCONNECTED,

@@ -10,6 +10,7 @@ import com.cayana.actions.tasks.data.TaskActionDao
 import com.cayana.actions.tasks.data.TaskActionEntity
 import com.cayana.actions.tasks.destination.GoogleTasksDestination
 import com.cayana.core.logging.CayanaLogger
+import com.cayana.core.logging.DefaultCayanaLogger
 import com.cayana.core.notification.NotificationHelper
 import com.cayana.memory.model.MemoryItem
 import com.cayana.ui.settings.repository.SettingsRepository
@@ -20,13 +21,13 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 
-class ActionRoutingCoordinator(
+open class ActionRoutingCoordinator(
     private val context: Context,
-    private val actionRouter: ActionRouter,
-    private val taskActionDao: TaskActionDao,
-    private val googleTasksDestination: GoogleTasksDestination,
-    private val settingsRepository: SettingsRepository,
-    private val logger: CayanaLogger
+    private val actionRouter: ActionRouter? = null,
+    private val taskActionDao: TaskActionDao? = null,
+    private val googleTasksDestination: GoogleTasksDestination? = null,
+    private val settingsRepository: SettingsRepository? = null,
+    private val logger: CayanaLogger = DefaultCayanaLogger()
 ) {
     companion object {
         private const val TAG = "ActionRoutingCoord"
@@ -40,7 +41,7 @@ class ActionRoutingCoordinator(
      *
      * Returns true if a task action was executed or confirmation notification was posted.
      */
-    suspend fun process(
+    open suspend fun process(
         memoryItem: MemoryItem,
         rawText: String?,
         referenceTime: Instant = Instant.now(),
@@ -50,8 +51,12 @@ class ActionRoutingCoordinator(
             return@withContext false
         }
 
+        val settingsRepo = settingsRepository ?: return@withContext false
+        val router = actionRouter ?: return@withContext false
+        val dao = taskActionDao ?: return@withContext false
+
         val settings = try {
-            settingsRepository.getSettings().first()
+            settingsRepo.getSettings().first()
         } catch (e: Exception) {
             logger.w(TAG, "Failed loading settings: ${e.javaClass.simpleName}")
             return@withContext false
@@ -65,7 +70,7 @@ class ActionRoutingCoordinator(
         }
 
         val decisions = try {
-            actionRouter.route(memoryItem, rawText, referenceTime, zoneId)
+            router.route(memoryItem, rawText, referenceTime, zoneId)
         } catch (e: Exception) {
             logger.w(TAG, "Routing failed: ${e.javaClass.simpleName}")
             return@withContext false
@@ -86,8 +91,15 @@ class ActionRoutingCoordinator(
 
             when (decision) {
                 is RoutingDecision.RouteAuto -> {
+                    val targetListId = settings.selectedTaskListId ?: "@default"
+                    val existing = dao.getAction(memoryItem.id, ACTION_TYPE_CREATE, targetListId)
+                    if (existing != null && (existing.status == "CONFIRM_PENDING" || existing.status == "IGNORED" || existing.status == "CREATED")) {
+                        logger.i(TAG, "Task action already in ${existing.status} for memory ${memoryItem.id}; auto-route skipped")
+                        continue
+                    }
+
                     // High confidence & user enabled auto tasks
-                    val execResult = actionRouter.executeDecision(decision, memoryItem)
+                    val execResult = router.executeDecision(decision, memoryItem)
                     if (execResult is DestinationExecutionResult.Success) {
                         handled = true
                         val formattedDue = candidate.dueAt?.let {
@@ -106,7 +118,7 @@ class ActionRoutingCoordinator(
                 is RoutingDecision.RequireConfirmation -> {
                     // Medium/low confidence or requires confirmation
                     val targetListId = settings.selectedTaskListId ?: "@default"
-                    val existing = taskActionDao.getAction(memoryItem.id, ACTION_TYPE_CREATE, targetListId)
+                    val existing = dao.getAction(memoryItem.id, ACTION_TYPE_CREATE, targetListId)
                     if (existing != null) {
                         logger.i(TAG, "Task action already recorded (${existing.status}) for memory ${memoryItem.id}")
                         continue
@@ -129,7 +141,7 @@ class ActionRoutingCoordinator(
                     )
 
                     try {
-                        taskActionDao.insert(pendingAction)
+                        dao.insert(pendingAction)
                     } catch (e: Exception) {
                         logger.w(TAG, "Failed inserting confirm pending task: ${e.javaClass.simpleName}")
                         continue
@@ -138,7 +150,7 @@ class ActionRoutingCoordinator(
                     val formattedDue = candidate.dueAt?.let {
                         NotificationHelper.formatEventDateTime(it, false, zoneId)
                     } ?: ""
-                    NotificationHelper.showTaskConfirmNotification(
+                    val posted = NotificationHelper.showTaskConfirmNotification(
                         context = context,
                         notificationId = memoryItem.id.hashCode() + 100,
                         actionId = actionId,
@@ -146,7 +158,13 @@ class ActionRoutingCoordinator(
                         title = candidate.title,
                         formattedDue = formattedDue
                     )
-                    handled = true
+                    if (posted) {
+                        handled = true
+                    } else {
+                        dao.updateStatusAndError(actionId, "NEEDS_ATTENTION", "通知未開啟或發送失敗，無法提示使用者確認")
+                        logger.w(TAG, "Notification denied or failed to post for action $actionId; downgraded to NEEDS_ATTENTION")
+                        handled = false
+                    }
                 }
 
                 is RoutingDecision.NeedsAttention -> {
@@ -163,8 +181,11 @@ class ActionRoutingCoordinator(
     }
 
     suspend fun reconcileInFlightActions(): Int = withContext(Dispatchers.IO) {
+        val dao = taskActionDao ?: return@withContext 0
+        val destination = googleTasksDestination ?: return@withContext 0
+
         val creatingActions = try {
-            taskActionDao.getInFlightCreatingActions(limit = 10)
+            dao.getInFlightCreatingActions(limit = 10)
         } catch (e: Exception) {
             logger.w(TAG, "Failed querying in-flight actions: ${e.javaClass.simpleName}")
             return@withContext 0
@@ -173,11 +194,11 @@ class ActionRoutingCoordinator(
         var count = 0
         val now = System.currentTimeMillis()
         for (action in creatingActions) {
-            // Stale CREATING action (older than 30 seconds)
-            if (now - action.createdAt > 30_000L) {
+            // Stale CREATING action (older than 30 seconds since last state update)
+            if (now - action.updatedAt > 30_000L) {
                 // Check if Google Tasks is authorized
-                if (!googleTasksDestination.isAuthorized()) {
-                    taskActionDao.updateStatusAndError(action.id, "NEEDS_ATTENTION", "Reconciliation: auth missing")
+                if (!destination.isAuthorized()) {
+                    dao.updateStatusAndError(action.id, "NEEDS_ATTENTION", "Reconciliation: auth missing")
                     count++
                     continue
                 }
@@ -191,7 +212,7 @@ class ActionRoutingCoordinator(
                     sourceMemoryId = action.sourceMemoryId
                 )
 
-                val result = googleTasksDestination.createTask(candidate)
+                val result = destination.createTask(candidate)
                 if (result is DestinationExecutionResult.Success) {
                     count++
                 }

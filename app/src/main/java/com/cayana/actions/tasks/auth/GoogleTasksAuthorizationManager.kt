@@ -177,6 +177,9 @@ class GoogleTasksAuthorizationManager(
             }
         }
 
+        var revokeFailed = false
+        var failureException: Exception? = null
+
         try {
             val url = URL(revokeUrlBase)
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -193,17 +196,25 @@ class GoogleTasksAuthorizationManager(
             }
             val responseCode = conn.responseCode
             if (responseCode != 200) {
-                return@withContext Result.Error(IOException("Google 權限撤銷失敗：HTTP $responseCode"))
+                revokeFailed = true
+                failureException = IOException("Google 權限撤銷失敗：HTTP $responseCode")
             }
+        } catch (e: Exception) {
+            CayanaLogger.w("TasksAuth", "撤銷 Google Tasks 授權失敗: ${e.javaClass.simpleName}")
+            revokeFailed = true
+            failureException = e
+        } finally {
             try {
                 GoogleAuthUtil.clearToken(context, tokenToRevoke)
             } catch (_: Exception) {}
             inMemoryAccessToken = null
             _authStatus.value = TasksAuthStatus.DISCONNECTED
+        }
+
+        if (revokeFailed) {
+            Result.Error(failureException ?: IOException("Revoke failed"))
+        } else {
             Result.Success(Unit)
-        } catch (e: Exception) {
-            CayanaLogger.w("TasksAuth", "撤銷 Google Tasks 授權失敗: ${e.javaClass.simpleName}")
-            Result.Error(e)
         }
     }
 

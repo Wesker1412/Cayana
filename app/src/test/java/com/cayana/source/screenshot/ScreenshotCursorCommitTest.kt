@@ -16,6 +16,8 @@ import com.cayana.test.FakePermissionChecker
 import com.cayana.ui.settings.repository.InMemorySettingsRepository
 import com.cayana.ui.settings.repository.ScreenshotWatcherStatus
 import com.cayana.ui.settings.repository.UserSettings
+import com.cayana.processing.ProcessingState
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -100,6 +102,51 @@ class ScreenshotCursorCommitTest {
 
         val cursorAfterRetry = settingsRepository.getSettings().first().lastScreenshotMediaId
         assertEquals("Cursor must now advance to id3 after retry succeeds", id3, cursorAfterRetry)
+    }
+
+    @Test
+    fun externalLatencyDoesNotBlockDurableMemoryIngestion() = runTest {
+        val delayStarted = CompletableDeferred<Unit>()
+        val allowCompletion = CompletableDeferred<Unit>()
+
+        val hangingActionCoordinator = object : com.cayana.actions.coordinator.ActionRoutingCoordinator(context) {
+            override suspend fun process(
+                memoryItem: MemoryItem,
+                rawText: String?,
+                referenceTime: java.time.Instant,
+                zoneId: java.time.ZoneId
+            ): Boolean {
+                delayStarted.complete(Unit)
+                allowCompletion.await()
+                return true
+            }
+        }
+
+        val testCoordinator = ScreenshotProcessingCoordinator(
+            context = context,
+            memoryRepository = memoryRepository,
+            settingsRepository = settingsRepository,
+            permissionChecker = permissionChecker,
+            ocrEngine = ocrEngine,
+            actionRoutingCoordinator = hangingActionCoordinator
+        )
+
+        val id = insertMockScreenshot("Screenshot_with_latency.png")
+
+        // Ingestion must execute quickly and NOT be blocked by the hanging action routing
+        val ingested = testCoordinator.processPendingScreenshots()
+
+        // Verify durable storage was completed immediately
+        assertEquals(1, ingested.size)
+        assertEquals(1, memoryRepository.getMemoryCount().first())
+        val saved = memoryRepository.getAllMemories().first().first()
+        assertEquals("Ingested memory must be durably saved in COMPLETED status", ProcessingState.COMPLETED, saved.processingState)
+
+        // Verify action coordinator was triggered in the background
+        delayStarted.await()
+
+        // Release the background delay to complete cleanly
+        allowCompletion.complete(Unit)
     }
 
     private class FaultInjectableMemoryRepository : MemoryRepository {

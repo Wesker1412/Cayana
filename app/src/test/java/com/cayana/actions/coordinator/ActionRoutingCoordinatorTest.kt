@@ -1,9 +1,13 @@
 package com.cayana.actions.coordinator
 
+import android.Manifest
+import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import org.robolectric.Shadows
 import com.cayana.actions.classifier.DeterministicActionClassifier
 import com.cayana.actions.destination.CalendarDestination
 import com.cayana.actions.destination.DefaultDestinationRegistry
@@ -77,6 +81,8 @@ class ActionRoutingCoordinatorTest {
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        Shadows.shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         database = Room.inMemoryDatabaseBuilder(context, CayanaDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -328,6 +334,94 @@ class ActionRoutingCoordinatorTest {
         val preserved = memoryRepository.getMemoryById(memory.id).first()
         assertNotNull("Canonical memory must remain intact after destination error", preserved)
         assertEquals(memory.id, preserved?.id)
+    }
+
+    @Test
+    fun pendingConfirmationCannotAutoExecute() = runTest {
+        val memory = MemoryItem(
+            id = "mem-pending-confirm-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "可能要記得繳水費"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // 1. Process as low confidence -> CONFIRM_PENDING
+        val handled = coordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        assertTrue("Initial confirmation notification posted", handled)
+        val action = taskActionDao.getAction(memory.id, GoogleTasksDestination.ACTION_TYPE_CREATE, "list-test-1")
+        assertNotNull(action)
+        assertEquals("CONFIRM_PENDING", action!!.status)
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+
+        // 2. Try to auto-execute via destination for this pending candidate
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.TASK,
+            title = "繳水費",
+            confidence = 0.95f,
+            sourceMemoryId = memory.id,
+            requiresConfirmation = false
+        )
+        val result = googleTasksDestination.createTask(candidate)
+        assertTrue("Auto execution must be skipped for pending confirmation", result is DestinationExecutionResult.Skipped)
+
+        // 3. Remote client must still have 0 tasks created, status remains CONFIRM_PENDING
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+        val afterAction = taskActionDao.getActionById(action.id)
+        assertEquals("CONFIRM_PENDING", afterAction?.status)
+    }
+
+    @Test
+    fun reclassifiedMemoryCannotBypassConfirmation() = runTest {
+        val memory = MemoryItem(
+            id = "mem-reclass-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "可能要記得繳電話費"
+        )
+        memoryRepository.saveMemory(memory)
+
+        // 1. First run generates CONFIRM_PENDING
+        coordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        val action = taskActionDao.getAction(memory.id, GoogleTasksDestination.ACTION_TYPE_CREATE, "list-test-1")
+        assertNotNull(action)
+        assertEquals("CONFIRM_PENDING", action!!.status)
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+
+        // 2. Re-process with high confidence text for the same memory
+        val reclassifiedRawText = "TODO: 繳電話費 截止: 2026-10-25 18:00"
+        val handledSecond = coordinator.process(memory, reclassifiedRawText, fixedRefTime, zoneId)
+        assertFalse("Reclassified memory cannot auto-route or bypass confirmation", handledSecond)
+
+        // Remote tasks must remain 0 and action must remain CONFIRM_PENDING
+        assertEquals(0, fakeTasksClient.createdTasks.size)
+        val afterAction = taskActionDao.getActionById(action.id)
+        assertEquals("CONFIRM_PENDING", afterAction?.status)
+    }
+
+    @Test
+    fun notificationDeniedHasSafeFallback() = runTest {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        Shadows.shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val shadowNotificationManager = Shadows.shadowOf(notificationManager)
+        shadowNotificationManager.setNotificationsEnabled(false)
+
+        val memory = MemoryItem(
+            id = "mem-denied-notif-1",
+            sourceType = SourceType.SCREENSHOT,
+            title = "待辦",
+            rawText = "可能要記得繳水費"
+        )
+        memoryRepository.saveMemory(memory)
+
+        val handled = coordinator.process(memory, memory.rawText, fixedRefTime, zoneId)
+        assertFalse("When notification cannot be shown, coordinator must return false", handled)
+
+        val action = taskActionDao.getAction(memory.id, GoogleTasksDestination.ACTION_TYPE_CREATE, "list-test-1")
+        assertNotNull(action)
+        assertEquals("NEEDS_ATTENTION", action!!.status)
+        assertTrue(action.lastError?.contains("通知未開啟或發送失敗") == true)
     }
 
     private class FakeCalendarDestination : CalendarDestination {
