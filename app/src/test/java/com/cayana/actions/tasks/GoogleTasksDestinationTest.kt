@@ -354,7 +354,7 @@ class GoogleTasksDestinationTest {
         val candidate = createTestTaskCandidate(sourceMemoryId = memory.id, title = "重要專案提案")
         val result = destination.createTaskInternal(candidate, zoneId)
 
-        assertTrue("Execution fails", result is DestinationExecutionResult.Failure)
+        assertTrue("Uncertain remote state requires attention", result is DestinationExecutionResult.NeedsAttention)
 
         // Canonical memory must remain in repository untouched!
         val preserved = memoryRepository.getMemoryById(memory.id).first()
