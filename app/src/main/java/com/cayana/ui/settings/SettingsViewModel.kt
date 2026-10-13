@@ -45,6 +45,7 @@ class SettingsViewModel(
 
     private val deniedSources = mutableSetOf<SourceType>()
     private var lastUserSettings: UserSettings = UserSettings()
+    private var notionSearchJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -682,7 +683,12 @@ class SettingsViewModel(
     fun loadNotionTargets(query: String? = null, loadMore: Boolean = false) {
         val client = notionClient ?: return
         val authManager = notionAuthManager ?: return
-        viewModelScope.launch {
+
+        if (!loadMore) {
+            notionSearchJob?.cancel()
+        }
+
+        notionSearchJob = viewModelScope.launch {
             val currentQuery = query ?: _uiState.value.notionTargetSearchQuery
             val startCursor = if (loadMore) _uiState.value.notionTargetNextCursor else null
 
@@ -716,15 +722,7 @@ class SettingsViewModel(
                                     notionTargetNextCursor = resp.nextCursor
                                 )
                             }
-                            val currentSettings = settingsRepository.getSettings().first()
-                            if (currentSettings.selectedNotionTargetId.isNullOrBlank() && resp.targets.isNotEmpty()) {
-                                val firstSelectable = resp.targets.firstOrNull { it.isSelectable } ?: resp.targets.first()
-                                settingsRepository.updateSelectedNotionTarget(
-                                    firstSelectable.id,
-                                    firstSelectable.title,
-                                    firstSelectable.type.name.lowercase()
-                                )
-                            }
+                            // Stage 9C-3 requirement: Do NOT auto-preselect first target; require explicit user selection
                         }
                         is com.cayana.core.common.Result.Error -> {
                             val err = searchRes.exception
@@ -761,6 +759,10 @@ class SettingsViewModel(
     }
 
     fun selectNotionTarget(target: com.cayana.actions.notion.client.NotionTarget) {
+        if (!target.isSelectable) {
+            _uiState.update { it.copy(notionError = "此資料庫無法直接寫入，請選擇其底下的 Data Source 或 Page。") }
+            return
+        }
         viewModelScope.launch {
             settingsRepository.updateSelectedNotionTarget(
                 targetId = target.id,
@@ -770,15 +772,48 @@ class SettingsViewModel(
         }
     }
 
+    fun setNotionTransmissionPolicy(policy: com.cayana.ui.settings.repository.NotionTransmissionPolicy) {
+        viewModelScope.launch {
+            val currentSettings = settingsRepository.getSettings().first()
+            if (policy == com.cayana.ui.settings.repository.NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES) {
+                if (currentSettings.selectedNotionTargetId.isNullOrBlank()) {
+                    _uiState.update { it.copy(notionError = "請先選擇有效的 Notion 目標位置，方可啟用自動儲存。") }
+                    return@launch
+                }
+            }
+            settingsRepository.updateNotionTransmissionPolicy(policy)
+        }
+    }
+
+    fun toggleAutoNotionSource(sourceType: SourceType, enabled: Boolean) {
+        viewModelScope.launch {
+            val current = settingsRepository.getSettings().first().autoNotionSources.toMutableSet()
+            if (enabled) {
+                current.add(sourceType)
+            } else {
+                current.remove(sourceType)
+            }
+            settingsRepository.updateAutoNotionSources(current)
+        }
+    }
+
     fun toggleAutoNotion(enabled: Boolean) {
         viewModelScope.launch {
-            settingsRepository.updateAutoNotionEnabled(enabled)
+            val currentSettings = settingsRepository.getSettings().first()
+            if (enabled && currentSettings.selectedNotionTargetId.isNullOrBlank()) {
+                _uiState.update { it.copy(notionError = "請先選擇有效的 Notion 目標位置，方可啟用自動儲存。") }
+                return@launch
+            }
+            val policy = if (enabled) com.cayana.ui.settings.repository.NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES else com.cayana.ui.settings.repository.NotionTransmissionPolicy.OFF
+            settingsRepository.updateNotionTransmissionPolicy(policy)
         }
     }
 
     fun disconnectNotion() {
         val authManager = notionAuthManager ?: return
         viewModelScope.launch {
+            notionSearchJob?.cancel()
+            settingsRepository.updateNotionTransmissionPolicy(com.cayana.ui.settings.repository.NotionTransmissionPolicy.OFF)
             settingsRepository.updateAutoNotionEnabled(false)
             settingsRepository.updateSelectedNotionTarget(null, null, null)
             settingsRepository.updateNotionAuthStatus(com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED)

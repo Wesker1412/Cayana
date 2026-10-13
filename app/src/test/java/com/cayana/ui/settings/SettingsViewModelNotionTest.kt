@@ -11,9 +11,11 @@ import com.cayana.actions.notion.client.NotionSearchResponse
 import com.cayana.actions.notion.client.NotionTarget
 import com.cayana.actions.notion.client.NotionTargetType
 import com.cayana.core.common.Result
+import com.cayana.source.SourceType
 import com.cayana.test.FakeCalendarProviderHelper
 import com.cayana.test.FakePermissionChecker
 import com.cayana.ui.settings.repository.InMemorySettingsRepository
+import com.cayana.ui.settings.repository.NotionTransmissionPolicy
 import com.cayana.ui.settings.repository.UserSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -86,6 +88,7 @@ class SettingsViewModelNotionTest {
             val state = awaitItem()
             assertFalse(state.settings.isNotionConnected)
             assertEquals(NotionAuthStatus.DISCONNECTED, state.settings.notionAuthStatus)
+            assertEquals(NotionTransmissionPolicy.OFF, state.settings.notionTransmissionPolicy)
             assertFalse(state.settings.autoNotionEnabled)
             assertNull(state.settings.selectedNotionTargetId)
             assertNull(state.settings.selectedNotionTargetTitle)
@@ -102,23 +105,20 @@ class SettingsViewModelNotionTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         assertNotNull(launchedUri)
-        assertTrue(launchedUri.toString().contains("https://api.notion.com/v1/oauth/authorize"))
-
-        // Verify connecting alone does NOT enable auto-upload
-        val settings = repository.getSettings().first()
-        assertFalse(settings.autoNotionEnabled)
+        assertEquals("https://api.notion.com/v1/oauth/authorize?test=1", launchedUri.toString())
     }
 
     @Test
-    fun startConnectNotionFailsSetsErrorMessage() = runTest {
+    fun startConnectNotionFailureSetsError() = runTest {
         fakeAuthManager.getAuthUrlResult = Result.Error(IOException("Network error"))
-        var launched = false
-        viewModel.startConnectNotion {
-            launched = true
+
+        var launchedUri: Uri? = null
+        viewModel.startConnectNotion { uri ->
+            launchedUri = uri
         }
         testDispatcher.scheduler.advanceUntilIdle()
 
-        assertFalse(launched)
+        assertNull(launchedUri)
         viewModel.uiState.test {
             val state = awaitItem()
             assertNotNull(state.notionError)
@@ -127,7 +127,7 @@ class SettingsViewModelNotionTest {
     }
 
     @Test
-    fun loadNotionTargetsSuccessAutoSelectsFirstTargetWhenUnset() = runTest {
+    fun loadNotionTargetsSuccessDoesNotAutoSelectFirstTarget() = runTest {
         fakeAuthManager.setStatus(NotionAuthStatus.CONNECTED)
 
         viewModel.loadNotionTargets(query = "Notes")
@@ -142,10 +142,9 @@ class SettingsViewModelNotionTest {
             assertFalse(state.isLoadingNotionTargets)
             assertNull(state.notionError)
 
-            // Since selectedNotionTargetId was initially null, first selectable target is chosen
-            assertEquals("page-1", state.settings.selectedNotionTargetId)
-            assertEquals("Work Notes", state.settings.selectedNotionTargetTitle)
-            assertEquals("page", state.settings.selectedNotionTargetType)
+            // Stage 9C-3 requirement: Must NOT auto-select first target; require explicit user selection
+            assertNull(state.settings.selectedNotionTargetId)
+            assertNull(state.settings.selectedNotionTargetTitle)
         }
     }
 
@@ -201,7 +200,7 @@ class SettingsViewModelNotionTest {
     }
 
     @Test
-    fun selectNotionTargetUpdatesSettings() = runTest {
+    fun selectNotionTargetUpdatesSettingsWhenSelectable() = runTest {
         val target = NotionTarget(
             id = "ds-1",
             title = "Items Table",
@@ -218,23 +217,58 @@ class SettingsViewModelNotionTest {
     }
 
     @Test
-    fun toggleAutoNotionUpdatesSettings() = runTest {
-        viewModel.toggleAutoNotion(true)
+    fun selectNotionTargetRejectsUnselectableTarget() = runTest {
+        val target = NotionTarget(
+            id = "db-1",
+            title = "Project Tasks",
+            type = NotionTargetType.DATABASE,
+            isSelectable = false
+        )
+        viewModel.selectNotionTarget(target)
         testDispatcher.scheduler.advanceUntilIdle()
 
+        val settings = repository.getSettings().first()
+        assertNull(settings.selectedNotionTargetId)
+        assertNotNull(viewModel.uiState.value.notionError)
+        assertTrue(viewModel.uiState.value.notionError!!.contains("此資料庫無法直接寫入"))
+    }
+
+    @Test
+    fun setNotionTransmissionPolicyAutoRequiresTargetFirst() = runTest {
+        // Without target, AUTO_FOR_SELECTED_TYPES is rejected
+        viewModel.setNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(NotionTransmissionPolicy.OFF, repository.getSettings().first().notionTransmissionPolicy)
+        assertNotNull(viewModel.uiState.value.notionError)
+
+        // Select valid target, then set AUTO_FOR_SELECTED_TYPES
+        repository.updateSelectedNotionTarget("page-1", "My Page", "page")
+        viewModel.setNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES, repository.getSettings().first().notionTransmissionPolicy)
         assertTrue(repository.getSettings().first().autoNotionEnabled)
+    }
 
-        viewModel.toggleAutoNotion(false)
+    @Test
+    fun toggleAutoNotionSourceUpdatesAllowedSources() = runTest {
+        viewModel.toggleAutoNotionSource(SourceType.PHOTO, true)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        assertFalse(repository.getSettings().first().autoNotionEnabled)
+        assertTrue(repository.getSettings().first().autoNotionSources.contains(SourceType.PHOTO))
+
+        viewModel.toggleAutoNotionSource(SourceType.PHOTO, false)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertFalse(repository.getSettings().first().autoNotionSources.contains(SourceType.PHOTO))
     }
 
     @Test
     fun disconnectNotionClearsSettingsAndState() = runTest {
         // Pre-configure as connected with active targets
         repository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
-        repository.updateAutoNotionEnabled(true)
+        repository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
         repository.updateSelectedNotionTarget("page-1", "Work Notes", "page")
         fakeAuthManager.setStatus(NotionAuthStatus.CONNECTED)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -247,6 +281,7 @@ class SettingsViewModelNotionTest {
         val settings = repository.getSettings().first()
         assertFalse(settings.isNotionConnected)
         assertEquals(NotionAuthStatus.DISCONNECTED, settings.notionAuthStatus)
+        assertEquals(NotionTransmissionPolicy.OFF, settings.notionTransmissionPolicy)
         assertFalse(settings.autoNotionEnabled)
         assertNull(settings.selectedNotionTargetId)
         assertNull(settings.selectedNotionTargetTitle)
@@ -320,7 +355,7 @@ class SettingsViewModelNotionTest {
             NotionSearchResponse(
                 targets = listOf(
                     NotionTarget(id = "page-1", title = "Work Notes", type = NotionTargetType.PAGE, isSelectable = true),
-                    NotionTarget(id = "db-1", title = "Project Tasks", type = NotionTargetType.DATABASE, isSelectable = true),
+                    NotionTarget(id = "db-1", title = "Project Tasks", type = NotionTargetType.DATABASE, isSelectable = false),
                     NotionTarget(id = "ds-1", title = "Items Table", type = NotionTargetType.DATA_SOURCE, isSelectable = true)
                 ),
                 nextCursor = "cursor-next",
@@ -352,7 +387,14 @@ class SettingsViewModelNotionTest {
             content: String?,
             sourceMemoryId: String?
         ): Result<NotionCreatedPage> {
-            throw UnsupportedOperationException("Stage 9C-2 must not create pages")
+            return Result.Success(NotionCreatedPage("p-1", "https://notion.so/p-1", title))
+        }
+
+        override suspend fun getDataSourceTitleProperty(
+            accessToken: String,
+            dataSourceId: String
+        ): Result<String> {
+            return Result.Success("Name")
         }
     }
 }

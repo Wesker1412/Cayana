@@ -348,4 +348,108 @@ object NotificationHelper {
             false
         }
     }
+
+    fun showNotionAddedNotification(
+        context: Context,
+        notificationId: Int,
+        actionId: String,
+        title: String,
+        targetTitle: String? = null
+    ): Boolean {
+        if (!canPostCalendarActionNotification(context)) {
+            return false
+        }
+
+        ensureChannel(context)
+
+        val contentText = if (!targetTitle.isNullOrBlank()) {
+            "$title · 目標：$targetTitle"
+        } else {
+            title
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("已加入 Notion 筆記")
+            .setContentText(contentText)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        return try {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+            CayanaLogger.i("NotificationHelper", "Posted notion added notification id=$notificationId")
+            true
+        } catch (e: Exception) {
+            CayanaLogger.w("NotificationHelper", "Exception posting notion added notification: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    fun showNotionConfirmNotification(
+        context: Context,
+        notificationId: Int,
+        actionId: String,
+        memoryId: String,
+        title: String,
+        targetTitle: String? = null,
+        snippet: String? = null
+    ): Boolean {
+        if (!canPostCalendarActionNotification(context)) {
+            return false
+        }
+
+        ensureChannel(context)
+
+        val destinationInfo = if (!targetTitle.isNullOrBlank()) " · 目標：$targetTitle" else ""
+        val contentText = "$title$destinationInfo"
+
+        val confirmIntent = Intent(context, com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver::class.java).apply {
+            putExtra(com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.EXTRA_DECISION, com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.DECISION_CONFIRM)
+            putExtra(com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.EXTRA_ACTION_ID, actionId)
+            putExtra(com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val confirmPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 37 + 3,
+            confirmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val ignoreIntent = Intent(context, com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver::class.java).apply {
+            putExtra(com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.EXTRA_DECISION, com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.DECISION_IGNORE)
+            putExtra(com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.EXTRA_ACTION_ID, actionId)
+            putExtra(com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val ignorePendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 37 + 4,
+            ignoreIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("儲存至 Notion 筆記？")
+            .setContentText(contentText)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .addAction(0, "儲存", confirmPendingIntent)
+            .addAction(0, "忽略", ignorePendingIntent)
+
+        if (!snippet.isNullOrBlank()) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText("$contentText\n$snippet"))
+        }
+
+        val notification = builder.build()
+
+        return try {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+            CayanaLogger.i("NotificationHelper", "Posted notion confirm notification id=$notificationId")
+            true
+        } catch (e: Exception) {
+            CayanaLogger.w("NotificationHelper", "Exception posting notion confirm notification: ${e.javaClass.simpleName}")
+            false
+        }
+    }
 }

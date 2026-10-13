@@ -14,6 +14,12 @@ enum class SourceWatcherStatus {
 
 typealias ScreenshotWatcherStatus = SourceWatcherStatus
 
+enum class NotionTransmissionPolicy {
+    OFF,
+    ASK_EACH_TIME,
+    AUTO_FOR_SELECTED_TYPES
+}
+
 /**
  * Model holding persisted user preferences.
  */
@@ -63,6 +69,9 @@ data class UserSettings(
     val isNotionConnected: Boolean = false,
     val notionAuthStatus: com.cayana.actions.notion.auth.NotionAuthStatus = com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED,
     val autoNotionEnabled: Boolean = false,
+    val notionTransmissionPolicy: NotionTransmissionPolicy = NotionTransmissionPolicy.OFF,
+    val autoNotionSources: Set<SourceType> = setOf(SourceType.SCREENSHOT),
+    val autoNotionEligibilityEpoch: Long = 0L,
     val selectedNotionTargetId: String? = null,
     val selectedNotionTargetTitle: String? = null,
     val selectedNotionTargetType: String? = null,
@@ -117,6 +126,9 @@ interface SettingsRepository {
     suspend fun updateSelectedTaskList(listId: String?, listTitle: String?)
     suspend fun updateNotionAuthStatus(status: com.cayana.actions.notion.auth.NotionAuthStatus)
     suspend fun updateAutoNotionEnabled(enabled: Boolean)
+    suspend fun updateNotionTransmissionPolicy(policy: NotionTransmissionPolicy)
+    suspend fun updateAutoNotionSources(sources: Set<SourceType>)
+    suspend fun updateAutoNotionEligibilityEpoch(epoch: Long)
     suspend fun updateSelectedNotionTarget(targetId: String?, targetTitle: String?, targetType: String? = null)
     suspend fun updateNotionWorkspaceInfo(workspaceName: String?, workspaceIcon: String?)
     suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings)
@@ -366,17 +378,59 @@ class InMemorySettingsRepository(
     override suspend fun updateNotionAuthStatus(status: com.cayana.actions.notion.auth.NotionAuthStatus) {
         _settings.update {
             val isConnected = (status == com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED)
-            val autoEnabled = if (!isConnected) false else it.autoNotionEnabled
+            val policy = if (!isConnected) NotionTransmissionPolicy.OFF else it.notionTransmissionPolicy
+            val autoEnabled = if (!isConnected) false else (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+            val epoch = if (!isConnected) 0L else it.autoNotionEligibilityEpoch
             it.copy(
                 notionAuthStatus = status,
                 isNotionConnected = isConnected,
-                autoNotionEnabled = autoEnabled
+                autoNotionEnabled = autoEnabled,
+                notionTransmissionPolicy = policy,
+                autoNotionEligibilityEpoch = epoch
             )
         }
     }
 
     override suspend fun updateAutoNotionEnabled(enabled: Boolean) {
-        _settings.update { it.copy(autoNotionEnabled = enabled) }
+        _settings.update {
+            val policy = if (enabled) NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES else NotionTransmissionPolicy.OFF
+            val newEpoch = if (enabled) {
+                if (it.autoNotionEligibilityEpoch == 0L) System.currentTimeMillis() else it.autoNotionEligibilityEpoch
+            } else {
+                0L
+            }
+            it.copy(
+                autoNotionEnabled = enabled,
+                notionTransmissionPolicy = policy,
+                autoNotionEligibilityEpoch = newEpoch
+            )
+        }
+    }
+
+    override suspend fun updateNotionTransmissionPolicy(policy: NotionTransmissionPolicy) {
+        _settings.update {
+            val autoEnabled = (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+            val newEpoch = if (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES) {
+                if (it.autoNotionEligibilityEpoch == 0L) System.currentTimeMillis() else it.autoNotionEligibilityEpoch
+            } else if (policy == NotionTransmissionPolicy.OFF) {
+                0L
+            } else {
+                it.autoNotionEligibilityEpoch
+            }
+            it.copy(
+                notionTransmissionPolicy = policy,
+                autoNotionEnabled = autoEnabled,
+                autoNotionEligibilityEpoch = newEpoch
+            )
+        }
+    }
+
+    override suspend fun updateAutoNotionSources(sources: Set<SourceType>) {
+        _settings.update { it.copy(autoNotionSources = sources) }
+    }
+
+    override suspend fun updateAutoNotionEligibilityEpoch(epoch: Long) {
+        _settings.update { it.copy(autoNotionEligibilityEpoch = epoch) }
     }
 
     override suspend fun updateSelectedNotionTarget(targetId: String?, targetTitle: String?, targetType: String?) {

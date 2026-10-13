@@ -86,6 +86,10 @@
         <receiver
             android:name="com.cayana.actions.tasks.receiver.ConfirmTaskActionReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name="com.cayana.actions.notion.receiver.ConfirmNotionActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

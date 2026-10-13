@@ -18,4 +18,10 @@ interface NotionClient {
         content: String? = null,
         sourceMemoryId: String? = null
     ): Result<NotionCreatedPage>
+
+    suspend fun getDataSourceTitleProperty(
+        accessToken: String,
+        dataSourceId: String
+    ): Result<String>
 }
+

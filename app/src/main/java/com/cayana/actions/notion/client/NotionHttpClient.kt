@@ -25,6 +25,8 @@ class NotionHttpClient(
         private const val READ_TIMEOUT_MS = 15_000
     }
 
+    private val dataSourceTitleCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     override suspend fun searchTargets(
         accessToken: String,
         query: String?,
@@ -94,10 +96,10 @@ class NotionHttpClient(
                     val urlStr = item.optString("url").takeIf { it.isNotBlank() }
                     val icon = parseIcon(item.optJSONObject("icon"))
 
-                    // DATA_SOURCE, PAGE, and DATABASE are valid identifiable targets
+                    // DATA_SOURCE and PAGE can directly accept new pages in Notion 2026-03-11.
+                    // DATABASE containers are marked unselectable to prompt selecting their underlying data source.
                     val isSelectable = targetType == NotionTargetType.DATA_SOURCE ||
-                            targetType == NotionTargetType.PAGE ||
-                            targetType == NotionTargetType.DATABASE
+                            targetType == NotionTargetType.PAGE
 
                     targets.add(
                         NotionTarget(
@@ -133,6 +135,12 @@ class NotionHttpClient(
         content: String?,
         sourceMemoryId: String?
     ): Result<NotionCreatedPage> = withContext(Dispatchers.IO) {
+        if (targetType == NotionTargetType.DATABASE) {
+            logger.w(TAG, "createPage rejected: Database direct page creation is unsupported in Notion 2026-03-11")
+            return@withContext Result.Error(
+                IllegalArgumentException("Database direct page creation is unsupported in Notion 2026-03-11. Please select a Data Source or Page.")
+            )
+        }
         try {
             val url = URL("${apiBaseUrl.trimEnd('/')}/pages")
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -150,17 +158,25 @@ class NotionHttpClient(
 
             // Parent specification in Notion 2026-03-11:
             // DATA_SOURCE -> data_source_id
-            // DATABASE -> database_id
             // PAGE -> page_id
             val parent = JSONObject()
             when (targetType) {
                 NotionTargetType.DATA_SOURCE -> parent.put("data_source_id", targetId)
-                NotionTargetType.DATABASE -> parent.put("database_id", targetId)
                 NotionTargetType.PAGE -> parent.put("page_id", targetId)
+                NotionTargetType.DATABASE -> parent.put("database_id", targetId)
             }
             body.put("parent", parent)
 
-            // Properties (Title)
+            // Properties: dynamic title property for DATA_SOURCE, "title" for PAGE
+            val titlePropName = if (targetType == NotionTargetType.DATA_SOURCE) {
+                when (val propRes = getDataSourceTitleProperty(accessToken, targetId)) {
+                    is Result.Success -> propRes.data
+                    else -> "Name"
+                }
+            } else {
+                "title"
+            }
+
             val titleProp = JSONObject().apply {
                 val titleArray = JSONArray().apply {
                     val textObj = JSONObject().apply {
@@ -172,13 +188,14 @@ class NotionHttpClient(
                 put("title", titleArray)
             }
             val properties = JSONObject().apply {
-                put("title", titleProp)
+                put(titlePropName, titleProp)
             }
             body.put("properties", properties)
 
-            // Children blocks
+            // Children blocks: limit content to 2000 characters
+            val cleanContent = content?.take(2000)?.takeIf { it.isNotBlank() }
             val childrenArray = JSONArray()
-            if (!content.isNullOrBlank()) {
+            if (!cleanContent.isNullOrBlank()) {
                 val contentBlock = JSONObject().apply {
                     put("object", "block")
                     put("type", "paragraph")
@@ -189,7 +206,7 @@ class NotionHttpClient(
                                 put(
                                     JSONObject().apply {
                                         put("type", "text")
-                                        put("text", JSONObject().put("content", content))
+                                        put("text", JSONObject().put("content", cleanContent))
                                     }
                                 )
                             }
@@ -315,8 +332,62 @@ class NotionHttpClient(
         }
     }
 
+    override suspend fun getDataSourceTitleProperty(
+        accessToken: String,
+        dataSourceId: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        dataSourceTitleCache[dataSourceId]?.let { return@withContext Result.Success(it) }
+        try {
+            val url = URL("${apiBaseUrl.trimEnd('/')}/data_sources/$dataSourceId")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                setRequestProperty("Authorization", "Bearer $accessToken")
+                setRequestProperty("Notion-Version", notionVersion)
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val status = conn.responseCode
+            if (status == 401) {
+                return@withContext Result.Error(NotionAuthRequiredException("Notion API 401 Unauthorized"))
+            }
+            if (status == 403) {
+                return@withContext Result.Error(SecurityException("Notion 權限不足"))
+            }
+
+            if (status in 200..299) {
+                val responseText = readStream(conn.inputStream)
+                val json = JSONObject(responseText)
+                val properties = json.optJSONObject("properties")
+                if (properties != null) {
+                    val keys = properties.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val prop = properties.optJSONObject(key)
+                        if (prop?.optString("type") == "title") {
+                            dataSourceTitleCache[dataSourceId] = key
+                            return@withContext Result.Success(key)
+                        }
+                    }
+                }
+                val defaultKey = "Name"
+                dataSourceTitleCache[dataSourceId] = defaultKey
+                Result.Success(defaultKey)
+            } else {
+                val errText = readStream(conn.errorStream)
+                logger.w(TAG, "getDataSourceTitleProperty failed: status $status, err: $errText")
+                Result.Success("Name")
+            }
+        } catch (e: Exception) {
+            logger.w(TAG, "getDataSourceTitleProperty exception: ${e.message}")
+            Result.Success("Name")
+        }
+    }
+
     private fun readStream(stream: java.io.InputStream?): String {
         if (stream == null) return ""
         return BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
     }
 }
+

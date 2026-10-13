@@ -60,6 +60,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Switch
@@ -742,28 +743,93 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Auto-Notion Switch
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "自動儲存至 Notion",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    text = "截圖偵測到筆記時自動儲存至指定 Notion 目標",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = uiState.settings.autoNotionEnabled,
-                                onCheckedChange = { checked ->
-                                    viewModel.toggleAutoNotion(checked)
-                                }
+                        // Notion Transmission Policy
+                        Text(
+                            text = "筆記傳輸政策",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "決定何時將偵測到的筆記同步至 Notion",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val currentPolicy = uiState.settings.notionTransmissionPolicy
+                        listOf(
+                            Triple(
+                                com.cayana.ui.settings.repository.NotionTransmissionPolicy.OFF,
+                                "關閉傳輸 (OFF)",
+                                "不主動或自動傳送任何筆記至 Notion"
+                            ),
+                            Triple(
+                                com.cayana.ui.settings.repository.NotionTransmissionPolicy.ASK_EACH_TIME,
+                                "每次提示確認 (ASK_EACH_TIME)",
+                                "偵測到筆記時跳出通知，經您確認後才儲存"
+                            ),
+                            Triple(
+                                com.cayana.ui.settings.repository.NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES,
+                                "自動同步所選來源 (AUTO)",
+                                "僅針對下方勾選之來源於啟用後新產生的筆記自動同步"
                             )
+                        ).forEach { (policy, label, desc) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.setNotionTransmissionPolicy(policy) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = currentPolicy == policy,
+                                    onClick = { viewModel.setNotionTransmissionPolicy(policy) }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (currentPolicy == policy) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal
+                                    )
+                                    Text(
+                                        text = desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        if (currentPolicy == com.cayana.ui.settings.repository.NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "自動同步來源類型：",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            listOf(
+                                Pair(SourceType.SCREENSHOT, "螢幕截圖 (Screenshots)"),
+                                Pair(SourceType.PHOTO, "相機照片 (Photos)"),
+                                Pair(SourceType.RECORDING, "語音錄音 (Recordings)")
+                            ).forEach { (src, name) ->
+                                val isChecked = uiState.settings.autoNotionSources.contains(src)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { viewModel.toggleAutoNotionSource(src, !isChecked) }
+                                        .padding(start = 16.dp, top = 2.dp, bottom = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { viewModel.toggleAutoNotionSource(src, it) }
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(text = name, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -1180,9 +1246,10 @@ fun SettingsScreen(
                             val isSelected = target.id == uiState.settings.selectedNotionTargetId
                             val typeLabel = when (target.type) {
                                 com.cayana.actions.notion.client.NotionTargetType.PAGE -> "Page"
-                                com.cayana.actions.notion.client.NotionTargetType.DATABASE -> "Database"
+                                com.cayana.actions.notion.client.NotionTargetType.DATABASE -> "Database (不可直接寫入，請選擇 Data Source)"
                                 com.cayana.actions.notion.client.NotionTargetType.DATA_SOURCE -> "Data Source"
                             }
+                            val typeColor = if (target.isSelectable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1211,7 +1278,7 @@ fun SettingsScreen(
                                     Text(
                                         text = typeLabel,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = typeColor
                                     )
                                 }
                             }

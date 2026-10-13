@@ -21,7 +21,8 @@ val databaseModule = module {
                 CayanaDatabase.MIGRATION_6_7,
                 CayanaDatabase.MIGRATION_7_8,
                 CayanaDatabase.MIGRATION_8_9,
-                CayanaDatabase.MIGRATION_9_10
+                CayanaDatabase.MIGRATION_9_10,
+                CayanaDatabase.MIGRATION_10_11
             )
             .build()
     }
@@ -33,4 +34,5 @@ val databaseModule = module {
     single { get<CayanaDatabase>().searchIndexStateDao() }
     single { get<CayanaDatabase>().restoredCalendarActionHistoryDao() }
     single { get<CayanaDatabase>().taskActionDao() }
+    single { get<CayanaDatabase>().notionActionDao() }
 }

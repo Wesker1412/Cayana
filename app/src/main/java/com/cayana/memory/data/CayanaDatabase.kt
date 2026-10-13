@@ -20,9 +20,10 @@ import com.cayana.source.share.data.ShareReceiptEntity
         ShareReceiptEntity::class,
         SearchIndexStateEntity::class,
         com.cayana.calendar.data.RestoredCalendarActionHistoryEntity::class,
-        com.cayana.actions.tasks.data.TaskActionEntity::class
+        com.cayana.actions.tasks.data.TaskActionEntity::class,
+        com.cayana.actions.notion.data.NotionActionEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 abstract class CayanaDatabase : RoomDatabase() {
@@ -33,6 +34,7 @@ abstract class CayanaDatabase : RoomDatabase() {
     abstract fun searchIndexStateDao(): SearchIndexStateDao
     abstract fun restoredCalendarActionHistoryDao(): com.cayana.calendar.data.RestoredCalendarActionHistoryDao
     abstract fun taskActionDao(): com.cayana.actions.tasks.data.TaskActionDao
+    abstract fun notionActionDao(): com.cayana.actions.notion.data.NotionActionDao
 
     companion object {
         const val DATABASE_NAME = "cayana_memory.db"
@@ -364,6 +366,36 @@ abstract class CayanaDatabase : RoomDatabase() {
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_task_actions_sourceMemoryId_actionType_taskListId` ON `task_actions` (`sourceMemoryId`, `actionType`, `taskListId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_task_actions_sourceMemoryId` ON `task_actions` (`sourceMemoryId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_task_actions_status` ON `task_actions` (`status`)")
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `notion_actions` (
+                        `id` TEXT NOT NULL,
+                        `sourceMemoryId` TEXT NOT NULL,
+                        `actionType` TEXT NOT NULL,
+                        `targetId` TEXT NOT NULL,
+                        `targetTitle` TEXT,
+                        `targetType` TEXT NOT NULL,
+                        `destinationPageId` TEXT,
+                        `destinationPageUrl` TEXT,
+                        `status` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `content` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `attemptCount` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_notion_actions_sourceMemoryId_actionType_targetId` ON `notion_actions` (`sourceMemoryId`, `actionType`, `targetId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notion_actions_sourceMemoryId` ON `notion_actions` (`sourceMemoryId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notion_actions_status` ON `notion_actions` (`status`)")
             }
         }
     }

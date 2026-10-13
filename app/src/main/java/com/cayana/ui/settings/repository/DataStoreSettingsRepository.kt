@@ -66,6 +66,9 @@ class DataStoreSettingsRepository(
         val KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH = longPreferencesKey("google_tasks_eligibility_epoch")
         val KEY_NOTION_AUTH_STATUS = stringPreferencesKey("notion_auth_status")
         val KEY_AUTO_NOTION_ENABLED = booleanPreferencesKey("auto_notion_enabled")
+        val KEY_NOTION_TRANSMISSION_POLICY = stringPreferencesKey("notion_transmission_policy")
+        val KEY_AUTO_NOTION_SOURCES = stringSetPreferencesKey("auto_notion_sources")
+        val KEY_AUTO_NOTION_ELIGIBILITY_EPOCH = longPreferencesKey("auto_notion_eligibility_epoch")
         val KEY_SELECTED_NOTION_TARGET_ID = stringPreferencesKey("selected_notion_target_id")
         val KEY_SELECTED_NOTION_TARGET_TITLE = stringPreferencesKey("selected_notion_target_title")
         val KEY_SELECTED_NOTION_TARGET_TYPE = stringPreferencesKey("selected_notion_target_type")
@@ -157,6 +160,18 @@ class DataStoreSettingsRepository(
                 val lastRecordingReconciled = preferences[KEY_LAST_RECORDING_RECONCILED_AT] ?: Long.MAX_VALUE
                 val lastRecordingReconciledId = preferences[KEY_LAST_RECORDING_RECONCILED_ID] ?: ""
 
+                val rawNotionPolicy = preferences[KEY_NOTION_TRANSMISSION_POLICY]
+                val notionPolicy = if (rawNotionPolicy != null) {
+                    runCatching { NotionTransmissionPolicy.valueOf(rawNotionPolicy) }.getOrDefault(NotionTransmissionPolicy.OFF)
+                } else {
+                    if (preferences[KEY_AUTO_NOTION_ENABLED] == true) NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES else NotionTransmissionPolicy.OFF
+                }
+                val rawAutoNotionSources = preferences[KEY_AUTO_NOTION_SOURCES]
+                val autoNotionSources = rawAutoNotionSources?.mapNotNull {
+                    runCatching { SourceType.valueOf(it) }.getOrNull()
+                }?.toSet() ?: setOf(SourceType.SCREENSHOT)
+                val autoNotionEpoch = preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] ?: 0L
+
                 UserSettings(
                     onboardingCompleted = onboardingCompleted,
                     enabledSources = enabledSources,
@@ -209,6 +224,9 @@ class DataStoreSettingsRepository(
                         com.cayana.actions.notion.auth.NotionAuthStatus.valueOf(preferences[KEY_NOTION_AUTH_STATUS] ?: "")
                     }.getOrDefault(com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED),
                     autoNotionEnabled = preferences[KEY_AUTO_NOTION_ENABLED] ?: false,
+                    notionTransmissionPolicy = notionPolicy,
+                    autoNotionSources = autoNotionSources,
+                    autoNotionEligibilityEpoch = autoNotionEpoch,
                     selectedNotionTargetId = preferences[KEY_SELECTED_NOTION_TARGET_ID],
                     selectedNotionTargetTitle = preferences[KEY_SELECTED_NOTION_TARGET_TITLE],
                     selectedNotionTargetType = preferences[KEY_SELECTED_NOTION_TARGET_TYPE],
@@ -510,6 +528,8 @@ class DataStoreSettingsRepository(
             preferences[KEY_NOTION_AUTH_STATUS] = status.name
             if (status != com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED) {
                 preferences[KEY_AUTO_NOTION_ENABLED] = false
+                preferences[KEY_NOTION_TRANSMISSION_POLICY] = NotionTransmissionPolicy.OFF.name
+                preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = 0L
             }
         }
     }
@@ -517,6 +537,42 @@ class DataStoreSettingsRepository(
     override suspend fun updateAutoNotionEnabled(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[KEY_AUTO_NOTION_ENABLED] = enabled
+            val policy = if (enabled) NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES else NotionTransmissionPolicy.OFF
+            preferences[KEY_NOTION_TRANSMISSION_POLICY] = policy.name
+            if (enabled) {
+                if ((preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] ?: 0L) == 0L) {
+                    preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
+                }
+            } else {
+                preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = 0L
+            }
+        }
+    }
+
+    override suspend fun updateNotionTransmissionPolicy(policy: NotionTransmissionPolicy) {
+        dataStore.edit { preferences ->
+            preferences[KEY_NOTION_TRANSMISSION_POLICY] = policy.name
+            val autoEnabled = (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+            preferences[KEY_AUTO_NOTION_ENABLED] = autoEnabled
+            if (autoEnabled) {
+                if ((preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] ?: 0L) == 0L) {
+                    preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
+                }
+            } else if (policy == NotionTransmissionPolicy.OFF) {
+                preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = 0L
+            }
+        }
+    }
+
+    override suspend fun updateAutoNotionSources(sources: Set<SourceType>) {
+        dataStore.edit { preferences ->
+            preferences[KEY_AUTO_NOTION_SOURCES] = sources.map { it.name }.toSet()
+        }
+    }
+
+    override suspend fun updateAutoNotionEligibilityEpoch(epoch: Long) {
+        dataStore.edit { preferences ->
+            preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = epoch
         }
     }
 

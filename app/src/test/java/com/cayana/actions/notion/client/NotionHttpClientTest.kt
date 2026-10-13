@@ -127,7 +127,7 @@ class NotionHttpClientTest {
         assertEquals("db-456", dbTarget.id)
         assertEquals("Engineering Roadmap", dbTarget.title)
         assertEquals(NotionTargetType.DATABASE, dbTarget.type)
-        assertTrue(dbTarget.isSelectable)
+        assertFalse(dbTarget.isSelectable)
 
         val dsTarget = response.targets[2]
         assertEquals("ds-789", dsTarget.id)
@@ -222,7 +222,7 @@ class NotionHttpClientTest {
     }
 
     @Test
-    fun createPageBuildsCorrectParentForDatabaseAndPage() = runTest {
+    fun createPageRejectsDatabaseDirectWritingAndAcceptsPage() = runTest {
         var recordedBody: String? = null
         server.on({ method, path -> method == "POST" && path == "/pages" }) { req ->
             recordedBody = String(req.body, Charsets.UTF_8)
@@ -235,24 +235,25 @@ class NotionHttpClientTest {
             logger = logger
         )
 
-        // Test DATABASE parent
-        client.createPage(
+        // 1. Direct creation under DATABASE must fail
+        val dbResult = client.createPage(
             accessToken = "token_abc",
             targetId = "db-888",
             targetType = NotionTargetType.DATABASE,
             title = "Title DB"
         )
-        var parent = JSONObject(recordedBody!!).getJSONObject("parent")
-        assertEquals("db-888", parent.getString("database_id"))
+        assertTrue(dbResult is Result.Error)
+        assertTrue((dbResult as Result.Error).exception is IllegalArgumentException)
 
-        // Test PAGE parent
-        client.createPage(
+        // 2. Creation under PAGE must succeed with page_id
+        val pageResult = client.createPage(
             accessToken = "token_abc",
             targetId = "page-777",
             targetType = NotionTargetType.PAGE,
             title = "Title Page"
         )
-        parent = JSONObject(recordedBody!!).getJSONObject("parent")
+        assertTrue(pageResult is Result.Success)
+        val parent = JSONObject(recordedBody!!).getJSONObject("parent")
         assertEquals("page-777", parent.getString("page_id"))
     }
 

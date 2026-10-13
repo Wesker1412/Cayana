@@ -139,6 +139,7 @@ val appModule = module {
 
     single {
         com.cayana.actions.notion.destination.NotionDestination(
+            notionActionDao = get(),
             notionAuthManager = get(),
             notionClient = get(),
             settingsRepository = get(),
@@ -163,7 +164,8 @@ val appModule = module {
     single<com.cayana.actions.router.ActionRoutingHistoryTracker> {
         com.cayana.actions.router.DefaultActionRoutingHistoryTracker(
             calendarActionDao = get(),
-            taskActionDao = get()
+            taskActionDao = get(),
+            notionActionDao = get()
         )
     }
 
@@ -183,6 +185,8 @@ val appModule = module {
             actionRouter = get(),
             taskActionDao = get(),
             googleTasksDestination = get(),
+            notionActionDao = get(),
+            notionDestination = get(),
             settingsRepository = get(),
             memoryRepository = get(),
             logger = get()
