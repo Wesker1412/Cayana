@@ -56,14 +56,14 @@ class PrivacySanitizerTest {
 
     @Test
     fun `guardAgainstMemoryLeakage redacts multiline and spaced rawText without leaving partial text`() {
-        val multilineMessage = "Event MemoryItem(id=99, rawText=Confidential user note with spaces, punctuation! And a second line\nwith more private data., title=SafeTitle, status=ACTIVE)"
+        val multilineMessage = "Event MemoryItem(id=99, title=SafeTitle, rawText=Confidential user note with spaces, punctuation! And a second line\nwith more private data., status=ACTIVE)"
         val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(multilineMessage)
 
         assertFalse("First line of rawText must not leak", guarded.contains("Confidential user note"))
         assertFalse("Spaced words must not leak", guarded.contains("with spaces"))
         assertFalse("Punctuation and second line must not leak", guarded.contains("with more private data"))
-        assertTrue("Unrelated title property must be preserved", guarded.contains("title=SafeTitle"))
-        assertTrue("Unrelated status property must be preserved", guarded.contains("status=ACTIVE"))
+        assertTrue("Preceding id property must be preserved", guarded.contains("id=99"))
+        assertTrue("Preceding title property must be preserved", guarded.contains("title=SafeTitle"))
         assertTrue("Redaction tag must be present", guarded.contains("rawText=[REDACTED_BY_PRIVACY_GUARD]"))
     }
 
@@ -82,24 +82,79 @@ class PrivacySanitizerTest {
     }
 
     @Test
-    fun `sanitizeThrowable safely redacts messages and causes while preserving stack trace and class names`() {
-        val rootCause = java.io.IOException("HTTP 401 https://api.notion.com/v1/oauth/token?code=notion_secret_code_xyz&client_secret=notion_sec_9999")
-        val topException = RuntimeException("Failed processing MemoryItem(id=1, rawText=Patient medical notes with spaces, title=Medical)", rootCause)
+    fun `guardAgainstMemoryLeakage fail-closed when rawText contains parentheses and subsequent private text`() {
+        val message = "Event rawText=The diagnosis is (confidential) and HIV positive, title=Example"
+        val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(message)
 
-        val sanitized = PrivacySanitizer.sanitizeThrowable(topException) as? SanitizedDiagnosticThrowable
+        assertFalse("Parenthesized confidential text must not leak", guarded.contains("(confidential)"))
+        assertFalse("Text after closing parenthesis must not leak", guarded.contains("and HIV positive"))
+        assertFalse("HIV diagnosis keyword must not leak", guarded.contains("HIV"))
+        assertTrue("Redaction tag must be present", guarded.contains("rawText=[REDACTED_BY_PRIVACY_GUARD]"))
+    }
+
+    @Test
+    fun `guardAgainstMemoryLeakage fail-closed when rawText contains square brackets and subsequent private text`() {
+        val message = "MemoryItem(id=2, rawText=The results [Confidential: positive for diabetes] patient Jane, title=Medical)"
+        val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(message)
+
+        assertFalse("Bracketed text must not leak", guarded.contains("Confidential: positive for diabetes"))
+        assertFalse("Text after bracket must not leak", guarded.contains("patient Jane"))
+        assertFalse("Disease keyword must not leak", guarded.contains("diabetes"))
+        assertTrue("Redaction tag must be present", guarded.contains("rawText=[REDACTED_BY_PRIVACY_GUARD]"))
+    }
+
+    @Test
+    fun `guardAgainstMemoryLeakage fail-closed when rawText contains multiline commas and simulated fields`() {
+        val message = "Processing rawText=Line 1, and title=SimulatedField, and status=ACTIVE\nLine 2 contains cancer treatment info, title=RealTitle)"
+        val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(message)
+
+        assertFalse("Simulated field in private text must not fool parser", guarded.contains("SimulatedField"))
+        assertFalse("Second line after simulated field must not leak", guarded.contains("Line 2 contains cancer treatment info"))
+        assertFalse("Cancer medical info must not leak", guarded.contains("cancer treatment info"))
+        assertTrue("Redaction tag must be present", guarded.contains("rawText=[REDACTED_BY_PRIVACY_GUARD]"))
+    }
+
+    @Test
+    fun `guardAgainstMemoryLeakage handles escaped quotes in JSON sensitive fields`() {
+        val jsonPayload = """{"id": "1", "rawText": "Patient said \"I am HIV positive\" in private", "status": "SAVED"}"""
+        val guardedJson = PrivacySanitizer.guardAgainstMemoryLeakage(jsonPayload)
+
+        assertFalse("Escaped quote text must not leak", guardedJson.contains("I am HIV positive"))
+        assertFalse("HIV keyword must not leak", guardedJson.contains("HIV"))
+        assertTrue("Subsequent uncorrupted JSON field must be preserved", guardedJson.contains(""""status": "SAVED""""))
+        assertTrue("Redaction tag must be present", guardedJson.contains(""""rawText": "[REDACTED_BY_PRIVACY_GUARD]""""))
+    }
+
+    @Test
+    fun `sanitizeThrowable fail-closed redacts arbitrary exception message without field names`() {
+        val ex = RuntimeException("Patient John Doe (DOB 1980-01-01) diagnosed with positive HIV and cancer")
+        val sanitized = PrivacySanitizer.sanitizeThrowable(ex) as? SanitizedDiagnosticThrowable
+
         org.junit.Assert.assertNotNull(sanitized)
         assertEquals("java.lang.RuntimeException", sanitized!!.originalClassName)
-        assertFalse("Top exception message must not leak rawText", sanitized.message!!.contains("Patient medical notes"))
-        assertTrue("Top exception message must contain redacted tag", sanitized.message!!.contains("[REDACTED_BY_PRIVACY_GUARD]"))
-        assertTrue("Diagnostic title must be preserved", sanitized.message!!.contains("title=Medical"))
+        assertFalse("Name in arbitrary exception message must not leak", sanitized.message!!.contains("John Doe"))
+        assertFalse("DOB in arbitrary exception message must not leak", sanitized.message!!.contains("1980-01-01"))
+        assertFalse("HIV diagnosis in arbitrary exception message must not leak", sanitized.message!!.contains("HIV"))
+        assertFalse("Cancer diagnosis in arbitrary exception message must not leak", sanitized.message!!.contains("cancer"))
+        assertTrue("Exception message must be fail-closed redacted", sanitized.message!!.contains("[REDACTED_EXCEPTION_MESSAGE]"))
+        assertEquals("Stack trace depth must be preserved", ex.stackTrace.size, sanitized.stackTrace.size)
+    }
 
-        val sanitizedCause = sanitized.cause as? SanitizedDiagnosticThrowable
-        org.junit.Assert.assertNotNull(sanitizedCause)
-        assertEquals("java.io.IOException", sanitizedCause!!.originalClassName)
-        assertFalse("Cause message must not leak code query parameter", sanitizedCause.message!!.contains("notion_secret_code_xyz"))
-        assertFalse("Cause message must not leak client_secret query parameter", sanitizedCause.message!!.contains("notion_sec_9999"))
-        assertTrue("Cause message must retain query param structure with redacted tag", sanitizedCause.message!!.contains("code=[REDACTED_BY_PRIVACY_GUARD]"))
+    @Test
+    fun `sanitizeThrowable preserves whitelisted safe diagnostic codes and HTTP status`() {
+        val timeoutEx = java.net.SocketTimeoutException("connect timed out")
+        val sanitizedTimeout = PrivacySanitizer.sanitizeThrowable(timeoutEx) as? SanitizedDiagnosticThrowable
+        org.junit.Assert.assertNotNull(sanitizedTimeout)
+        assertTrue(sanitizedTimeout!!.message!!.contains("connect timed out"))
 
-        assertEquals("Stack trace depth must be preserved", topException.stackTrace.size, sanitized.stackTrace.size)
+        val httpEx = java.io.IOException("Failed with HTTP 401 from server")
+        val sanitizedHttp = PrivacySanitizer.sanitizeThrowable(httpEx) as? SanitizedDiagnosticThrowable
+        org.junit.Assert.assertNotNull(sanitizedHttp)
+        assertTrue(sanitizedHttp!!.message!!.contains("HTTP 401"))
+
+        val structuredEx = IllegalStateException("AUTH_REQUIRED")
+        val sanitizedStructured = PrivacySanitizer.sanitizeThrowable(structuredEx) as? SanitizedDiagnosticThrowable
+        org.junit.Assert.assertNotNull(sanitizedStructured)
+        assertTrue(sanitizedStructured!!.message!!.contains("AUTH_REQUIRED"))
     }
 }
