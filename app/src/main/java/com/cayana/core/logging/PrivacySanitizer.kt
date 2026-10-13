@@ -93,7 +93,9 @@ object PrivacySanitizer {
             result.contains("\"accessToken\"", ignoreCase = true) ||
             result.contains("\"refreshToken\"", ignoreCase = true) ||
             result.contains("\"codeVerifier\"", ignoreCase = true) ||
-            result.contains("\"secret\"", ignoreCase = true)
+            result.contains("\"secret\"", ignoreCase = true) ||
+            result.contains("\"client_secret\"", ignoreCase = true) ||
+            result.contains("\"clientSecret\"", ignoreCase = true)
         ) {
             result = jsonSensitiveFieldRegex.replace(result, "\"$1\": \"[REDACTED_BY_PRIVACY_GUARD]\"")
 

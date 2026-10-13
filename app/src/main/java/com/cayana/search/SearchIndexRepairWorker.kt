@@ -31,19 +31,30 @@ class SearchIndexRepairWorker(
             memoryRepository.rebuildSearchIndex()
             val stillDirty = searchIndexStateDao.isDirty() == true || memoryRepository.isIndexRebuildNeeded()
             if (stillDirty) {
-                CayanaLogger.w("SearchIndexRepair", "Search index still dirty after repair attempt")
-                Result.retry()
+                CayanaLogger.w("SearchIndexRepair", "Search index still dirty after repair attempt (attempt=$runAttemptCount)")
+                if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                    CayanaLogger.e("SearchIndexRepair", "Max retry attempts reached ($MAX_RETRY_ATTEMPTS), failing worker to avoid continuous wakeups")
+                    Result.failure()
+                } else {
+                    Result.retry()
+                }
             } else {
                 CayanaLogger.i("SearchIndexRepair", "Search index repair completed successfully")
                 Result.success()
             }
         } catch (e: Exception) {
-            CayanaLogger.w("SearchIndexRepair", "Search index repair failed: ${e.javaClass.simpleName}")
-            Result.retry()
+            CayanaLogger.w("SearchIndexRepair", "Search index repair failed (attempt=$runAttemptCount): ${e.javaClass.simpleName}")
+            if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                CayanaLogger.e("SearchIndexRepair", "Max retry attempts reached ($MAX_RETRY_ATTEMPTS), failing worker to avoid continuous wakeups")
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 
     companion object {
+        const val MAX_RETRY_ATTEMPTS = 3
         private const val WORK_NAME = "cayana_search_index_repair"
 
         fun scheduleIfDirty(context: Context) {

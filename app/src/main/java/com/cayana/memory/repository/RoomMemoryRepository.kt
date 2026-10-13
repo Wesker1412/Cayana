@@ -130,14 +130,24 @@ class RoomMemoryRepository(
             indexNeedsRebuild = true
             try {
                 sDao.clearFts()
-                val allEntities = memoryDao.getAllMemoriesDirect()
-                // Bounded batches of 50
-                allEntities.chunked(50).forEach { batch ->
+                var cursorId: String? = null
+                val pageSize = 50
+                while (true) {
+                    val batch = if (cursorId == null) {
+                        memoryDao.getInitialMemoriesById(pageSize)
+                    } else {
+                        memoryDao.getMemoriesAfterId(cursorId, pageSize)
+                    }
+                    if (batch.isEmpty()) break
+
                     val ftsList = batch.map { entity ->
                         val metadata = Converters.parseMetadata(entity.metadataJson)
                         MemorySearchDocumentBuilder.buildDocument(entity, metadata)
                     }
                     sDao.insertAllFts(ftsList)
+
+                    cursorId = batch.last().id
+                    if (batch.size < pageSize) break
                 }
                 searchIndexStateDao?.forceClearDirty()
                 searchIndexVersionStorage?.setIndexFormatVersion(com.cayana.retrieval.RetrievalPolicy.CURRENT_INDEX_FORMAT_VERSION)

@@ -50,11 +50,20 @@ class AutoBackupWorker(
                     settingsRepository.updateDriveAuthStatus(DriveAuthStatus.AUTH_REQUIRED)
                     return androidx.work.ListenableWorker.Result.failure()
                 } else {
-                    CayanaLogger.w("AutoBackupWorker", "Transient network error obtaining token")
-                    return androidx.work.ListenableWorker.Result.retry()
+                    CayanaLogger.w("AutoBackupWorker", "Transient network error obtaining token (attempt=$runAttemptCount)")
+                    return if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                        CayanaLogger.w("AutoBackupWorker", "Max retry attempts reached ($MAX_RETRY_ATTEMPTS), failing worker until next period")
+                        androidx.work.ListenableWorker.Result.failure()
+                    } else {
+                        androidx.work.ListenableWorker.Result.retry()
+                    }
                 }
             }
-            CayanaResult.Loading -> return androidx.work.ListenableWorker.Result.retry()
+            CayanaResult.Loading -> return if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                androidx.work.ListenableWorker.Result.failure()
+            } else {
+                androidx.work.ListenableWorker.Result.retry()
+            }
         }
 
         return when (val backupResult = backupManager.performBackup()) {
@@ -68,15 +77,25 @@ class AutoBackupWorker(
                     settingsRepository.updateDriveAuthStatus(DriveAuthStatus.AUTH_REQUIRED)
                     androidx.work.ListenableWorker.Result.failure()
                 } else {
-                    CayanaLogger.w("AutoBackupWorker", "AutoBackupWorker failed, retrying later: ${backupResult.exception.message}")
-                    androidx.work.ListenableWorker.Result.retry()
+                    CayanaLogger.w("AutoBackupWorker", "AutoBackupWorker failed, retrying later (attempt=$runAttemptCount): ${backupResult.exception.message}")
+                    if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                        CayanaLogger.w("AutoBackupWorker", "Max retry attempts reached ($MAX_RETRY_ATTEMPTS), failing worker until next period")
+                        androidx.work.ListenableWorker.Result.failure()
+                    } else {
+                        androidx.work.ListenableWorker.Result.retry()
+                    }
                 }
             }
-            CayanaResult.Loading -> androidx.work.ListenableWorker.Result.retry()
+            CayanaResult.Loading -> if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                androidx.work.ListenableWorker.Result.failure()
+            } else {
+                androidx.work.ListenableWorker.Result.retry()
+            }
         }
     }
 
     companion object {
+        const val MAX_RETRY_ATTEMPTS = 3
         const val WORK_NAME = "cayana_auto_drive_backup"
 
         fun schedule(context: Context) {

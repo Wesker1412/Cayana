@@ -743,6 +743,12 @@ class LocalSearchTest {
 
         val realMemoryDao = database.memoryDao()
         val interceptedMemoryDao = object : com.cayana.memory.data.MemoryDao by realMemoryDao {
+            override suspend fun getInitialMemoriesById(limit: Int): List<com.cayana.memory.data.MemoryEntity> {
+                val result = realMemoryDao.getInitialMemoriesById(limit)
+                rebuildStarted.complete(Unit)
+                canProceedRebuild.await()
+                return result
+            }
             override suspend fun getAllMemoriesDirect(): List<com.cayana.memory.data.MemoryEntity> {
                 // Rebuild is inside searchIndexMutationMutex, reading snapshot
                 val result = realMemoryDao.getAllMemoriesDirect()
@@ -827,6 +833,12 @@ class LocalSearchTest {
 
         val realMemoryDao = database.memoryDao()
         val interceptedMemoryDao = object : com.cayana.memory.data.MemoryDao by realMemoryDao {
+            override suspend fun getInitialMemoriesById(limit: Int): List<com.cayana.memory.data.MemoryEntity> {
+                val result = realMemoryDao.getInitialMemoriesById(limit)
+                rebuildStarted.complete(Unit)
+                canProceedRebuild.await()
+                return result
+            }
             override suspend fun getAllMemoriesDirect(): List<com.cayana.memory.data.MemoryEntity> {
                 val result = realMemoryDao.getAllMemoriesDirect()
                 rebuildStarted.complete(Unit)
@@ -880,4 +892,56 @@ class LocalSearchTest {
         assertFalse("Search index must not be dirty", concurrentRepo.isIndexRebuildNeeded())
         assertEquals(false, database.searchIndexStateDao().isDirty())
     }
+
+    @Test
+    fun rebuildSearchIndexMultiPageBatchesCorrectlyIndexesAllRecords() = runBlocking {
+        // Create 120 memories spanning 3 pages (50, 50, 20)
+        val memories = (1..120).map { i ->
+            val tag = when (i) {
+                1 -> "alphatokenone"
+                60 -> "betatokensixty"
+                120 -> "gammatokenonetwenty"
+                else -> "commontag"
+            }
+            MemoryItem(
+                id = "mem-batch-paged-%04d".format(i),
+                sourceType = SourceType.SCREENSHOT,
+                createdAt = 1000L + i,
+                capturedAt = 1000L + i,
+                title = "ItemTitle_$i",
+                rawText = "Batch payload content for item $i with $tag",
+                normalizedText = "batch payload content for item $i with $tag",
+                sourceExists = true,
+                processingState = ProcessingState.COMPLETED
+            )
+        }
+        memories.forEach { repository.saveMemory(it) }
+
+        // Clear FTS directly to simulate rebuild necessity
+        database.searchDao().clearFts()
+        database.searchIndexStateDao().markDirty()
+        assertEquals(0, database.searchDao().getFtsCount())
+
+        // Execute paged rebuild
+        repository.rebuildSearchIndex()
+
+        // Verify all 120 documents were indexed across pages
+        assertEquals(120, database.searchDao().getFtsCount())
+        assertFalse(repository.isIndexRebuildNeeded())
+        assertEquals(false, database.searchIndexStateDao().isDirty())
+
+        // Verify search finds item from first page, middle page, and last page
+        val result1 = searchEngine.search(SearchQuery(query = "alphatokenone"))
+        assertEquals(1, result1.size)
+        assertEquals("mem-batch-paged-0001", result1[0].memory.id)
+
+        val result60 = searchEngine.search(SearchQuery(query = "betatokensixty"))
+        assertEquals(1, result60.size)
+        assertEquals("mem-batch-paged-0060", result60[0].memory.id)
+
+        val result120 = searchEngine.search(SearchQuery(query = "gammatokenonetwenty"))
+        assertEquals(1, result120.size)
+        assertEquals("mem-batch-paged-0120", result120[0].memory.id)
+    }
 }
+

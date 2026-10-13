@@ -47,13 +47,21 @@ class RecordingTranscriptionWorker(
         return when (result.processingState) {
             ProcessingState.COMPLETED, ProcessingState.COMPLETED_WITHOUT_TEXT -> Result.success()
             ProcessingState.WAITING_FOR_MODEL -> Result.success()
-            ProcessingState.FAILED_RETRYABLE -> Result.retry()
+            ProcessingState.FAILED_RETRYABLE -> {
+                if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                    CayanaLogger.w("RecordingSttWorker", "Max retry attempts reached ($MAX_RETRY_ATTEMPTS) for memory $memoryId")
+                    Result.failure()
+                } else {
+                    Result.retry()
+                }
+            }
             ProcessingState.FAILED_PERMANENT, ProcessingState.FAILED -> Result.failure()
             else -> Result.success()
         }
     }
 
     companion object {
+        const val MAX_RETRY_ATTEMPTS = 3
         const val KEY_MEMORY_ID = "key_memory_id"
 
         fun getWorkName(memoryId: String): String = "cayana_recording_stt_$memoryId"

@@ -21,6 +21,13 @@ interface MemoryDao {
     @Query("SELECT * FROM memories ORDER BY capturedAt DESC")
     suspend fun getAllMemoriesDirect(): List<MemoryEntity>
 
+    @Query("SELECT * FROM memories ORDER BY id ASC LIMIT :limit")
+    suspend fun getInitialMemoriesById(limit: Int): List<MemoryEntity>
+
+    @Query("SELECT * FROM memories WHERE id > :cursorId ORDER BY id ASC LIMIT :limit")
+    suspend fun getMemoriesAfterId(cursorId: String, limit: Int): List<MemoryEntity>
+
+
     @Query("SELECT * FROM memories WHERE id = :id LIMIT 1")
     suspend fun getMemoryById(id: String): MemoryEntity?
 

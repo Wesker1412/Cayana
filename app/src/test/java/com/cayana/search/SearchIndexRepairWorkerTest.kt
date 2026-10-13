@@ -122,4 +122,48 @@ class SearchIndexRepairWorkerTest {
 
         assertEquals(ListenableWorker.Result.success(), result)
     }
+
+    @Test
+    fun repairWorkerFailureCapsRetryCountAtThree() = runBlocking {
+        database.searchIndexStateDao().markDirty()
+
+        val realRepo = RoomMemoryRepository(
+            memoryDao = database.memoryDao(),
+            searchDao = database.searchDao(),
+            searchIndexStateDao = database.searchIndexStateDao()
+        )
+
+        val failingRepo = object : MemoryRepository by realRepo {
+            override suspend fun rebuildSearchIndex() {
+                throw RuntimeException("Persistent failure")
+            }
+        }
+
+        if (GlobalContext.getOrNull() != null) {
+            stopKoin()
+        }
+        startKoin {
+            androidContext(context)
+            modules(module {
+                single<MemoryRepository> { failingRepo }
+                single<SearchIndexStateDao> { database.searchIndexStateDao() }
+            })
+        }
+
+        val workerAttempt0 = TestListenableWorkerBuilder<SearchIndexRepairWorker>(context)
+            .setRunAttemptCount(0)
+            .build()
+        assertEquals(ListenableWorker.Result.retry(), workerAttempt0.doWork())
+
+        val workerAttempt2 = TestListenableWorkerBuilder<SearchIndexRepairWorker>(context)
+            .setRunAttemptCount(2)
+            .build()
+        assertEquals(ListenableWorker.Result.retry(), workerAttempt2.doWork())
+
+        val workerAttempt3 = TestListenableWorkerBuilder<SearchIndexRepairWorker>(context)
+            .setRunAttemptCount(3)
+            .build()
+        assertEquals(ListenableWorker.Result.failure(), workerAttempt3.doWork())
+    }
 }
+

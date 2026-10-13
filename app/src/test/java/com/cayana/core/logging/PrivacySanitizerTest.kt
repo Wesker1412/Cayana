@@ -157,4 +157,18 @@ class PrivacySanitizerTest {
         org.junit.Assert.assertNotNull(sanitizedStructured)
         assertTrue(sanitizedStructured!!.message!!.contains("AUTH_REQUIRED"))
     }
+
+    @Test
+    fun `guardAgainstMemoryLeakage redacts client_secret and clientSecret in JSON`() {
+        val payload1 = """{"client_secret": "super_secret_oauth_key_12345", "status": "OK"}"""
+        val guarded1 = PrivacySanitizer.guardAgainstMemoryLeakage(payload1)
+        assertFalse("client_secret must not leak", guarded1.contains("super_secret_oauth_key_12345"))
+        assertTrue("client_secret must be redacted", guarded1.contains(""""client_secret": "[REDACTED_BY_PRIVACY_GUARD]""""))
+
+        val payload2 = """{"clientSecret": "super_secret_camel_56789", "status": "OK"}"""
+        val guarded2 = PrivacySanitizer.guardAgainstMemoryLeakage(payload2)
+        assertFalse("clientSecret must not leak", guarded2.contains("super_secret_camel_56789"))
+        assertTrue("clientSecret must be redacted", guarded2.contains(""""clientSecret": "[REDACTED_BY_PRIVACY_GUARD]""""))
+    }
 }
+
