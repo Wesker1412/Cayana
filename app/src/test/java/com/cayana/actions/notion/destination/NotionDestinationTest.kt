@@ -102,7 +102,7 @@ class NotionDestinationTest {
     }
 
     @Test
-    fun authorizedAndConfiguredDestinationCreatesPageSuccessfully() = runTest {
+    fun stage9c1CannotCreateRemotePage() = runTest {
         settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
         settingsRepository.updateAutoNotionEnabled(true)
         settingsRepository.updateSelectedNotionTarget("target_page_1", "Notes Page", "page")
@@ -120,66 +120,12 @@ class NotionDestinationTest {
 
         val result = destination.createNote(candidate)
 
-        assertTrue(result is DestinationExecutionResult.Success)
-        val success = result as DestinationExecutionResult.Success
-        assertNotNull(success.destinationReferenceId)
-        assertEquals(1, notionClient.createdPages.size)
-
-        val created = notionClient.createdPages[0]
-        assertEquals("Project Roadmap", created.title)
-        assertEquals("Release MVP next week", created.content)
-        assertEquals("target_page_1", created.targetId)
-        assertEquals("mem_789", created.sourceMemoryId)
-    }
-
-    @Test
-    fun authExpiredOnCreatePageMarksAuthRequired() = runTest {
-        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
-        settingsRepository.updateAutoNotionEnabled(true)
-        settingsRepository.updateSelectedNotionTarget("target_db_1", "Notes DB", "database")
-
-        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
-        authManager.tokenToReturn = "expired_bearer_token"
-
-        notionClient.createPageFailure = NotionAuthRequiredException("401 Unauthorized")
-
-        val candidate = ActionCandidate(
-            type = ActionCandidateType.NOTE,
-            title = "Note",
-            notes = "Body",
-            confidence = 0.9f,
-            sourceMemoryId = "mem_999"
-        )
-
-        val result = destination.createNote(candidate)
-
-        assertTrue(result is DestinationExecutionResult.NeedsAttention)
-        assertEquals(NotionAuthStatus.AUTH_REQUIRED, authManager.authStatus.value)
-    }
-
-    @Test
-    fun networkFailureOnCreatePageReturnsRetryableFailure() = runTest {
-        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
-        settingsRepository.updateAutoNotionEnabled(true)
-        settingsRepository.updateSelectedNotionTarget("target_db_1", "Notes DB")
-
-        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
-        authManager.tokenToReturn = "token_ok"
-
-        notionClient.createPageFailure = IOException("Connection timed out")
-
-        val candidate = ActionCandidate(
-            type = ActionCandidateType.NOTE,
-            title = "Network note",
-            notes = "Body",
-            confidence = 0.9f,
-            sourceMemoryId = "mem_net"
-        )
-
-        val result = destination.createNote(candidate)
-
+        // Stage 9C-1 Boundary: fails closed without calling remote Notion client
         assertTrue(result is DestinationExecutionResult.Failure)
-        assertTrue((result as DestinationExecutionResult.Failure).canRetry)
+        val failure = result as DestinationExecutionResult.Failure
+        assertFalse(failure.canRetry)
+        assertTrue(failure.reason.contains("Stage 9C-1"))
+        assertEquals(0, notionClient.createdPages.size)
     }
 
     @Test

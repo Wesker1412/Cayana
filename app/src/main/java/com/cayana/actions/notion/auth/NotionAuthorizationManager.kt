@@ -12,7 +12,7 @@ interface NotionAuthorizationManager {
     val authStatus: StateFlow<NotionAuthStatus>
     suspend fun getAccessToken(): Result<String>
     suspend fun getAuthorizationUrl(redirectUri: String? = null): Result<String>
-    suspend fun handleAuthorizationCallback(code: String, state: String, redirectUri: String? = null): Result<Unit>
+    suspend fun handleAuthorizationCallback(ticket: String, state: String, redirectUri: String? = null): Result<Unit>
     suspend fun handleAuthorizationFailure(error: String): Result<Unit>
     suspend fun refreshAuthStatus(): NotionAuthStatus
     suspend fun disconnect(): Result<Unit>
@@ -36,6 +36,9 @@ class DefaultNotionAuthorizationManager(
     @Volatile
     private var pendingState: String? = null
 
+    @Volatile
+    private var pendingCodeVerifier: String? = null
+
     override suspend fun getAccessToken(): Result<String> {
         if (_authStatus.value == NotionAuthStatus.DISCONNECTED) {
             return Result.Error(NotionAuthRequiredException("Notion 尚未連線"))
@@ -53,7 +56,7 @@ class DefaultNotionAuthorizationManager(
             when (val refreshResult = brokerClient.refreshToken(refreshToken)) {
                 is Result.Success -> {
                     val resp = refreshResult.data
-                    tokenStorage.saveTokens(
+                    val saved = tokenStorage.saveTokens(
                         accessToken = resp.accessToken,
                         refreshToken = resp.refreshToken ?: refreshToken,
                         workspaceId = resp.workspaceId ?: tokenStorage.getWorkspaceId(),
@@ -61,6 +64,11 @@ class DefaultNotionAuthorizationManager(
                         workspaceIcon = resp.workspaceIcon ?: tokenStorage.getWorkspaceIcon(),
                         botId = resp.botId ?: tokenStorage.getBotId()
                     )
+                    if (!saved) {
+                        logger.e(TAG, "Failed to securely save refreshed tokens; marking auth required")
+                        markAuthRequired()
+                        return Result.Error(NotionAuthRequiredException("Failed to securely store refreshed tokens"))
+                    }
                     _authStatus.value = NotionAuthStatus.CONNECTED
                     return Result.Success(resp.accessToken)
                 }
@@ -80,9 +88,15 @@ class DefaultNotionAuthorizationManager(
     }
 
     override suspend fun getAuthorizationUrl(redirectUri: String?): Result<String> {
-        return when (val initResult = brokerClient.initiateOAuth(redirectUri)) {
+        val verifier = PkceUtil.generateCodeVerifier()
+        val challenge = PkceUtil.generateCodeChallenge(verifier)
+
+        return when (val initResult = brokerClient.initiateOAuth(challenge, redirectUri)) {
             is Result.Success -> {
-                pendingState = initResult.data.state
+                val state = initResult.data.state
+                pendingState = state
+                pendingCodeVerifier = verifier
+                tokenStorage.savePendingOAuthTransaction(state, verifier)
                 Result.Success(initResult.data.authorizeUrl)
             }
             is Result.Error -> {
@@ -94,20 +108,30 @@ class DefaultNotionAuthorizationManager(
     }
 
     override suspend fun handleAuthorizationCallback(
-        code: String,
+        ticket: String,
         state: String,
         redirectUri: String?
     ): Result<Unit> {
-        val expectedState = pendingState
-        if (expectedState.isNullOrBlank() || state != expectedState) {
-            logger.w(TAG, "Security check failed: OAuth state mismatch or missing pending state")
+        val expectedState = pendingState ?: tokenStorage.getPendingOAuthState()
+        val codeVerifier = pendingCodeVerifier ?: tokenStorage.getPendingCodeVerifier()
+
+        if (expectedState.isNullOrBlank() || state != expectedState || codeVerifier.isNullOrBlank()) {
+            logger.w(TAG, "Security check failed: OAuth state mismatch or missing pending state/verifier")
+            pendingState = null
+            pendingCodeVerifier = null
+            tokenStorage.clearPendingOAuthTransaction()
             return Result.Error(SecurityException("OAuth state mismatch: state was not initiated by this client"))
         }
 
-        return when (val exchangeResult = brokerClient.exchangeCode(code, state, redirectUri)) {
+        // Atomically consume pending transaction locally to prevent replay
+        pendingState = null
+        pendingCodeVerifier = null
+        tokenStorage.clearPendingOAuthTransaction()
+
+        return when (val exchangeResult = brokerClient.exchangeTicket(ticket, state, codeVerifier)) {
             is Result.Success -> {
                 val data = exchangeResult.data
-                tokenStorage.saveTokens(
+                val saved = tokenStorage.saveTokens(
                     accessToken = data.accessToken,
                     refreshToken = data.refreshToken,
                     workspaceId = data.workspaceId,
@@ -115,16 +139,24 @@ class DefaultNotionAuthorizationManager(
                     workspaceIcon = data.workspaceIcon,
                     botId = data.botId
                 )
+                if (!saved) {
+                    logger.e(TAG, "Failed to securely save Notion tokens in Keystore; failing closed")
+                    tokenStorage.clearTokens()
+                    _authStatus.value = NotionAuthStatus.DISCONNECTED
+                    settingsRepository.updateNotionAuthStatus(NotionAuthStatus.DISCONNECTED)
+                    return Result.Error(SecurityException("Failed to securely encrypt/persist Notion tokens"))
+                }
+
                 settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
                 settingsRepository.updateNotionWorkspaceInfo(data.workspaceName, data.workspaceIcon)
                 _authStatus.value = NotionAuthStatus.CONNECTED
-                pendingState = null
                 logger.i(TAG, "Notion authorization completed successfully")
                 Result.Success(Unit)
             }
             is Result.Error -> {
                 logger.w(TAG, "OAuth exchange failed: ${exchangeResult.exception.javaClass.simpleName}")
-                pendingState = null
+                _authStatus.value = NotionAuthStatus.DISCONNECTED
+                settingsRepository.updateNotionAuthStatus(NotionAuthStatus.DISCONNECTED)
                 Result.Error(exchangeResult.exception)
             }
             is Result.Loading -> Result.Error(IllegalStateException("OAuth exchange in progress"))
@@ -132,8 +164,16 @@ class DefaultNotionAuthorizationManager(
     }
 
     override suspend fun handleAuthorizationFailure(error: String): Result<Unit> {
-        logger.w(TAG, "Authorization was denied or failed: $error")
+        val structuredCode = when {
+            error.contains("access_denied", ignoreCase = true) || error.contains("cancel", ignoreCase = true) -> "ACCESS_DENIED"
+            error.contains("invalid_request", ignoreCase = true) -> "INVALID_REQUEST"
+            error.contains("unauthorized", ignoreCase = true) -> "UNAUTHORIZED"
+            else -> "OAUTH_CALLBACK_ERROR"
+        }
+        logger.w(TAG, "Authorization was denied or failed: errorCode=$structuredCode")
         pendingState = null
+        pendingCodeVerifier = null
+        tokenStorage.clearPendingOAuthTransaction()
         if (_authStatus.value != NotionAuthStatus.CONNECTED) {
             _authStatus.value = NotionAuthStatus.DISCONNECTED
             settingsRepository.updateNotionAuthStatus(NotionAuthStatus.DISCONNECTED)
@@ -161,7 +201,9 @@ class DefaultNotionAuthorizationManager(
 
     override suspend fun disconnect(): Result<Unit> {
         tokenStorage.clearTokens()
+        tokenStorage.clearPendingOAuthTransaction()
         pendingState = null
+        pendingCodeVerifier = null
         _authStatus.value = NotionAuthStatus.DISCONNECTED
         settingsRepository.updateNotionAuthStatus(NotionAuthStatus.DISCONNECTED)
         settingsRepository.updateAutoNotionEnabled(false)

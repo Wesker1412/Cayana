@@ -31,30 +31,30 @@ class NotionOAuthCallbackActivity : Activity(), KoinComponent {
 
         val error = uri.getQueryParameter("error")
         if (!error.isNullOrBlank()) {
-            val errorDescription = uri.getQueryParameter("error_description") ?: error
-            CayanaLogger.w(TAG, "Notion OAuth returned error: $errorDescription")
+            val sanitizedCode = error.take(64).replace(Regex("[^a-zA-Z0-9_]"), "")
+            CayanaLogger.w(TAG, "Notion OAuth returned error: $sanitizedCode")
             CoroutineScope(Dispatchers.Main).launch {
-                notionAuthManager.handleAuthorizationFailure(errorDescription)
-                Toast.makeText(this@NotionOAuthCallbackActivity, "Notion 授權未完成: $errorDescription", Toast.LENGTH_SHORT).show()
+                notionAuthManager.handleAuthorizationFailure(sanitizedCode)
+                Toast.makeText(this@NotionOAuthCallbackActivity, "Notion 授權未完成", Toast.LENGTH_SHORT).show()
                 finish()
             }
             return
         }
 
-        val code = uri.getQueryParameter("code")
+        val ticket = uri.getQueryParameter("ticket") ?: uri.getQueryParameter("code")
         val state = uri.getQueryParameter("state")
 
-        if (code.isNullOrBlank() || state.isNullOrBlank()) {
-            CayanaLogger.w(TAG, "Notion OAuth callback missing code or state")
+        if (ticket.isNullOrBlank() || state.isNullOrBlank()) {
+            CayanaLogger.w(TAG, "Notion OAuth callback missing ticket or state")
             CoroutineScope(Dispatchers.Main).launch {
-                notionAuthManager.handleAuthorizationFailure("Missing authorization code or state")
+                notionAuthManager.handleAuthorizationFailure("MISSING_TICKET_OR_STATE")
                 finish()
             }
             return
         }
 
         CoroutineScope(Dispatchers.IO).launch {
-            val result = notionAuthManager.handleAuthorizationCallback(code, state)
+            val result = notionAuthManager.handleAuthorizationCallback(ticket, state)
             withContext(Dispatchers.Main) {
                 if (result is com.cayana.core.common.Result.Success) {
                     Toast.makeText(this@NotionOAuthCallbackActivity, "Notion 連線成功", Toast.LENGTH_SHORT).show()

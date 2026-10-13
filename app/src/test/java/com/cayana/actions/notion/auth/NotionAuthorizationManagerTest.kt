@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -40,7 +41,7 @@ class NotionAuthorizationManagerTest {
     }
 
     @Test
-    fun getAuthorizationUrlGeneratesUrlAndSetsPendingState() = runTest {
+    fun getAuthorizationUrlGeneratesUrlAndSetsPendingStateAndVerifier() = runTest {
         brokerClient.initiateResponse = NotionOAuthInitiateResponse(
             authorizeUrl = "https://api.notion.com/v1/oauth/authorize?state=test_state_123",
             state = "test_state_123"
@@ -50,6 +51,14 @@ class NotionAuthorizationManagerTest {
         assertTrue(result is Result.Success)
         val url = (result as Result.Success).data
         assertTrue(url.contains("state=test_state_123"))
+
+        // Verify PKCE code challenge was passed to broker
+        assertNotNull(brokerClient.lastCodeChallenge)
+        assertTrue(brokerClient.lastCodeChallenge!!.isNotBlank())
+
+        // Verify pending transaction was persisted to storage
+        assertEquals("test_state_123", tokenStorage.getPendingOAuthState())
+        assertNotNull(tokenStorage.getPendingCodeVerifier())
     }
 
     @Test
@@ -61,7 +70,7 @@ class NotionAuthorizationManagerTest {
         authManager.getAuthorizationUrl()
 
         val callbackResult = authManager.handleAuthorizationCallback(
-            code = "auth_code_123",
+            ticket = "ticket_123",
             state = "evil_hacker_state"
         )
 
@@ -69,10 +78,26 @@ class NotionAuthorizationManagerTest {
         val error = (callbackResult as Result.Error).exception
         assertTrue(error is SecurityException)
         assertFalse(tokenStorage.hasTokens())
+        assertNull(tokenStorage.getPendingOAuthState())
     }
 
     @Test
-    fun callbackWithValidStateExchangesCodeAndPersistsTokens() = runTest {
+    fun unsolicitedCallbackFailsClosed() = runTest {
+        // No initiation performed: pendingState and persisted transaction are null
+        assertNull(tokenStorage.getPendingOAuthState())
+
+        val callbackResult = authManager.handleAuthorizationCallback(
+            ticket = "unsolicited_ticket",
+            state = "unsolicited_state"
+        )
+
+        assertTrue(callbackResult is Result.Error)
+        assertTrue((callbackResult as Result.Error).exception is SecurityException)
+        assertEquals(NotionAuthStatus.DISCONNECTED, authManager.authStatus.value)
+    }
+
+    @Test
+    fun callbackWithValidTicketExchangesAndPersistsTokens() = runTest {
         val expectedState = "safe_state_xyz"
         brokerClient.initiateResponse = NotionOAuthInitiateResponse(
             authorizeUrl = "https://api.notion.com/v1/oauth/authorize?state=$expectedState",
@@ -90,7 +115,7 @@ class NotionAuthorizationManagerTest {
         )
 
         val result = authManager.handleAuthorizationCallback(
-            code = "auth_code_valid",
+            ticket = "valid_relay_ticket",
             state = expectedState
         )
 
@@ -101,12 +126,100 @@ class NotionAuthorizationManagerTest {
         assertEquals("workspace_abc", tokenStorage.getWorkspaceId())
         assertEquals("My Workspace", tokenStorage.getWorkspaceName())
 
+        // Verify pending transaction was cleared
+        assertNull(tokenStorage.getPendingOAuthState())
+        assertNull(tokenStorage.getPendingCodeVerifier())
+
         // Verify status updated in manager and settings repository
         assertEquals(NotionAuthStatus.CONNECTED, authManager.authStatus.value)
         val settings = settingsRepository.getSettings().first()
         assertTrue(settings.isNotionConnected)
         assertEquals(NotionAuthStatus.CONNECTED, settings.notionAuthStatus)
         assertEquals("My Workspace", settings.notionWorkspaceName)
+    }
+
+    @Test
+    fun callbackAfterProcessRestartHandledSafely() = runTest {
+        // 1. App initiates OAuth transaction
+        val state = "persisted_state_789"
+        brokerClient.initiateResponse = NotionOAuthInitiateResponse(
+            authorizeUrl = "https://api.notion.com/v1/oauth/authorize?state=$state",
+            state = state
+        )
+        authManager.getAuthorizationUrl()
+
+        // Verify state and verifier are safely persisted in token storage
+        val persistedVerifier = tokenStorage.getPendingCodeVerifier()
+        assertNotNull(persistedVerifier)
+        assertEquals(state, tokenStorage.getPendingOAuthState())
+
+        // 2. Simulate process death & app restart: re-instantiate DefaultNotionAuthorizationManager
+        val newAuthManager = DefaultNotionAuthorizationManager(
+            tokenStorage = tokenStorage,
+            brokerClient = brokerClient,
+            settingsRepository = settingsRepository,
+            logger = logger
+        )
+
+        brokerClient.tokenResponse = NotionOAuthTokenResponse(
+            accessToken = "restored_access_token",
+            refreshToken = "restored_refresh_token",
+            workspaceId = "ws_restored",
+            workspaceName = "Restored Workspace",
+            workspaceIcon = null,
+            botId = null
+        )
+
+        // 3. Callback arrives after process restart
+        val callbackResult = newAuthManager.handleAuthorizationCallback(
+            ticket = "relay_ticket_after_restart",
+            state = state
+        )
+
+        assertTrue(callbackResult is Result.Success)
+        assertEquals("relay_ticket_after_restart", brokerClient.lastTicket)
+        assertEquals(persistedVerifier, brokerClient.lastCodeVerifier)
+        assertEquals(NotionAuthStatus.CONNECTED, newAuthManager.authStatus.value)
+        assertEquals("restored_access_token", tokenStorage.getAccessToken())
+        assertNull(tokenStorage.getPendingOAuthState())
+    }
+
+    @Test
+    fun tokenStorageFailureCannotMarkConnected() = runTest {
+        val state = "state_keystore_fail"
+        brokerClient.initiateResponse = NotionOAuthInitiateResponse(
+            authorizeUrl = "https://api.notion.com/v1/oauth/authorize?state=$state",
+            state = state
+        )
+        authManager.getAuthorizationUrl()
+
+        brokerClient.tokenResponse = NotionOAuthTokenResponse(
+            accessToken = "token_wont_save",
+            refreshToken = "refresh_wont_save",
+            workspaceId = "ws_fail",
+            workspaceName = "Fail WS",
+            workspaceIcon = null,
+            botId = null
+        )
+
+        // Simulate Keystore encryption failure / persistence failure
+        tokenStorage.failSaveTokens = true
+
+        val result = authManager.handleAuthorizationCallback(
+            ticket = "ticket_fail_store",
+            state = state
+        )
+
+        // Must fail-closed and return error
+        assertTrue(result is Result.Error)
+        assertTrue((result as Result.Error).exception is SecurityException)
+
+        // Auth status MUST remain DISCONNECTED
+        assertEquals(NotionAuthStatus.DISCONNECTED, authManager.authStatus.value)
+        val settings = settingsRepository.getSettings().first()
+        assertFalse(settings.isNotionConnected)
+        assertEquals(NotionAuthStatus.DISCONNECTED, settings.notionAuthStatus)
+        assertFalse(tokenStorage.hasTokens())
     }
 
     @Test
@@ -197,26 +310,25 @@ class NotionAuthorizationManagerTest {
     }
 
     @Test
-    fun tokensNeverAppearInLogs() = runTest {
+    fun oauthErrorsNeverLeakCredentials() = runTest {
         val sensitiveAccessToken = "secret_access_xyz999"
         val sensitiveRefreshToken = "secret_refresh_abc888"
+        val sensitiveSecret = "secret_super_private_credential_key"
 
         brokerClient.initiateResponse = NotionOAuthInitiateResponse("https://auth.url?state=s", "s")
         authManager.getAuthorizationUrl()
 
-        brokerClient.tokenResponse = NotionOAuthTokenResponse(
-            accessToken = sensitiveAccessToken,
-            refreshToken = sensitiveRefreshToken,
-            workspaceId = "ws",
-            workspaceName = "WS",
-            workspaceIcon = null,
-            botId = null
-        )
-        authManager.handleAuthorizationCallback("code", "s")
+        // Simulate broker exchange failure with error message
+        brokerClient.exchangeFailure = RuntimeException("Authentication failed for client_secret=$sensitiveSecret")
+        authManager.handleAuthorizationCallback("ticket", "s")
+
+        // Also test failure callback
+        authManager.handleAuthorizationFailure("Error with token=$sensitiveAccessToken and secret=$sensitiveSecret")
 
         for (log in logger.logs) {
-            assertFalse("Token must never appear in log: $log", log.contains(sensitiveAccessToken))
-            assertFalse("Token must never appear in log: $log", log.contains(sensitiveRefreshToken))
+            assertFalse("Access token must never appear in log: $log", log.contains(sensitiveAccessToken))
+            assertFalse("Refresh token must never appear in log: $log", log.contains(sensitiveRefreshToken))
+            assertFalse("Secret credential must never appear in log: $log", log.contains(sensitiveSecret))
         }
     }
 }
@@ -229,6 +341,11 @@ class FakeNotionTokenStorage : NotionTokenStorage {
     private var workspaceIcon: String? = null
     private var botId: String? = null
 
+    private var pendingState: String? = null
+    private var pendingVerifier: String? = null
+
+    var failSaveTokens: Boolean = false
+
     override fun saveTokens(
         accessToken: String,
         refreshToken: String?,
@@ -236,13 +353,17 @@ class FakeNotionTokenStorage : NotionTokenStorage {
         workspaceName: String?,
         workspaceIcon: String?,
         botId: String?
-    ) {
+    ): Boolean {
+        if (failSaveTokens) {
+            return false
+        }
         this.accessToken = accessToken
         this.refreshToken = refreshToken
         this.workspaceId = workspaceId
         this.workspaceName = workspaceName
         this.workspaceIcon = workspaceIcon
         this.botId = botId
+        return true
     }
 
     override fun getAccessToken(): String? = accessToken
@@ -262,6 +383,19 @@ class FakeNotionTokenStorage : NotionTokenStorage {
     }
 
     override fun hasTokens(): Boolean = !accessToken.isNullOrBlank() || !refreshToken.isNullOrBlank()
+
+    override fun savePendingOAuthTransaction(state: String, codeVerifier: String) {
+        this.pendingState = state
+        this.pendingVerifier = codeVerifier
+    }
+
+    override fun getPendingOAuthState(): String? = pendingState
+    override fun getPendingCodeVerifier(): String? = pendingVerifier
+
+    override fun clearPendingOAuthTransaction() {
+        pendingState = null
+        pendingVerifier = null
+    }
 }
 
 class FakeNotionOAuthBrokerClient : NotionOAuthBrokerClient {
@@ -271,17 +405,26 @@ class FakeNotionOAuthBrokerClient : NotionOAuthBrokerClient {
     var exchangeFailure: Throwable? = null
     var refreshFailure: Throwable? = null
 
-    override suspend fun initiateOAuth(redirectUri: String?): Result<NotionOAuthInitiateResponse> {
+    var lastCodeChallenge: String? = null
+    var lastTicket: String? = null
+    var lastState: String? = null
+    var lastCodeVerifier: String? = null
+
+    override suspend fun initiateOAuth(codeChallenge: String, redirectUri: String?): Result<NotionOAuthInitiateResponse> {
+        lastCodeChallenge = codeChallenge
         initiateFailure?.let { return Result.Error(it) }
         val resp = initiateResponse ?: NotionOAuthInitiateResponse("https://api.notion.com/v1/oauth/authorize?state=fake", "fake")
         return Result.Success(resp)
     }
 
-    override suspend fun exchangeCode(
-        code: String,
+    override suspend fun exchangeTicket(
+        ticket: String,
         state: String,
-        redirectUri: String?
+        codeVerifier: String
     ): Result<NotionOAuthTokenResponse> {
+        lastTicket = ticket
+        lastState = state
+        lastCodeVerifier = codeVerifier
         exchangeFailure?.let { return Result.Error(it) }
         val resp = tokenResponse ?: NotionOAuthTokenResponse("fake_access", "fake_refresh", "ws", "Workspace", null, null)
         return Result.Success(resp)

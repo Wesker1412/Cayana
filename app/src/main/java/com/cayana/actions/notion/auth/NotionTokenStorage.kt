@@ -18,7 +18,7 @@ interface NotionTokenStorage {
         workspaceName: String? = null,
         workspaceIcon: String? = null,
         botId: String? = null
-    )
+    ): Boolean
     fun getAccessToken(): String?
     fun getRefreshToken(): String?
     fun getWorkspaceId(): String?
@@ -27,6 +27,11 @@ interface NotionTokenStorage {
     fun getBotId(): String?
     fun clearTokens()
     fun hasTokens(): Boolean
+
+    fun savePendingOAuthTransaction(state: String, codeVerifier: String)
+    fun getPendingOAuthState(): String?
+    fun getPendingCodeVerifier(): String?
+    fun clearPendingOAuthTransaction()
 }
 
 class AndroidKeystoreNotionTokenStorage(
@@ -44,6 +49,8 @@ class AndroidKeystoreNotionTokenStorage(
         private const val PREF_WORKSPACE_NAME = "workspace_name"
         private const val PREF_WORKSPACE_ICON = "workspace_icon"
         private const val PREF_BOT_ID = "bot_id"
+        private const val PREF_PENDING_STATE = "pending_oauth_state"
+        private const val PREF_PENDING_CODE_VERIFIER = "pending_code_verifier"
         private const val GCM_IV_LENGTH = 12
         private const val GCM_TAG_LENGTH = 128
     }
@@ -65,24 +72,25 @@ class AndroidKeystoreNotionTokenStorage(
         workspaceName: String?,
         workspaceIcon: String?,
         botId: String?
-    ) {
-        val editor = prefs.edit()
-
-        val encryptedAccess = encryptString(accessToken)
-        if (encryptedAccess != null) {
-            editor.putString(PREF_WRAPPED_ACCESS_TOKEN, encryptedAccess)
-            cachedAccessToken = accessToken
+    ): Boolean {
+        if (accessToken.isBlank()) {
+            return false
         }
 
-        if (!refreshToken.isNullOrBlank()) {
-            val encryptedRefresh = encryptString(refreshToken)
-            if (encryptedRefresh != null) {
-                editor.putString(PREF_WRAPPED_REFRESH_TOKEN, encryptedRefresh)
-                cachedRefreshToken = refreshToken
-            }
+        val encryptedAccess = encryptString(accessToken) ?: return false
+
+        val encryptedRefresh = if (!refreshToken.isNullOrBlank()) {
+            encryptString(refreshToken) ?: return false
+        } else {
+            null
+        }
+
+        val editor = prefs.edit()
+        editor.putString(PREF_WRAPPED_ACCESS_TOKEN, encryptedAccess)
+        if (encryptedRefresh != null) {
+            editor.putString(PREF_WRAPPED_REFRESH_TOKEN, encryptedRefresh)
         } else {
             editor.remove(PREF_WRAPPED_REFRESH_TOKEN)
-            cachedRefreshToken = null
         }
 
         if (workspaceId != null) editor.putString(PREF_WORKSPACE_ID, workspaceId) else editor.remove(PREF_WORKSPACE_ID)
@@ -90,7 +98,12 @@ class AndroidKeystoreNotionTokenStorage(
         if (workspaceIcon != null) editor.putString(PREF_WORKSPACE_ICON, workspaceIcon) else editor.remove(PREF_WORKSPACE_ICON)
         if (botId != null) editor.putString(PREF_BOT_ID, botId) else editor.remove(PREF_BOT_ID)
 
-        editor.apply()
+        val committed = editor.commit()
+        if (committed) {
+            cachedAccessToken = accessToken
+            cachedRefreshToken = refreshToken
+        }
+        return committed
     }
 
     override fun getAccessToken(): String? {
@@ -125,11 +138,36 @@ class AndroidKeystoreNotionTokenStorage(
     override fun clearTokens() {
         cachedAccessToken = null
         cachedRefreshToken = null
-        prefs.edit().clear().apply()
+        prefs.edit()
+            .remove(PREF_WRAPPED_ACCESS_TOKEN)
+            .remove(PREF_WRAPPED_REFRESH_TOKEN)
+            .remove(PREF_WORKSPACE_ID)
+            .remove(PREF_WORKSPACE_NAME)
+            .remove(PREF_WORKSPACE_ICON)
+            .remove(PREF_BOT_ID)
+            .commit()
     }
 
     override fun hasTokens(): Boolean {
-        return !cachedAccessToken.isNullOrBlank() || prefs.contains(PREF_WRAPPED_ACCESS_TOKEN)
+        return !cachedAccessToken.isNullOrBlank() || !prefs.getString(PREF_WRAPPED_ACCESS_TOKEN, null).isNullOrBlank()
+    }
+
+    override fun savePendingOAuthTransaction(state: String, codeVerifier: String) {
+        prefs.edit()
+            .putString(PREF_PENDING_STATE, state)
+            .putString(PREF_PENDING_CODE_VERIFIER, codeVerifier)
+            .commit()
+    }
+
+    override fun getPendingOAuthState(): String? = prefs.getString(PREF_PENDING_STATE, null)
+
+    override fun getPendingCodeVerifier(): String? = prefs.getString(PREF_PENDING_CODE_VERIFIER, null)
+
+    override fun clearPendingOAuthTransaction() {
+        prefs.edit()
+            .remove(PREF_PENDING_STATE)
+            .remove(PREF_PENDING_CODE_VERIFIER)
+            .commit()
     }
 
     private fun encryptString(plaintext: String): String? {

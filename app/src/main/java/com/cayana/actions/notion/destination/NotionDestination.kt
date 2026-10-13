@@ -13,7 +13,6 @@ import com.cayana.core.logging.CayanaLogger
 import com.cayana.ui.settings.repository.SettingsRepository
 import kotlinx.coroutines.flow.first
 import java.io.IOException
-import java.util.UUID
 
 class NotionDestination(
     private val notionAuthManager: NotionAuthorizationManager,
@@ -75,8 +74,8 @@ class NotionDestination(
         }
 
         val tokenResult = notionAuthManager.getAccessToken()
-        val token = when (tokenResult) {
-            is Result.Success -> tokenResult.data
+        when (tokenResult) {
+            is Result.Success -> { /* token verified */ }
             is Result.Error -> {
                 logger.w(TAG, "Failed retrieving Notion access token: ${tokenResult.exception.javaClass.simpleName}")
                 return DestinationExecutionResult.NeedsAttention(
@@ -90,53 +89,13 @@ class NotionDestination(
             }
         }
 
-        val targetType = if (settings.selectedNotionTargetType?.equals("database", ignoreCase = true) == true) {
-            NotionTargetType.DATABASE
-        } else {
-            NotionTargetType.PAGE
-        }
-
-        logger.i(TAG, "Creating Notion note for memory ${candidate.sourceMemoryId} in target $targetId")
-
-        return when (val createResult = notionClient.createPage(
-            accessToken = token,
-            targetId = targetId,
-            targetType = targetType,
-            title = candidate.title,
-            content = candidate.notes,
-            sourceMemoryId = candidate.sourceMemoryId
-        )) {
-            is Result.Success -> {
-                val page = createResult.data
-                logger.i(TAG, "Successfully created Notion note (externalId=${page.id})")
-                DestinationExecutionResult.Success(
-                    destinationReferenceId = page.id
-                )
-            }
-            is Result.Error -> {
-                val exception = createResult.exception
-                if (exception is NotionAuthRequiredException) {
-                    logger.w(TAG, "Notion auth expired or revoked during note creation")
-                    notionAuthManager.markAuthRequired()
-                    settingsRepository.updateNotionAuthStatus(NotionAuthStatus.AUTH_REQUIRED)
-                    DestinationExecutionResult.NeedsAttention(
-                        reason = "Notion authorization expired or revoked"
-                    )
-                } else {
-                    val canRetry = exception is IOException
-                    logger.w(TAG, "Failed creating note in Notion: ${exception.message} (canRetry=$canRetry)")
-                    DestinationExecutionResult.Failure(
-                        reason = exception.message ?: "Failed creating note in Notion",
-                        canRetry = canRetry
-                    )
-                }
-            }
-            is Result.Loading -> {
-                DestinationExecutionResult.Failure(
-                    reason = "Note creation in progress",
-                    canRetry = true
-                )
-            }
-        }
+        // STAGE 9C-1 SCOPE BOUNDARY:
+        // Stage 9C-1 focuses exclusively on Notion OAuth foundation.
+        // Remote note creation is disabled and fails closed without calling NotionClient.createPage.
+        logger.w(TAG, "Stage 9C-1: Remote Notion note creation is disabled (OAuth Foundation only); failing closed for memory ${candidate.sourceMemoryId}")
+        return DestinationExecutionResult.Failure(
+            reason = "Remote note creation is disabled in Stage 9C-1 (OAuth Foundation only)",
+            canRetry = false
+        )
     }
 }

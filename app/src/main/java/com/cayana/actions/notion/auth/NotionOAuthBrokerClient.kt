@@ -26,8 +26,8 @@ data class NotionOAuthTokenResponse(
 )
 
 interface NotionOAuthBrokerClient {
-    suspend fun initiateOAuth(redirectUri: String? = null): Result<NotionOAuthInitiateResponse>
-    suspend fun exchangeCode(code: String, state: String, redirectUri: String? = null): Result<NotionOAuthTokenResponse>
+    suspend fun initiateOAuth(codeChallenge: String, redirectUri: String? = null): Result<NotionOAuthInitiateResponse>
+    suspend fun exchangeTicket(ticket: String, state: String, codeVerifier: String): Result<NotionOAuthTokenResponse>
     suspend fun refreshToken(refreshToken: String): Result<NotionOAuthTokenResponse>
 }
 
@@ -42,7 +42,7 @@ class HttpNotionOAuthBrokerClient(
         private const val READ_TIMEOUT_MS = 15_000
     }
 
-    override suspend fun initiateOAuth(redirectUri: String?): Result<NotionOAuthInitiateResponse> = withContext(Dispatchers.IO) {
+    override suspend fun initiateOAuth(codeChallenge: String, redirectUri: String?): Result<NotionOAuthInitiateResponse> = withContext(Dispatchers.IO) {
         try {
             val url = URL("${brokerBaseUrl.trimEnd('/')}/v1/oauth/notion/initiate")
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -54,9 +54,11 @@ class HttpNotionOAuthBrokerClient(
                 setRequestProperty("Accept", "application/json")
             }
 
-            val body = JSONObject()
-            if (!redirectUri.isNullOrBlank()) {
-                body.put("redirect_uri", redirectUri)
+            val body = JSONObject().apply {
+                put("code_challenge", codeChallenge)
+                if (!redirectUri.isNullOrBlank()) {
+                    put("redirect_uri", redirectUri)
+                }
             }
 
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
@@ -73,8 +75,9 @@ class HttpNotionOAuthBrokerClient(
                 Result.Success(NotionOAuthInitiateResponse(authorizeUrl = authUrl, state = state))
             } else {
                 val errText = readStream(conn.errorStream)
-                logger.w(TAG, "initiateOAuth failed with HTTP $status: $errText")
-                Result.Error(RuntimeException("Failed initiating Notion OAuth: HTTP $status"))
+                val errorCode = extractErrorCode(errText) ?: "HTTP_$status"
+                logger.w(TAG, "initiateOAuth failed with status $status, errorCode=$errorCode")
+                Result.Error(RuntimeException("Failed initiating Notion OAuth: $errorCode"))
             }
         } catch (e: Exception) {
             logger.w(TAG, "initiateOAuth exception: ${e.javaClass.simpleName}")
@@ -82,10 +85,10 @@ class HttpNotionOAuthBrokerClient(
         }
     }
 
-    override suspend fun exchangeCode(
-        code: String,
+    override suspend fun exchangeTicket(
+        ticket: String,
         state: String,
-        redirectUri: String?
+        codeVerifier: String
     ): Result<NotionOAuthTokenResponse> = withContext(Dispatchers.IO) {
         try {
             val url = URL("${brokerBaseUrl.trimEnd('/')}/v1/oauth/notion/exchange")
@@ -99,11 +102,9 @@ class HttpNotionOAuthBrokerClient(
             }
 
             val body = JSONObject().apply {
-                put("code", code)
+                put("ticket", ticket)
                 put("state", state)
-                if (!redirectUri.isNullOrBlank()) {
-                    put("redirect_uri", redirectUri)
-                }
+                put("code_verifier", codeVerifier)
             }
 
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
@@ -123,7 +124,7 @@ class HttpNotionOAuthBrokerClient(
                 val botId = json.optString("bot_id").takeIf { it.isNotBlank() }
 
                 // Privacy guarantee: strictly avoid logging access_token or refresh_token!
-                logger.i(TAG, "Successfully exchanged Notion OAuth code for workspace $workspaceId")
+                logger.i(TAG, "Successfully exchanged Notion OAuth ticket")
                 Result.Success(
                     NotionOAuthTokenResponse(
                         accessToken = accessToken,
@@ -136,11 +137,12 @@ class HttpNotionOAuthBrokerClient(
                 )
             } else {
                 val errText = readStream(conn.errorStream)
-                logger.w(TAG, "exchangeCode failed with HTTP $status: $errText")
-                Result.Error(RuntimeException("Failed exchanging Notion OAuth code: HTTP $status"))
+                val errorCode = extractErrorCode(errText) ?: "HTTP_$status"
+                logger.w(TAG, "exchangeTicket failed with status $status, errorCode=$errorCode")
+                Result.Error(RuntimeException("Failed exchanging Notion OAuth ticket: $errorCode"))
             }
         } catch (e: Exception) {
-            logger.w(TAG, "exchangeCode exception: ${e.javaClass.simpleName}")
+            logger.w(TAG, "exchangeTicket exception: ${e.javaClass.simpleName}")
             Result.Error(e)
         }
     }
@@ -190,12 +192,23 @@ class HttpNotionOAuthBrokerClient(
                 )
             } else {
                 val errText = readStream(conn.errorStream)
-                logger.w(TAG, "refreshToken failed with HTTP $status: $errText")
-                Result.Error(RuntimeException("Failed refreshing Notion OAuth token: HTTP $status"))
+                val errorCode = extractErrorCode(errText) ?: "HTTP_$status"
+                logger.w(TAG, "refreshToken failed with status $status, errorCode=$errorCode")
+                Result.Error(RuntimeException("Failed refreshing Notion OAuth token: $errorCode"))
             }
         } catch (e: Exception) {
             logger.w(TAG, "refreshToken exception: ${e.javaClass.simpleName}")
             Result.Error(e)
+        }
+    }
+
+    private fun extractErrorCode(errJson: String): String? {
+        return try {
+            val json = JSONObject(errJson)
+            json.optJSONObject("error")?.optString("code")?.takeIf { it.isNotBlank() }
+                ?: json.optString("code").takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
         }
     }
 

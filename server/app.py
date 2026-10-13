@@ -66,6 +66,7 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         start_time = time.time()
+        self.notion_broker.config = self.config
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = parsed.query
@@ -79,8 +80,16 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 duration_ms = int((time.time() - start_time) * 1000)
                 logger.log_request("health", "", duration_ms, 200)
             elif path == "/v1/oauth/notion/initiate":
+                query_params = urllib.parse.parse_qs(query)
+                code_challenge = query_params.get("code_challenge", [None])[0]
+                if not code_challenge:
+                    self._send_json(400, {
+                        "error": {"code": "MISSING_CODE_CHALLENGE", "message": "code_challenge query parameter is required"}
+                    })
+                    return
+                redirect_uri = query_params.get("redirect_uri", [None])[0]
                 try:
-                    auth_url, state = self.notion_broker.create_authorization_url()
+                    auth_url, state = self.notion_broker.create_authorization_url(code_challenge, redirect_uri)
                     self._send_json(200, {
                         "authorize_url": auth_url,
                         "state": state
@@ -89,11 +98,30 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                     self._send_json(503, {
                         "error": {"code": "NOTION_OAUTH_NOT_CONFIGURED", "message": str(e)}
                     })
+                except ValueError as e:
+                    self._send_json(400, {
+                        "error": {"code": "INVALID_REQUEST", "message": str(e)}
+                    })
             elif path == "/v1/oauth/notion/callback":
-                # Redirect browser back to mobile application custom scheme
-                redirect_target = f"cayana://oauth/notion/callback?{query}"
+                query_params = urllib.parse.parse_qs(query)
+                error = query_params.get("error", [None])[0]
+                if error:
+                    state = query_params.get("state", [""])[0]
+                    redirect_target = f"cayana://oauth/notion/callback?error={urllib.parse.quote(error)}&state={urllib.parse.quote(state)}"
+                    self.send_response(302)
+                    self.send_header("Location", redirect_target)
+                    self.end_headers()
+                    return
+
+                code = query_params.get("code", [None])[0]
+                state = query_params.get("state", [None])[0]
+                success, target_url, _ = self.notion_broker.handle_notion_callback(code, state)
+                if not success:
+                    self._send_json(400, {"error": {"code": target_url, "message": "Failed processing OAuth callback"}})
+                    return
+
                 self.send_response(302)
-                self.send_header("Location", redirect_target)
+                self.send_header("Location", target_url)
                 self.end_headers()
             else:
                 self._send_json(404, {
@@ -109,6 +137,7 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         start_time = time.time()
+        self.notion_broker.config = self.config
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         req_id = ""
@@ -127,20 +156,38 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 logger.log_request("kill-switch", "", 0, 503, "SERVICE_UNAVAILABLE")
                 return
 
-            # Notion OAuth routes
+            # Notion OAuth routes with rate limiting and bounded inputs
+            if path in ("/v1/oauth/notion/initiate", "/v1/oauth/notion/exchange", "/v1/oauth/notion/refresh"):
+                allowed, rejection_reason = self.rate_limiter.check_allowed(
+                    installation_id=f"oauth_{client_ip}",
+                    client_ip=client_ip
+                )
+                if not allowed:
+                    self._send_json(429, {
+                        "error": {"code": "RATE_LIMITED", "message": f"Too many requests ({rejection_reason}). Please try again later."}
+                    }, error_code="RATE_LIMITED")
+                    return
+
             if path == "/v1/oauth/notion/initiate":
                 content_length = int(self.headers.get("Content-Length", 0))
+                if content_length > 4096:
+                    self._send_json(413, {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Payload exceeds 4KB limit"}})
+                    return
                 body = {}
                 if content_length > 0:
                     raw_body = self.rfile.read(content_length)
-                    if raw_body:
-                        try:
-                            body = json.loads(raw_body.decode("utf-8"))
-                        except Exception:
-                            pass
+                    try:
+                        body = json.loads(raw_body.decode("utf-8"))
+                    except Exception:
+                        self._send_json(400, {"error": {"code": "INVALID_JSON", "message": "Malformed JSON payload"}})
+                        return
+                code_challenge = body.get("code_challenge", "")
+                if not code_challenge:
+                    self._send_json(400, {"error": {"code": "MISSING_CODE_CHALLENGE", "message": "code_challenge is required"}})
+                    return
                 redirect_uri = body.get("redirect_uri")
                 try:
-                    auth_url, state = self.notion_broker.create_authorization_url(redirect_uri)
+                    auth_url, state = self.notion_broker.create_authorization_url(code_challenge, redirect_uri)
                     self._send_json(200, {
                         "authorize_url": auth_url,
                         "state": state
@@ -148,6 +195,10 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 except NotionOAuthConfigError as e:
                     self._send_json(503, {
                         "error": {"code": "NOTION_OAUTH_NOT_CONFIGURED", "message": str(e)}
+                    })
+                except ValueError as e:
+                    self._send_json(400, {
+                        "error": {"code": "INVALID_REQUEST", "message": str(e)}
                     })
                 return
 
@@ -163,10 +214,10 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                     self._send_json(400, {"error": {"code": "INVALID_JSON", "message": "Malformed JSON payload"}})
                     return
 
-                code = body.get("code", "")
+                ticket = body.get("ticket", "")
                 state = body.get("state", "")
-                redirect_uri = body.get("redirect_uri")
-                status, res = self.notion_broker.exchange_code(code, state, redirect_uri)
+                code_verifier = body.get("code_verifier", "")
+                status, res = self.notion_broker.exchange_ticket(ticket, state, code_verifier)
                 self._send_json(status, res)
                 return
 
