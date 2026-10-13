@@ -540,9 +540,7 @@ class DataStoreSettingsRepository(
             val policy = if (enabled) NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES else NotionTransmissionPolicy.OFF
             preferences[KEY_NOTION_TRANSMISSION_POLICY] = policy.name
             if (enabled) {
-                if ((preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] ?: 0L) == 0L) {
-                    preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
-                }
+                preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
             } else {
                 preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = 0L
             }
@@ -555,10 +553,8 @@ class DataStoreSettingsRepository(
             val autoEnabled = (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
             preferences[KEY_AUTO_NOTION_ENABLED] = autoEnabled
             if (autoEnabled) {
-                if ((preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] ?: 0L) == 0L) {
-                    preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
-                }
-            } else if (policy == NotionTransmissionPolicy.OFF) {
+                preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = System.currentTimeMillis()
+            } else {
                 preferences[KEY_AUTO_NOTION_ELIGIBILITY_EPOCH] = 0L
             }
         }

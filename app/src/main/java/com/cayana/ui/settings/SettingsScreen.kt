@@ -865,10 +865,25 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                                     )
+                                    val targetDisplay = action.targetTitle?.takeIf { it.isNotBlank() } ?: action.targetId
+                                    Text(
+                                        text = "目標位置：$targetDisplay",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    if (!action.content.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "預定內容：\n${action.content.take(2000)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = action.lastError ?: "需要使用者確認",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.error
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(

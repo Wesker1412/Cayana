@@ -379,8 +379,8 @@ class InMemorySettingsRepository(
         _settings.update {
             val isConnected = (status == com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED)
             val policy = if (!isConnected) NotionTransmissionPolicy.OFF else it.notionTransmissionPolicy
-            val autoEnabled = if (!isConnected) false else (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
-            val epoch = if (!isConnected) 0L else it.autoNotionEligibilityEpoch
+            val autoEnabled = if (!isConnected) false else it.autoNotionEnabled
+            val epoch = if (!isConnected || !autoEnabled) 0L else it.autoNotionEligibilityEpoch
             it.copy(
                 notionAuthStatus = status,
                 isNotionConnected = isConnected,
@@ -395,7 +395,7 @@ class InMemorySettingsRepository(
         _settings.update {
             val policy = if (enabled) NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES else NotionTransmissionPolicy.OFF
             val newEpoch = if (enabled) {
-                if (it.autoNotionEligibilityEpoch == 0L) System.currentTimeMillis() else it.autoNotionEligibilityEpoch
+                System.currentTimeMillis()
             } else {
                 0L
             }
@@ -410,12 +410,10 @@ class InMemorySettingsRepository(
     override suspend fun updateNotionTransmissionPolicy(policy: NotionTransmissionPolicy) {
         _settings.update {
             val autoEnabled = (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
-            val newEpoch = if (policy == NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES) {
-                if (it.autoNotionEligibilityEpoch == 0L) System.currentTimeMillis() else it.autoNotionEligibilityEpoch
-            } else if (policy == NotionTransmissionPolicy.OFF) {
-                0L
+            val newEpoch = if (autoEnabled) {
+                System.currentTimeMillis()
             } else {
-                it.autoNotionEligibilityEpoch
+                0L
             }
             it.copy(
                 notionTransmissionPolicy = policy,

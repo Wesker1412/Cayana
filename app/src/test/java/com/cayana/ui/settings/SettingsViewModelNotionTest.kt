@@ -402,6 +402,67 @@ class SettingsViewModelNotionTest {
         assertEquals(0, viewModel.uiState.value.notionAttentionActions.size)
     }
 
+    @Test
+    fun autoAskAutoResetsEligibilityEpoch() = runTest {
+        repository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        testDispatcher.scheduler.advanceUntilIdle()
+        val settingsAuto1 = repository.getSettings().first()
+        assertTrue(settingsAuto1.autoNotionEligibilityEpoch > 0L)
+        val epoch1 = settingsAuto1.autoNotionEligibilityEpoch
+
+        repository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        testDispatcher.scheduler.advanceUntilIdle()
+        val settingsAsk = repository.getSettings().first()
+        assertEquals(0L, settingsAsk.autoNotionEligibilityEpoch)
+
+        repository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        testDispatcher.scheduler.advanceUntilIdle()
+        val settingsAuto2 = repository.getSettings().first()
+        assertTrue(settingsAuto2.autoNotionEligibilityEpoch > 0L)
+        assertTrue(settingsAuto2.autoNotionEligibilityEpoch >= epoch1)
+    }
+
+    @Test
+    fun attentionConfirmationShowsPayloadAndTarget() = runTest {
+        val payload = "Detailed note content payload within 2000 character limits for inspection."
+        val targetName = "Target Database Wiki"
+        val action = NotionActionEntity(
+            id = "attn-target-payload",
+            sourceMemoryId = "mem-payload",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "target-wiki-1",
+            targetTitle = targetName,
+            targetType = "PAGE",
+            destinationPageId = null,
+            status = "NEEDS_ATTENTION",
+            title = "Attention Payload Note",
+            content = payload,
+            lastError = "連線異常或伺服器回應未確認",
+            attemptCount = 1
+        )
+        fakeDao.insert(action)
+
+        viewModel.loadNotionAttentionActions()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.uiState.test {
+            val state = awaitItem()
+            assertEquals(1, state.notionAttentionActions.size)
+            val item = state.notionAttentionActions[0]
+            assertEquals(targetName, item.targetTitle)
+            assertEquals(payload, item.content)
+            assertEquals("NEEDS_ATTENTION", item.status)
+        }
+
+        fakeNotionClient.searchResponse = Result.Success(NotionSearchResponse(emptyList()))
+        viewModel.confirmNotionAttentionAction("attn-target-payload")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val reconciledAction = fakeDao.getActionById("attn-target-payload")
+        assertEquals("NEEDS_ATTENTION", reconciledAction!!.status)
+        assertEquals(1, reconciledAction.attemptCount)
+    }
+
     private class FakeNotionAuthManager : NotionAuthorizationManager {
         private val _authStatus = MutableStateFlow(NotionAuthStatus.DISCONNECTED)
         override val authStatus: StateFlow<NotionAuthStatus> = _authStatus.asStateFlow()

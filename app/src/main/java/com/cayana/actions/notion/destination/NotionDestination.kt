@@ -70,11 +70,11 @@ class NotionDestination(
             return@withContext DestinationExecutionResult.Failure("Settings unavailable", canRetry = false)
         }
 
-        // 1. Configuration check
-        if (settings.notionTransmissionPolicy == NotionTransmissionPolicy.OFF || settings.selectedNotionTargetId.isNullOrBlank()) {
-            logger.d(TAG, "Notion destination is not configured or transmission policy is OFF")
+        // 1. Transmission policy check: must explicitly be AUTO_FOR_SELECTED_TYPES
+        if (settings.notionTransmissionPolicy != NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES || settings.selectedNotionTargetId.isNullOrBlank()) {
+            logger.d(TAG, "Notion auto transmission policy is not AUTO_FOR_SELECTED_TYPES (current=${settings.notionTransmissionPolicy}) or target is unconfigured")
             return@withContext DestinationExecutionResult.Failure(
-                reason = "Notion destination is not configured",
+                reason = "Notion destination requires explicit AUTO_FOR_SELECTED_TYPES policy for automatic creation",
                 canRetry = false
             )
         }
@@ -233,11 +233,11 @@ class NotionDestination(
 
         if (!isAuthorized() || notionAuthManager.authStatus.value != NotionAuthStatus.CONNECTED ||
             currentSettings?.isNotionConnected != true ||
-            currentSettings?.notionTransmissionPolicy == NotionTransmissionPolicy.OFF) {
-            logger.w(TAG, "Notion connection revoked or policy OFF before auto POST dispatch; aborting transmission for action $actionId")
-            notionActionDao.updateStatusAndError(actionId, "CANCELLED", "Notion 已中斷連線或關閉傳輸，已停止建立")
+            currentSettings?.notionTransmissionPolicy != NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES) {
+            logger.w(TAG, "Notion connection revoked or policy not AUTO before auto POST dispatch; aborting transmission for action $actionId")
+            notionActionDao.updateStatusAndError(actionId, "CANCELLED", "Notion 已中斷連線或傳輸政策已變更，已停止自動建立")
             return@withContext DestinationExecutionResult.Failure(
-                reason = "Notion 已中斷連線或關閉傳輸，已停止建立",
+                reason = "Notion 已中斷連線或傳輸政策已變更，已停止自動建立",
                 canRetry = false
             )
         }

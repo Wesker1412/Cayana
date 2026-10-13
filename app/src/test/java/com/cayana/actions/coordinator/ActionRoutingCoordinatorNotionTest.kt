@@ -26,6 +26,7 @@ import com.cayana.ui.settings.repository.InMemorySettingsRepository
 import com.cayana.ui.settings.repository.NotionTransmissionPolicy
 import com.cayana.ui.settings.repository.UserSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -334,5 +335,47 @@ class ActionRoutingCoordinatorNotionTest {
         val action = database.notionActionDao().getActionById("action_stale_creating")
         assertEquals("CREATED", action!!.status)
         assertEquals("remote_found_page_id", action.destinationPageId)
+    }
+
+    @Test
+    fun askIntervalMemoryNeverAutoBackfilled() = runTest {
+        // 1. Initially AUTO_FOR_SELECTED_TYPES
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateAutoNotionSources(setOf(SourceType.SCREENSHOT))
+        val initialEpoch = settingsRepository.getSettings().first().autoNotionEligibilityEpoch
+        assertTrue(initialEpoch > 0L)
+
+        // 2. Switch to ASK_EACH_TIME -> epoch revoked to 0L
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        assertEquals(0L, settingsRepository.getSettings().first().autoNotionEligibilityEpoch)
+
+        Thread.sleep(10)
+        val askTime = System.currentTimeMillis()
+
+        val memoryDuringAsk = MemoryItem(
+            id = "mem_during_ask",
+            sourceType = SourceType.SCREENSHOT,
+            capturedAt = askTime,
+            createdAt = askTime,
+            rawText = "Note captured during ASK interval",
+            title = "Ask Interval Note"
+        )
+        memoryRepository.saveMemory(memoryDuringAsk)
+
+        Thread.sleep(10)
+
+        // 3. User switches back to AUTO_FOR_SELECTED_TYPES -> fresh epoch created (> askTime)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        val newEpoch = settingsRepository.getSettings().first().autoNotionEligibilityEpoch
+        assertTrue("New epoch must be after ask interval memory", newEpoch > askTime)
+
+        // 4. Trigger recovery
+        val recoveredCount = coordinator.recoverUnroutedMemories(memoryRepository)
+
+        // 5. Verify the memory created during ASK interval was NEVER auto-backfilled
+        assertEquals(0, recoveredCount)
+        assertEquals(0, fakeNotionClient.createdPages.size)
+        val actions = database.notionActionDao().getActionsForMemory("mem_during_ask")
+        assertEquals(0, actions.size)
     }
 }

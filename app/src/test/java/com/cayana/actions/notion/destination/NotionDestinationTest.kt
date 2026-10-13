@@ -662,6 +662,103 @@ class NotionDestinationTest {
             assertFalse("Raw exception message must not leak into logs: $log", log.contains(rawExceptionMsg))
         }
     }
+
+    @Test
+    fun autoToAskBeforePostBlocksAutoTransfer() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        // Switch to ASK_EACH_TIME during execution before POST dispatch
+        authManager.onGetAccessToken = {
+            settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        }
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "Auto To Ask Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_auto_to_ask"
+        )
+
+        val result = destination.createNote(candidate)
+
+        assertTrue(result is DestinationExecutionResult.Failure)
+        assertFalse((result as DestinationExecutionResult.Failure).canRetry)
+        assertEquals(0, notionClient.createdPages.size)
+        val action = dao.getAction("mem_auto_to_ask", NotionDestination.ACTION_TYPE_CREATE, "target_1")
+        assertNotNull(action)
+        assertEquals("CANCELLED", action!!.status)
+    }
+
+    @Test
+    fun askPolicyCannotUseAutomaticCreatePath() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "Ask Policy Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_ask_path"
+        )
+
+        val result = destination.createNote(candidate)
+
+        assertTrue(result is DestinationExecutionResult.Failure)
+        assertFalse((result as DestinationExecutionResult.Failure).canRetry)
+        assertEquals(0, notionClient.createdPages.size)
+        assertEquals(0, dao.actions.size)
+    }
+
+    @Test
+    fun manualConfirmationRespectsCurrentPolicy() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        // Case A: Policy is ASK_EACH_TIME -> Manual confirmation succeeds
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        val actionAsk = NotionActionEntity(
+            id = "action_ask_manual",
+            sourceMemoryId = "mem_ask_manual",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "target_1",
+            targetType = "PAGE",
+            status = "CONFIRM_PENDING",
+            title = "Manual Ask Note"
+        )
+        dao.insert(actionAsk)
+
+        val resultAsk = destination.executeConfirmedNote("action_ask_manual")
+        assertTrue(resultAsk is DestinationExecutionResult.Success)
+        assertEquals("CREATED", dao.getActionById("action_ask_manual")!!.status)
+        assertEquals(1, notionClient.createdPages.size)
+
+        // Case B: Policy is OFF -> Manual confirmation fails and cancels
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.OFF)
+        val actionOff = NotionActionEntity(
+            id = "action_off_manual",
+            sourceMemoryId = "mem_off_manual",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "target_1",
+            targetType = "PAGE",
+            status = "CONFIRM_PENDING",
+            title = "Manual Off Note"
+        )
+        dao.insert(actionOff)
+
+        val resultOff = destination.executeConfirmedNote("action_off_manual")
+        assertTrue(resultOff is DestinationExecutionResult.Failure)
+        assertEquals("CANCELLED", dao.getActionById("action_off_manual")!!.status)
+        assertEquals(1, notionClient.createdPages.size) // No additional page created
+    }
 }
 
 class FakeNotionActionDao : NotionActionDao {
@@ -812,6 +909,7 @@ class FakeNotionAuthManager : NotionAuthorizationManager {
     override val authStatus: StateFlow<NotionAuthStatus> = _status.asStateFlow()
 
     var tokenToReturn: String? = null
+    var onGetAccessToken: (suspend () -> Unit)? = null
 
     fun setAuthStatus(status: NotionAuthStatus) {
         _status.value = status
@@ -824,6 +922,7 @@ class FakeNotionAuthManager : NotionAuthorizationManager {
         _status.value = NotionAuthStatus.AUTH_REQUIRED
     }
     override suspend fun getAccessToken(): Result<String> {
+        onGetAccessToken?.invoke()
         val t = tokenToReturn
         return if (t != null) Result.Success(t) else Result.Error(NotionAuthRequiredException("No token"))
     }
