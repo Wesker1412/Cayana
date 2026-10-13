@@ -37,7 +37,9 @@ class SettingsViewModel(
     private val tasksAuthManager: com.cayana.actions.tasks.auth.TasksAuthorizationManager? = null,
     private val tasksClient: com.cayana.actions.tasks.client.GoogleTasksClient? = null,
     private val notionAuthManager: com.cayana.actions.notion.auth.NotionAuthorizationManager? = null,
-    private val notionClient: com.cayana.actions.notion.client.NotionClient? = null
+    private val notionClient: com.cayana.actions.notion.client.NotionClient? = null,
+    private val notionActionDao: com.cayana.actions.notion.data.NotionActionDao? = null,
+    private val notionDestination: com.cayana.actions.notion.destination.NotionDestination? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -96,6 +98,7 @@ class SettingsViewModel(
         checkModelStatus()
         checkGoogleTasksAuthStatus()
         checkNotionAuthStatus()
+        loadNotionAttentionActions()
     }
 
     private fun createSourceItem(
@@ -826,6 +829,30 @@ class SettingsViewModel(
                 )
             }
             authManager.disconnect()
+        }
+    }
+
+    fun loadNotionAttentionActions() {
+        val dao = notionActionDao ?: return
+        viewModelScope.launch {
+            val actions = dao.getNeedsAttentionActions()
+            _uiState.update { it.copy(notionAttentionActions = actions) }
+        }
+    }
+
+    fun confirmNotionAttentionAction(actionId: String) {
+        val dest = notionDestination ?: return
+        viewModelScope.launch {
+            dest.executeConfirmedNote(actionId)
+            loadNotionAttentionActions()
+        }
+    }
+
+    fun ignoreNotionAttentionAction(actionId: String) {
+        val dao = notionActionDao ?: return
+        viewModelScope.launch {
+            dao.claimIgnoreAction(actionId)
+            loadNotionAttentionActions()
         }
     }
 }

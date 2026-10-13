@@ -48,5 +48,6 @@ data class SettingsUiState(
     val notionError: String? = null,
     val notionTargetSearchQuery: String = "",
     val notionTargetHasMore: Boolean = false,
-    val notionTargetNextCursor: String? = null
+    val notionTargetNextCursor: String? = null,
+    val notionAttentionActions: List<com.cayana.actions.notion.data.NotionActionEntity> = emptyList()
 )

@@ -9,6 +9,8 @@ import com.cayana.actions.notion.auth.FakeCayanaLogger
 import com.cayana.actions.notion.auth.NotionAuthRequiredException
 import com.cayana.actions.notion.auth.NotionAuthStatus
 import com.cayana.actions.notion.auth.NotionAuthorizationManager
+import com.cayana.actions.notion.auth.NotionRateLimitedException
+import com.cayana.actions.notion.auth.NotionServerException
 import com.cayana.actions.notion.client.NotionClient
 import com.cayana.actions.notion.client.NotionCreatedPage
 import com.cayana.actions.notion.client.NotionSearchResponse
@@ -376,6 +378,290 @@ class NotionDestinationTest {
         assertTrue(decisions[0] is RoutingDecision.MemoryOnly)
         assertEquals("Destination for NOTE is not configured", (decisions[0] as RoutingDecision.MemoryOnly).reason)
     }
+
+    @Test
+    fun policyOffInvalidatesOldConfirmation() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        val actionId = "action_policy_off"
+        dao.insert(
+            NotionActionEntity(
+                id = actionId,
+                sourceMemoryId = "mem_policy_off",
+                actionType = NotionDestination.ACTION_TYPE_CREATE,
+                targetId = "target_1",
+                targetType = "PAGE",
+                status = "CONFIRM_PENDING",
+                title = "Pending Note"
+            )
+        )
+
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.OFF)
+
+        val result = destination.executeConfirmedNote(actionId)
+
+        assertTrue(result is DestinationExecutionResult.Failure)
+        assertFalse((result as DestinationExecutionResult.Failure).canRetry)
+        val entity = dao.getActionById(actionId)
+        assertEquals("CANCELLED", entity!!.status)
+        assertEquals(0, notionClient.createdPages.size)
+    }
+
+    @Test
+    fun disconnectBeforeConfirmedPostBlocksTransfer() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.DISCONNECTED)
+
+        val actionId = "action_disconnect_gate"
+        dao.insert(
+            NotionActionEntity(
+                id = actionId,
+                sourceMemoryId = "mem_disconnect",
+                actionType = NotionDestination.ACTION_TYPE_CREATE,
+                targetId = "target_1",
+                targetType = "PAGE",
+                status = "CONFIRM_PENDING",
+                title = "Disconnect Note"
+            )
+        )
+
+        val result = destination.executeConfirmedNote(actionId)
+
+        assertTrue(result is DestinationExecutionResult.Failure)
+        val entity = dao.getActionById(actionId)
+        assertEquals("CANCELLED", entity!!.status)
+        assertEquals(0, notionClient.createdPages.size)
+    }
+
+    @Test
+    fun ambiguousIOExceptionCannotRetryPost() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        notionClient.createPageResultToReturn = Result.Error(IOException("Connection reset by peer"))
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "Ambiguous IO Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_io_ambiguous"
+        )
+
+        val result = destination.createNote(candidate)
+
+        assertTrue(result is DestinationExecutionResult.NeedsAttention)
+        val entity = dao.getAction("mem_io_ambiguous", NotionDestination.ACTION_TYPE_CREATE, "target_1")
+        assertNotNull(entity)
+        assertEquals("NEEDS_ATTENTION", entity!!.status)
+
+        val claimed = dao.claimRetryAction(entity.id)
+        assertEquals(0, claimed)
+    }
+
+    @Test
+    fun `429And5xxCannotBlindlyRetry`() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        // 429 Rate Limited
+        notionClient.createPageResultToReturn = Result.Error(NotionRateLimitedException("Rate limited"))
+        val candidate429 = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "429 Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_429"
+        )
+        val result429 = destination.createNote(candidate429)
+        assertTrue(result429 is DestinationExecutionResult.NeedsAttention)
+        val entity429 = dao.getAction("mem_429", NotionDestination.ACTION_TYPE_CREATE, "target_1")
+        assertEquals("NEEDS_ATTENTION", entity429!!.status)
+        assertEquals(0, dao.claimRetryAction(entity429.id))
+
+        // 503 Server Error
+        notionClient.createPageResultToReturn = Result.Error(NotionServerException(503, "Service Unavailable"))
+        val candidate503 = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "503 Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_503"
+        )
+        val result503 = destination.createNote(candidate503)
+        assertTrue(result503 is DestinationExecutionResult.NeedsAttention)
+        val entity503 = dao.getAction("mem_503", NotionDestination.ACTION_TYPE_CREATE, "target_1")
+        assertEquals("NEEDS_ATTENTION", entity503!!.status)
+        assertEquals(0, dao.claimRetryAction(entity503.id))
+    }
+
+    @Test
+    fun sameTitleDifferentPageCannotFakeRecovery() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        val action = NotionActionEntity(
+            id = "action_fake_recovery",
+            sourceMemoryId = "mem_target_orig",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "target_1",
+            targetTitle = "Target",
+            targetType = "PAGE",
+            status = "NEEDS_ATTENTION",
+            title = "Same Title Note",
+            attemptCount = 1
+        )
+        dao.insert(action)
+
+        // Case A: Page in different parent
+        notionClient.searchTargetsResultToReturn = Result.Success(
+            NotionSearchResponse(
+                targets = listOf(
+                    NotionTarget(
+                        id = "page_different_parent",
+                        title = "Same Title Note",
+                        type = NotionTargetType.PAGE,
+                        parentId = "other_parent_999",
+                        isSelectable = true
+                    )
+                )
+            )
+        )
+        notionClient.verifyPageReferenceResultToReturn = Result.Success(true)
+
+        val resultDiffParent = destination.reconcileAction(action)
+        assertTrue(resultDiffParent is DestinationExecutionResult.NeedsAttention)
+        assertEquals("NEEDS_ATTENTION", dao.getActionById(action.id)!!.status)
+
+        // Case B: Same parent, but missing Cayana provenance
+        notionClient.searchTargetsResultToReturn = Result.Success(
+            NotionSearchResponse(
+                targets = listOf(
+                    NotionTarget(
+                        id = "page_no_reference",
+                        title = "Same Title Note",
+                        type = NotionTargetType.PAGE,
+                        parentId = "target_1",
+                        isSelectable = true
+                    )
+                )
+            )
+        )
+        notionClient.verifyPageReferenceResultToReturn = Result.Success(false)
+
+        val resultNoRef = destination.reconcileAction(action)
+        assertTrue(resultNoRef is DestinationExecutionResult.NeedsAttention)
+        assertEquals("NEEDS_ATTENTION", dao.getActionById(action.id)!!.status)
+    }
+
+    @Test
+    fun existingActionMustMatchOriginalTarget() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        val oldAction = NotionActionEntity(
+            id = "action_old",
+            sourceMemoryId = "mem_multi_target",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "target_old",
+            targetTitle = "Old Target",
+            targetType = "PAGE",
+            status = "CREATED",
+            title = "Multi Target Note",
+            destinationPageId = "page_old_1"
+        )
+        dao.insert(oldAction)
+
+        settingsRepository.updateSelectedNotionTarget("target_new", "New Target", "page")
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "Multi Target Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_multi_target"
+        )
+
+        val result = destination.createNote(candidate)
+
+        assertTrue(result is DestinationExecutionResult.Success)
+        val newAction = dao.getAction("mem_multi_target", NotionDestination.ACTION_TYPE_CREATE, "target_new")
+        assertNotNull(newAction)
+        assertEquals("target_new", newAction!!.targetId)
+        assertEquals("CREATED", newAction.status)
+        assertEquals(2, dao.actions.size)
+    }
+
+    @Test
+    fun schemaFailureDoesNotAssumeName() = runTest {
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateSelectedNotionTarget("ds_123", "Data Source", "data_source")
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = "token"
+
+        notionClient.createPageResultToReturn = Result.Error(IOException("Schema resolution failed"))
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = "Schema Fail Note",
+            confidence = 0.95f,
+            sourceMemoryId = "mem_schema_fail"
+        )
+
+        val result = destination.createNote(candidate)
+
+        assertTrue(result is DestinationExecutionResult.NeedsAttention)
+        val entity = dao.getAction("mem_schema_fail", NotionDestination.ACTION_TYPE_CREATE, "ds_123")
+        assertNotNull(entity)
+        assertEquals("NEEDS_ATTENTION", entity!!.status)
+    }
+
+    @Test
+    fun errorLogsDoNotLeakPrivateContent() = runTest {
+        val privateTitle = "Private Bank Account Info"
+        val privateContent = "Password is super_secret_12345"
+        val secretToken = "secret_notion_api_token_xyz"
+        val rawExceptionMsg = "Connection to 192.168.1.50:443 timed out with sensitive header"
+
+        settingsRepository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        settingsRepository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.AUTO_FOR_SELECTED_TYPES)
+        settingsRepository.updateSelectedNotionTarget("target_1", "Target", "page")
+
+        authManager.setAuthStatus(NotionAuthStatus.CONNECTED)
+        authManager.tokenToReturn = secretToken
+
+        notionClient.createPageResultToReturn = Result.Error(IOException(rawExceptionMsg))
+
+        val candidate = ActionCandidate(
+            type = ActionCandidateType.NOTE,
+            title = privateTitle,
+            notes = privateContent,
+            confidence = 0.95f,
+            sourceMemoryId = "mem_private_log"
+        )
+
+        destination.createNote(candidate)
+
+        for (log in logger.logs) {
+            assertFalse("Private title must not leak into logs: $log", log.contains(privateTitle))
+            assertFalse("Private content must not leak into logs: $log", log.contains(privateContent))
+            assertFalse("Token must not leak into logs: $log", log.contains(secretToken))
+            assertFalse("Raw exception message must not leak into logs: $log", log.contains(rawExceptionMsg))
+        }
+    }
 }
 
 class FakeNotionActionDao : NotionActionDao {
@@ -409,6 +695,7 @@ class FakeNotionActionDao : NotionActionDao {
 
     override suspend fun updateStatusAndPage(id: String, status: String, destinationPageId: String?, destinationPageUrl: String?, updatedAt: Long): Int {
         val existing = actions[id] ?: return 0
+        if (existing.status == "IGNORED") return 0
         actions[id] = existing.copy(status = status, destinationPageId = destinationPageId, destinationPageUrl = destinationPageUrl, updatedAt = updatedAt)
         return 1
     }
@@ -438,7 +725,7 @@ class FakeNotionActionDao : NotionActionDao {
 
     override suspend fun claimConfirmAction(id: String, updatedAt: Long): Int {
         val existing = actions[id] ?: return 0
-        if (existing.status == "CONFIRM_PENDING") {
+        if (existing.status == "CONFIRM_PENDING" || existing.status == "NEEDS_ATTENTION") {
             actions[id] = existing.copy(status = "CREATING", attemptCount = existing.attemptCount + 1, updatedAt = updatedAt)
             return 1
         }
@@ -447,7 +734,7 @@ class FakeNotionActionDao : NotionActionDao {
 
     override suspend fun claimIgnoreAction(id: String, updatedAt: Long): Int {
         val existing = actions[id] ?: return 0
-        if (existing.status == "CONFIRM_PENDING") {
+        if (existing.status == "CONFIRM_PENDING" || existing.status == "NEEDS_ATTENTION") {
             actions[id] = existing.copy(status = "IGNORED", updatedAt = updatedAt)
             return 1
         }
@@ -471,6 +758,11 @@ class FakeNotionClient : NotionClient {
     val createdPages = mutableListOf<NotionCreatedPage>()
     var createPageResultToReturn: Result<NotionCreatedPage>? = null
     var searchTargetsResultToReturn: Result<NotionSearchResponse>? = null
+    var verifyPageReferenceResultToReturn: Result<Boolean>? = null
+    var getDataSourceTitlePropertyResultToReturn: Result<String>? = null
+    var lastVerifyPageId: String? = null
+    var lastVerifyExpectedTargetId: String? = null
+    var lastVerifyExpectedSourceMemoryId: String? = null
 
     override suspend fun searchTargets(
         accessToken: String,
@@ -499,7 +791,19 @@ class FakeNotionClient : NotionClient {
         accessToken: String,
         dataSourceId: String
     ): Result<String> {
-        return Result.Success("Name")
+        return getDataSourceTitlePropertyResultToReturn ?: Result.Success("Name")
+    }
+
+    override suspend fun verifyPageReference(
+        accessToken: String,
+        pageId: String,
+        expectedTargetId: String,
+        expectedSourceMemoryId: String
+    ): Result<Boolean> {
+        lastVerifyPageId = pageId
+        lastVerifyExpectedTargetId = expectedTargetId
+        lastVerifyExpectedSourceMemoryId = expectedSourceMemoryId
+        return verifyPageReferenceResultToReturn ?: Result.Success(true)
     }
 }
 

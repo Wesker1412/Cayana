@@ -841,6 +841,56 @@ fun SettingsScreen(
                             Text("中斷連接", color = MaterialTheme.colorScheme.error)
                         }
                     }
+
+                    if (uiState.notionAttentionActions.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "待處理項目 (Needs Attention)",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        uiState.notionAttentionActions.forEach { action ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = action.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = action.lastError ?: "需要使用者確認",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        TextButton(
+                                            onClick = { viewModel.ignoreNotionAttentionAction(action.id) }
+                                        ) {
+                                            Text("忽略")
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Button(
+                                            onClick = { viewModel.confirmNotionAttentionAction(action.id) }
+                                        ) {
+                                            Text("確認儲存")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

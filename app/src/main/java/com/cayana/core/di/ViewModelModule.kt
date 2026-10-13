@@ -30,7 +30,9 @@ val viewModelModule = module {
             tasksAuthManager = getOrNull(),
             tasksClient = getOrNull(),
             notionAuthManager = getOrNull(),
-            notionClient = getOrNull()
+            notionClient = getOrNull(),
+            notionActionDao = getOrNull(),
+            notionDestination = getOrNull()
         )
     }
 

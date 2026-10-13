@@ -1,8 +1,11 @@
 package com.cayana.actions.notion.client
 
 import com.cayana.actions.notion.auth.NotionAuthRequiredException
+import com.cayana.actions.notion.auth.NotionRateLimitedException
+import com.cayana.actions.notion.auth.NotionServerException
 import com.cayana.core.common.Result
 import com.cayana.core.logging.CayanaLogger
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -101,6 +104,11 @@ class NotionHttpClient(
                     val isSelectable = targetType == NotionTargetType.DATA_SOURCE ||
                             targetType == NotionTargetType.PAGE
 
+                    val parentObj = item.optJSONObject("parent")
+                    val parentId = parentObj?.optString("data_source_id")?.takeIf { it.isNotBlank() }
+                        ?: parentObj?.optString("page_id")?.takeIf { it.isNotBlank() }
+                        ?: parentObj?.optString("database_id")?.takeIf { it.isNotBlank() }
+
                     targets.add(
                         NotionTarget(
                             id = id,
@@ -108,7 +116,8 @@ class NotionHttpClient(
                             type = targetType,
                             icon = icon,
                             url = urlStr,
-                            isSelectable = isSelectable
+                            isSelectable = isSelectable,
+                            parentId = parentId
                         )
                     )
                 }
@@ -116,10 +125,8 @@ class NotionHttpClient(
                 logger.i(TAG, "Successfully searched Notion targets, found ${targets.size} items (hasMore=$hasMore)")
                 Result.Success(NotionSearchResponse(targets = targets, nextCursor = nextCursor, hasMore = hasMore))
             } else {
-                val errText = readStream(conn.errorStream)
-                val errCode = extractErrorCode(errText) ?: "HTTP_$status"
-                logger.w(TAG, "searchTargets failed with status $status, errorCode=$errCode")
-                Result.Error(RuntimeException("Failed searching Notion targets: $errCode"))
+                logger.w(TAG, "searchTargets failed with status $status")
+                Result.Error(IOException("Failed searching Notion targets: HTTP $status"))
             }
         } catch (e: Exception) {
             logger.w(TAG, "searchTargets exception: ${e.javaClass.simpleName}")
@@ -171,7 +178,13 @@ class NotionHttpClient(
             val titlePropName = if (targetType == NotionTargetType.DATA_SOURCE) {
                 when (val propRes = getDataSourceTitleProperty(accessToken, targetId)) {
                     is Result.Success -> propRes.data
-                    else -> "Name"
+                    is Result.Error -> {
+                        logger.w(TAG, "Schema resolution failed for data source: ${propRes.exception.javaClass.simpleName}")
+                        return@withContext Result.Error(propRes.exception)
+                    }
+                    Result.Loading -> {
+                        return@withContext Result.Error(IllegalStateException("Schema resolution loading"))
+                    }
                 }
             } else {
                 "title"
@@ -253,6 +266,18 @@ class NotionHttpClient(
                 logger.w(TAG, "Notion createPage returned 401 Unauthorized")
                 return@withContext Result.Error(NotionAuthRequiredException("Notion API 401 Unauthorized"))
             }
+            if (status == 403) {
+                logger.w(TAG, "Notion createPage returned 403 Forbidden")
+                return@withContext Result.Error(SecurityException("Notion 權限不足"))
+            }
+            if (status == 429) {
+                logger.w(TAG, "Notion createPage returned 429 Rate Limited")
+                return@withContext Result.Error(NotionRateLimitedException("Notion API 429 Rate Limited"))
+            }
+            if (status in 500..599) {
+                logger.w(TAG, "Notion createPage returned 5xx Server Error: $status")
+                return@withContext Result.Error(NotionServerException(status, "Notion API $status Server Error"))
+            }
 
             if (status in 200..299) {
                 val responseText = readStream(conn.inputStream)
@@ -263,10 +288,8 @@ class NotionHttpClient(
                 logger.i(TAG, "Successfully created Notion page in target $targetId")
                 Result.Success(NotionCreatedPage(id = pageId, url = pageUrl, title = title))
             } else {
-                val errText = readStream(conn.errorStream)
-                val errCode = extractErrorCode(errText) ?: "HTTP_$status"
-                logger.w(TAG, "createPage failed with status $status, errorCode=$errCode")
-                Result.Error(RuntimeException("Failed creating Notion page: $errCode"))
+                logger.w(TAG, "createPage failed with status $status")
+                Result.Error(IOException("Failed creating Notion page: HTTP $status"))
             }
         } catch (e: Exception) {
             logger.w(TAG, "createPage exception: ${e.javaClass.simpleName}")
@@ -371,17 +394,100 @@ class NotionHttpClient(
                         }
                     }
                 }
-                val defaultKey = "Name"
-                dataSourceTitleCache[dataSourceId] = defaultKey
-                Result.Success(defaultKey)
+                logger.w(TAG, "No title property found in data source schema")
+                Result.Error(IllegalStateException("No title property found in data source schema"))
             } else {
-                val errText = readStream(conn.errorStream)
-                logger.w(TAG, "getDataSourceTitleProperty failed: status $status, err: $errText")
-                Result.Success("Name")
+                logger.w(TAG, "getDataSourceTitleProperty failed: status $status")
+                Result.Error(IOException("Failed querying data source schema: HTTP $status"))
             }
         } catch (e: Exception) {
-            logger.w(TAG, "getDataSourceTitleProperty exception: ${e.message}")
-            Result.Success("Name")
+            logger.w(TAG, "getDataSourceTitleProperty exception: ${e.javaClass.simpleName}")
+            Result.Error(e)
+        }
+    }
+
+    override suspend fun verifyPageReference(
+        accessToken: String,
+        pageId: String,
+        expectedTargetId: String,
+        expectedSourceMemoryId: String
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            // 1. Verify parent via GET /v1/pages/$pageId
+            val pageUrl = URL("${apiBaseUrl.trimEnd('/')}/pages/$pageId")
+            val pageConn = (pageUrl.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                setRequestProperty("Authorization", "Bearer $accessToken")
+                setRequestProperty("Notion-Version", notionVersion)
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val pageStatus = pageConn.responseCode
+            if (pageStatus == 401) {
+                return@withContext Result.Error(NotionAuthRequiredException("Notion API 401 Unauthorized"))
+            }
+            if (pageStatus == 403) {
+                return@withContext Result.Error(SecurityException("Notion 權限不足"))
+            }
+            if (pageStatus == 404) {
+                return@withContext Result.Success(false)
+            }
+            if (pageStatus !in 200..299) {
+                return@withContext Result.Error(IOException("Failed reading page: HTTP $pageStatus"))
+            }
+
+            val pageResponse = readStream(pageConn.inputStream)
+            val pageJson = JSONObject(pageResponse)
+            val parentObj = pageJson.optJSONObject("parent")
+            val actualParentId = parentObj?.optString("data_source_id")?.takeIf { it.isNotBlank() }
+                ?: parentObj?.optString("page_id")?.takeIf { it.isNotBlank() }
+                ?: parentObj?.optString("database_id")?.takeIf { it.isNotBlank() }
+
+            if (actualParentId != expectedTargetId) {
+                logger.d(TAG, "verifyPageReference: parent mismatch ($actualParentId != $expectedTargetId)")
+                return@withContext Result.Success(false)
+            }
+
+            // 2. Verify Cayana Reference block via GET /v1/blocks/$pageId/children
+            val blocksUrl = URL("${apiBaseUrl.trimEnd('/')}/blocks/$pageId/children?page_size=50")
+            val blocksConn = (blocksUrl.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                setRequestProperty("Authorization", "Bearer $accessToken")
+                setRequestProperty("Notion-Version", notionVersion)
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val blocksStatus = blocksConn.responseCode
+            if (blocksStatus !in 200..299) {
+                return@withContext Result.Error(IOException("Failed reading blocks: HTTP $blocksStatus"))
+            }
+
+            val blocksResponse = readStream(blocksConn.inputStream)
+            val blocksJson = JSONObject(blocksResponse)
+            val results = blocksJson.optJSONArray("results") ?: JSONArray()
+            val targetReference = "Source: Cayana Memory $expectedSourceMemoryId"
+
+            for (i in 0 until results.length()) {
+                val block = results.optJSONObject(i) ?: continue
+                val paragraph = block.optJSONObject("paragraph") ?: continue
+                val richText = paragraph.optJSONArray("rich_text") ?: continue
+                for (j in 0 until richText.length()) {
+                    val rt = richText.optJSONObject(j) ?: continue
+                    val content = rt.optJSONObject("text")?.optString("content") ?: rt.optString("plain_text")
+                    if (content.contains(targetReference)) {
+                        return@withContext Result.Success(true)
+                    }
+                }
+            }
+
+            Result.Success(false)
+        } catch (e: Exception) {
+            logger.w(TAG, "verifyPageReference exception: ${e.javaClass.simpleName}")
+            Result.Error(e)
         }
     }
 

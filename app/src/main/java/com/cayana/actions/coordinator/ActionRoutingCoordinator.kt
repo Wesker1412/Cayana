@@ -486,13 +486,14 @@ open class ActionRoutingCoordinator(
                     emptyList()
                 }
 
+                val targetId = settings.selectedNotionTargetId ?: continue
                 for (memory in eligibleMemories) {
                     if (!isMemoryEligibleForAutoNotion(memory, settings.autoNotionEligibilityEpoch)) {
                         continue
                     }
                     if (!memory.rawText.isNullOrBlank()) {
-                        val existing = notionDao.getActionsForMemory(memory.id)
-                        if (existing.isEmpty()) {
+                        val existing = notionDao.getAction(memory.id, NotionDestination.ACTION_TYPE_CREATE, targetId)
+                        if (existing == null) {
                             logger.i(TAG, "Recovering eligible unrouted notion memory ${memory.id}")
                             val handled = process(memory, memory.rawText)
                             if (handled) {

@@ -321,7 +321,8 @@ class ActionRoutingCoordinatorNotionTest {
                         id = "remote_found_page_id",
                         title = "Stale Note",
                         type = com.cayana.actions.notion.client.NotionTargetType.PAGE,
-                        isSelectable = true
+                        isSelectable = true,
+                        parentId = "page_target_123"
                     )
                 )
             )

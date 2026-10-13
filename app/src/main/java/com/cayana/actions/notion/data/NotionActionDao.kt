@@ -23,7 +23,7 @@ interface NotionActionDao {
     @Query("SELECT * FROM notion_actions WHERE sourceMemoryId = :sourceMemoryId")
     suspend fun getActionsForMemory(sourceMemoryId: String): List<NotionActionEntity>
 
-    @Query("UPDATE notion_actions SET status = :status, destinationPageId = :destinationPageId, destinationPageUrl = :destinationPageUrl, updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE notion_actions SET status = :status, destinationPageId = :destinationPageId, destinationPageUrl = :destinationPageUrl, updatedAt = :updatedAt WHERE id = :id AND status != 'IGNORED'")
     suspend fun updateStatusAndPage(
         id: String,
         status: String,
@@ -54,13 +54,13 @@ interface NotionActionDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
-    @Query("UPDATE notion_actions SET status = 'CREATING', attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id AND status = 'CONFIRM_PENDING'")
+    @Query("UPDATE notion_actions SET status = 'CREATING', attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id AND status IN ('CONFIRM_PENDING', 'NEEDS_ATTENTION')")
     suspend fun claimConfirmAction(
         id: String,
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
-    @Query("UPDATE notion_actions SET status = 'IGNORED', updatedAt = :updatedAt WHERE id = :id AND status = 'CONFIRM_PENDING'")
+    @Query("UPDATE notion_actions SET status = 'IGNORED', updatedAt = :updatedAt WHERE id = :id AND status IN ('CONFIRM_PENDING', 'NEEDS_ATTENTION')")
     suspend fun claimIgnoreAction(
         id: String,
         updatedAt: Long = System.currentTimeMillis()

@@ -12,7 +12,8 @@ data class NotionTarget(
     val type: NotionTargetType,
     val icon: String? = null,
     val url: String? = null,
-    val isSelectable: Boolean = true
+    val isSelectable: Boolean = true,
+    val parentId: String? = null
 )
 
 data class NotionSearchResponse(

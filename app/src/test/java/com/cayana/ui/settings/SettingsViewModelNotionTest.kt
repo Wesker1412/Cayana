@@ -36,6 +36,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
+import com.cayana.actions.notion.auth.FakeCayanaLogger
+import com.cayana.actions.notion.data.NotionActionEntity
+import com.cayana.actions.notion.destination.FakeNotionActionDao
+import com.cayana.actions.notion.destination.NotionDestination
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -51,6 +55,8 @@ class SettingsViewModelNotionTest {
     private lateinit var calendarProviderHelper: FakeCalendarProviderHelper
     private lateinit var fakeAuthManager: FakeNotionAuthManager
     private lateinit var fakeNotionClient: FakeNotionClient
+    private lateinit var fakeDao: FakeNotionActionDao
+    private lateinit var fakeDestination: NotionDestination
     private lateinit var viewModel: SettingsViewModel
 
     @Before
@@ -66,13 +72,24 @@ class SettingsViewModelNotionTest {
         calendarProviderHelper = FakeCalendarProviderHelper()
         fakeAuthManager = FakeNotionAuthManager()
         fakeNotionClient = FakeNotionClient()
+        fakeDao = FakeNotionActionDao()
+        fakeDestination = NotionDestination(
+            notionActionDao = fakeDao,
+            notionAuthManager = fakeAuthManager,
+            notionClient = fakeNotionClient,
+            settingsRepository = repository,
+            logger = FakeCayanaLogger(),
+            ioDispatcher = testDispatcher
+        )
 
         viewModel = SettingsViewModel(
             settingsRepository = repository,
             permissionChecker = permissionChecker,
             calendarProviderHelper = calendarProviderHelper,
             notionAuthManager = fakeAuthManager,
-            notionClient = fakeNotionClient
+            notionClient = fakeNotionClient,
+            notionActionDao = fakeDao,
+            notionDestination = fakeDestination
         )
     }
 
@@ -308,6 +325,83 @@ class SettingsViewModelNotionTest {
         assertFalse(settings.isNotionConnected)
     }
 
+    @Test
+    fun loadNotionAttentionActionsDisplaysInUiState() = runTest {
+        val action = NotionActionEntity(
+            id = "attn-1",
+            sourceMemoryId = "mem-1",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "page-1",
+            targetType = "PAGE",
+            status = "NEEDS_ATTENTION",
+            title = "Attention Required Note",
+            lastError = "連線異常或伺服器回應未確認"
+        )
+        fakeDao.insert(action)
+
+        viewModel.loadNotionAttentionActions()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.uiState.test {
+            val state = awaitItem()
+            assertEquals(1, state.notionAttentionActions.size)
+            assertEquals("attn-1", state.notionAttentionActions[0].id)
+            assertEquals("Attention Required Note", state.notionAttentionActions[0].title)
+        }
+    }
+
+    @Test
+    fun ignoreNotionAttentionActionMarksIgnoredAndRefreshes() = runTest {
+        val action = NotionActionEntity(
+            id = "attn-2",
+            sourceMemoryId = "mem-2",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "page-1",
+            targetType = "PAGE",
+            status = "NEEDS_ATTENTION",
+            title = "Attention To Ignore",
+            lastError = "連線異常"
+        )
+        fakeDao.insert(action)
+        viewModel.loadNotionAttentionActions()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(1, viewModel.uiState.value.notionAttentionActions.size)
+
+        viewModel.ignoreNotionAttentionAction("attn-2")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("IGNORED", fakeDao.getActionById("attn-2")!!.status)
+        assertEquals(0, viewModel.uiState.value.notionAttentionActions.size)
+    }
+
+    @Test
+    fun confirmNotionAttentionActionExecutesAndRefreshes() = runTest {
+        repository.updateNotionAuthStatus(NotionAuthStatus.CONNECTED)
+        repository.updateNotionTransmissionPolicy(NotionTransmissionPolicy.ASK_EACH_TIME)
+        repository.updateSelectedNotionTarget("page-1", "Work Notes", "page")
+        fakeAuthManager.setStatus(NotionAuthStatus.CONNECTED)
+        fakeAuthManager.tokenResult = Result.Success("valid-token")
+
+        val action = NotionActionEntity(
+            id = "attn-3",
+            sourceMemoryId = "mem-3",
+            actionType = NotionDestination.ACTION_TYPE_CREATE,
+            targetId = "page-1",
+            targetType = "PAGE",
+            status = "CONFIRM_PENDING",
+            title = "Attention To Confirm"
+        )
+        fakeDao.insert(action)
+        viewModel.loadNotionAttentionActions()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.confirmNotionAttentionAction("attn-3")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("CREATED", fakeDao.getActionById("attn-3")!!.status)
+        assertEquals(0, viewModel.uiState.value.notionAttentionActions.size)
+    }
+
     private class FakeNotionAuthManager : NotionAuthorizationManager {
         private val _authStatus = MutableStateFlow(NotionAuthStatus.DISCONNECTED)
         override val authStatus: StateFlow<NotionAuthStatus> = _authStatus.asStateFlow()
@@ -395,6 +489,15 @@ class SettingsViewModelNotionTest {
             dataSourceId: String
         ): Result<String> {
             return Result.Success("Name")
+        }
+
+        override suspend fun verifyPageReference(
+            accessToken: String,
+            pageId: String,
+            expectedTargetId: String,
+            expectedSourceMemoryId: String
+        ): Result<Boolean> {
+            return Result.Success(true)
         }
     }
 }

@@ -23,5 +23,11 @@ interface NotionClient {
         accessToken: String,
         dataSourceId: String
     ): Result<String>
-}
 
+    suspend fun verifyPageReference(
+        accessToken: String,
+        pageId: String,
+        expectedTargetId: String,
+        expectedSourceMemoryId: String
+    ): Result<Boolean>
+}

@@ -177,6 +177,12 @@ class NotionHttpClientTest {
     @Test
     fun createPageBuildsCorrectParentAndBlocksForDataSource() = runTest {
         var recordedBody: String? = null
+        server.on({ method, path -> method == "GET" && path.startsWith("/data_sources/ds-999") }) {
+            MockResponse(
+                statusCode = 200,
+                bodyString = """{"properties": {"Title": {"type": "title"}}}"""
+            )
+        }
         server.on({ method, path -> method == "POST" && path == "/pages" }) { req ->
             recordedBody = String(req.body, Charsets.UTF_8)
             MockResponse(
@@ -255,6 +261,89 @@ class NotionHttpClientTest {
         assertTrue(pageResult is Result.Success)
         val parent = JSONObject(recordedBody!!).getJSONObject("parent")
         assertEquals("page-777", parent.getString("page_id"))
+    }
+
+    @Test
+    fun getDataSourceTitlePropertyReturnsErrorWhenNoTitlePropertyOrHttpError() = runTest {
+        server.on({ method, path -> method == "GET" && path == "/data_sources/ds-no-title" }) {
+            MockResponse(
+                statusCode = 200,
+                bodyString = """{"properties": {"Description": {"type": "rich_text"}}}"""
+            )
+        }
+        server.on({ method, path -> method == "GET" && path == "/data_sources/ds-error" }) {
+            MockResponse(statusCode = 500, bodyString = """{"code": "internal_error"}""")
+        }
+
+        val client = NotionHttpClient(
+            apiBaseUrl = baseUrl,
+            notionVersion = "2026-03-11",
+            logger = logger
+        )
+
+        val noTitleRes = client.getDataSourceTitleProperty("token", "ds-no-title")
+        assertTrue(noTitleRes is Result.Error)
+
+        val errRes = client.getDataSourceTitleProperty("token", "ds-error")
+        assertTrue(errRes is Result.Error)
+    }
+
+    @Test
+    fun verifyPageReferenceValidatesParentAndChildBlocks() = runTest {
+        server.on({ method, path -> method == "GET" && path == "/pages/page-valid" }) {
+            MockResponse(
+                statusCode = 200,
+                bodyString = """{"parent": {"page_id": "target-123"}}"""
+            )
+        }
+        server.on({ method, path -> method == "GET" && path.startsWith("/blocks/page-valid/children") }) {
+            MockResponse(
+                statusCode = 200,
+                bodyString = """
+                    {
+                        "results": [
+                            {
+                                "object": "block",
+                                "type": "paragraph",
+                                "paragraph": {
+                                    "rich_text": [
+                                        {"type": "text", "text": {"content": "Source: Cayana Memory mem-xyz"}}
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                """.trimIndent()
+            )
+        }
+
+        server.on({ method, path -> method == "GET" && path == "/pages/page-mismatch-parent" }) {
+            MockResponse(
+                statusCode = 200,
+                bodyString = """{"parent": {"page_id": "other-target"}}"""
+            )
+        }
+
+        val client = NotionHttpClient(
+            apiBaseUrl = baseUrl,
+            notionVersion = "2026-03-11",
+            logger = logger
+        )
+
+        // Matching parent and memory reference -> Success(true)
+        val validRes = client.verifyPageReference("token", "page-valid", "target-123", "mem-xyz")
+        assertTrue(validRes is Result.Success)
+        assertTrue((validRes as Result.Success).data)
+
+        // Mismatched memory reference -> Success(false)
+        val wrongMemRes = client.verifyPageReference("token", "page-valid", "target-123", "wrong-mem")
+        assertTrue(wrongMemRes is Result.Success)
+        assertFalse((wrongMemRes as Result.Success).data)
+
+        // Mismatched parent -> Success(false)
+        val mismatchParentRes = client.verifyPageReference("token", "page-mismatch-parent", "target-123", "mem-xyz")
+        assertTrue(mismatchParentRes is Result.Success)
+        assertFalse((mismatchParentRes as Result.Success).data)
     }
 
     private class TestLogger : CayanaLogger {
