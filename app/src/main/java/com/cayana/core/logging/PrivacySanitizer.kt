@@ -33,9 +33,17 @@ object PrivacySanitizer {
     fun guardAgainstMemoryLeakage(message: String): String {
         return if (message.contains("rawText=", ignoreCase = true) ||
             message.contains("transcript=", ignoreCase = true) ||
-            message.contains("normalizedText=", ignoreCase = true)
+            message.contains("normalizedText=", ignoreCase = true) ||
+            message.contains("recoveryKey=", ignoreCase = true) ||
+            message.contains("accessToken=", ignoreCase = true) ||
+            message.contains("refreshToken=", ignoreCase = true) ||
+            message.contains("codeVerifier=", ignoreCase = true) ||
+            message.contains("secret=", ignoreCase = true)
         ) {
-            message.replace(Regex("(rawText|transcript|normalizedText)=[^,)\\]]+"), "$1=[REDACTED_BY_PRIVACY_GUARD]")
+            message.replace(
+                Regex("(rawText|transcript|normalizedText|recoveryKey|accessToken|refreshToken|codeVerifier|secret)=[^,)\\]\\s]+", RegexOption.IGNORE_CASE),
+                "$1=[REDACTED_BY_PRIVACY_GUARD]"
+            )
         } else {
             message
         }

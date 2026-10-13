@@ -40,4 +40,17 @@ class PrivacySanitizerTest {
         assertFalse("Raw private memory text must be redacted", guarded.contains("Confidential user note"))
         assertTrue("Redacted marker must be present", guarded.contains("[REDACTED_BY_PRIVACY_GUARD]"))
     }
+
+    @Test
+    fun `guardAgainstMemoryLeakage redacts credentials tokens and recovery keys in log messages`() {
+        val credentialLog = "OAuth state recoveryKey=REC-1234-5678-ABCD accessToken=ya29.secretToken refreshToken=refresh.secret123 codeVerifier=verifierSecretXYZ secret=appSecret999"
+        val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(credentialLog)
+
+        assertFalse("Recovery key must be redacted", guarded.contains("REC-1234-5678-ABCD"))
+        assertFalse("Access token must be redacted", guarded.contains("ya29.secretToken"))
+        assertFalse("Refresh token must be redacted", guarded.contains("refresh.secret123"))
+        assertFalse("Code verifier must be redacted", guarded.contains("verifierSecretXYZ"))
+        assertFalse("Secret must be redacted", guarded.contains("appSecret999"))
+        assertTrue("Guarded string must contain redacted markers", guarded.contains("[REDACTED_BY_PRIVACY_GUARD]"))
+    }
 }
