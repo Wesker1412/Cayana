@@ -30,8 +30,17 @@ class ServerConfig:
     ALLOW_UNPROTECTED_PAID_INFERENCE = os.environ.get("CAYANA_ALLOW_UNPROTECTED_PAID_INFERENCE", "false").lower() in ("true", "1", "yes")
     SERVER_API_KEY = os.environ.get("CAYANA_SERVER_API_KEY", "")
 
+    # Notion OAuth broker configuration
+    NOTION_CLIENT_ID = os.environ.get("CAYANA_NOTION_CLIENT_ID", "")
+    NOTION_CLIENT_SECRET = os.environ.get("CAYANA_NOTION_CLIENT_SECRET", "")
+    NOTION_REDIRECT_URI = os.environ.get("CAYANA_NOTION_REDIRECT_URI", "https://cayana.app/v1/oauth/notion/callback")
+    NOTION_API_VERSION = os.environ.get("CAYANA_NOTION_API_VERSION", "2026-03-11")
+    NOTION_TOKEN_URL = os.environ.get("CAYANA_NOTION_TOKEN_URL", "https://api.notion.com/v1/oauth/token")
+    NOTION_AUTH_URL = os.environ.get("CAYANA_NOTION_AUTH_URL", "https://api.notion.com/v1/oauth/authorize")
+
     # Timeout
     REQUEST_TIMEOUT_SECONDS = 30
 
     # Operational logger memory bounds
     MAX_IN_MEMORY_LOGS = 200
+

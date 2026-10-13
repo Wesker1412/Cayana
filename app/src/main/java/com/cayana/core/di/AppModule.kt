@@ -110,8 +110,44 @@ val appModule = module {
         get<com.cayana.actions.tasks.destination.GoogleTasksDestination>()
     }
 
+    single<com.cayana.actions.notion.auth.NotionTokenStorage> {
+        com.cayana.actions.notion.auth.AndroidKeystoreNotionTokenStorage(
+            context = androidContext()
+        )
+    }
+
+    single<com.cayana.actions.notion.auth.NotionOAuthBrokerClient> {
+        com.cayana.actions.notion.auth.HttpNotionOAuthBrokerClient(
+            logger = get()
+        )
+    }
+
+    single<com.cayana.actions.notion.auth.NotionAuthorizationManager> {
+        com.cayana.actions.notion.auth.DefaultNotionAuthorizationManager(
+            tokenStorage = get(),
+            brokerClient = get(),
+            settingsRepository = get(),
+            logger = get()
+        )
+    }
+
+    single<com.cayana.actions.notion.client.NotionClient> {
+        com.cayana.actions.notion.client.NotionHttpClient(
+            logger = get()
+        )
+    }
+
+    single {
+        com.cayana.actions.notion.destination.NotionDestination(
+            notionAuthManager = get(),
+            notionClient = get(),
+            settingsRepository = get(),
+            logger = get()
+        )
+    }
+
     single<com.cayana.actions.destination.NoteDestination> {
-        com.cayana.actions.destination.UnconfiguredNoteDestination()
+        get<com.cayana.actions.notion.destination.NotionDestination>()
     }
 
     single<com.cayana.actions.destination.DestinationRegistry> {

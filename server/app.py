@@ -3,10 +3,12 @@ import json
 import time
 import uuid
 import re
+import urllib.parse
 from typing import Tuple, Dict, Any, List
 from .config import ServerConfig
 from .rate_limiter import BoundedSlidingWindowRateLimiter
 from .logger import logger
+from .notion_oauth_broker import NotionOAuthBroker, NotionOAuthConfigError
 from .upstream_client import (
     UpstreamLlmClient,
     UpstreamNotConfiguredError,
@@ -43,6 +45,7 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
         max_entries=ServerConfig.MAX_RATE_LIMITER_ENTRIES
     )
     upstream_client = UpstreamLlmClient(config)
+    notion_broker = NotionOAuthBroker(config)
 
     def _send_json(
         self,
@@ -63,8 +66,11 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         start_time = time.time()
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = parsed.query
         try:
-            if self.path == "/health":
+            if path == "/health":
                 self._send_json(200, {
                     "status": "ok",
                     "service": "cayana-llm-api",
@@ -72,6 +78,23 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 })
                 duration_ms = int((time.time() - start_time) * 1000)
                 logger.log_request("health", "", duration_ms, 200)
+            elif path == "/v1/oauth/notion/initiate":
+                try:
+                    auth_url, state = self.notion_broker.create_authorization_url()
+                    self._send_json(200, {
+                        "authorize_url": auth_url,
+                        "state": state
+                    })
+                except NotionOAuthConfigError as e:
+                    self._send_json(503, {
+                        "error": {"code": "NOTION_OAUTH_NOT_CONFIGURED", "message": str(e)}
+                    })
+            elif path == "/v1/oauth/notion/callback":
+                # Redirect browser back to mobile application custom scheme
+                redirect_target = f"cayana://oauth/notion/callback?{query}"
+                self.send_response(302)
+                self.send_header("Location", redirect_target)
+                self.end_headers()
             else:
                 self._send_json(404, {
                     "error": {
@@ -86,6 +109,8 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         start_time = time.time()
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
         req_id = ""
         inst_id = ""
         client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
@@ -96,14 +121,74 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json(503, {
                     "error": {
                         "code": "SERVICE_UNAVAILABLE",
-                        "message": "Inference service is currently paused via safety kill switch."
+                        "message": "Service is currently paused via safety kill switch."
                     }
                 }, request_id="kill-switch", error_code="SERVICE_UNAVAILABLE")
                 logger.log_request("kill-switch", "", 0, 503, "SERVICE_UNAVAILABLE")
                 return
 
-            # Path check
-            if self.path != "/v1/ask":
+            # Notion OAuth routes
+            if path == "/v1/oauth/notion/initiate":
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = {}
+                if content_length > 0:
+                    raw_body = self.rfile.read(content_length)
+                    if raw_body:
+                        try:
+                            body = json.loads(raw_body.decode("utf-8"))
+                        except Exception:
+                            pass
+                redirect_uri = body.get("redirect_uri")
+                try:
+                    auth_url, state = self.notion_broker.create_authorization_url(redirect_uri)
+                    self._send_json(200, {
+                        "authorize_url": auth_url,
+                        "state": state
+                    })
+                except NotionOAuthConfigError as e:
+                    self._send_json(503, {
+                        "error": {"code": "NOTION_OAUTH_NOT_CONFIGURED", "message": str(e)}
+                    })
+                return
+
+            if path == "/v1/oauth/notion/exchange":
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length > 4096:
+                    self._send_json(413, {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Payload exceeds 4KB limit"}})
+                    return
+                raw_body = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except Exception:
+                    self._send_json(400, {"error": {"code": "INVALID_JSON", "message": "Malformed JSON payload"}})
+                    return
+
+                code = body.get("code", "")
+                state = body.get("state", "")
+                redirect_uri = body.get("redirect_uri")
+                status, res = self.notion_broker.exchange_code(code, state, redirect_uri)
+                self._send_json(status, res)
+                return
+
+            if path == "/v1/oauth/notion/refresh":
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length > 4096:
+                    self._send_json(413, {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Payload exceeds 4KB limit"}})
+                    return
+                raw_body = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except Exception:
+                    self._send_json(400, {"error": {"code": "INVALID_JSON", "message": "Malformed JSON payload"}})
+                    return
+
+                refresh_token = body.get("refresh_token", "")
+                status, res = self.notion_broker.refresh_token(refresh_token)
+                self._send_json(status, res)
+                return
+
+            # Path check for inference
+            if path != "/v1/ask":
                 self._send_json(404, {
                     "error": {"code": "NOT_FOUND", "message": "Resource not found"}
                 }, request_id="not-found", error_code="NOT_FOUND")

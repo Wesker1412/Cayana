@@ -59,7 +59,15 @@ data class UserSettings(
     val autoTasksEnabled: Boolean = false,
     val selectedTaskListId: String? = null,
     val selectedTaskListTitle: String? = null,
-    val autoTasksEligibilityEpoch: Long = 0L
+    val autoTasksEligibilityEpoch: Long = 0L,
+    val isNotionConnected: Boolean = false,
+    val notionAuthStatus: com.cayana.actions.notion.auth.NotionAuthStatus = com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED,
+    val autoNotionEnabled: Boolean = false,
+    val selectedNotionTargetId: String? = null,
+    val selectedNotionTargetTitle: String? = null,
+    val selectedNotionTargetType: String? = null,
+    val notionWorkspaceName: String? = null,
+    val notionWorkspaceIcon: String? = null
 ) {
     val googleTasksEligibilityEpoch: Long get() = autoTasksEligibilityEpoch
 }
@@ -107,6 +115,10 @@ interface SettingsRepository {
     suspend fun updateGoogleTasksEligibilityEpoch(epoch: Long)
     suspend fun updateAutoTasksEnabled(enabled: Boolean)
     suspend fun updateSelectedTaskList(listId: String?, listTitle: String?)
+    suspend fun updateNotionAuthStatus(status: com.cayana.actions.notion.auth.NotionAuthStatus)
+    suspend fun updateAutoNotionEnabled(enabled: Boolean)
+    suspend fun updateSelectedNotionTarget(targetId: String?, targetTitle: String?, targetType: String? = null)
+    suspend fun updateNotionWorkspaceInfo(workspaceName: String?, workspaceIcon: String?)
     suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings)
 }
 
@@ -349,6 +361,41 @@ class InMemorySettingsRepository(
 
     override suspend fun updateSelectedTaskList(listId: String?, listTitle: String?) {
         _settings.update { it.copy(selectedTaskListId = listId, selectedTaskListTitle = listTitle) }
+    }
+
+    override suspend fun updateNotionAuthStatus(status: com.cayana.actions.notion.auth.NotionAuthStatus) {
+        _settings.update {
+            val isConnected = (status == com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED)
+            val autoEnabled = if (!isConnected) false else it.autoNotionEnabled
+            it.copy(
+                notionAuthStatus = status,
+                isNotionConnected = isConnected,
+                autoNotionEnabled = autoEnabled
+            )
+        }
+    }
+
+    override suspend fun updateAutoNotionEnabled(enabled: Boolean) {
+        _settings.update { it.copy(autoNotionEnabled = enabled) }
+    }
+
+    override suspend fun updateSelectedNotionTarget(targetId: String?, targetTitle: String?, targetType: String?) {
+        _settings.update {
+            it.copy(
+                selectedNotionTargetId = targetId,
+                selectedNotionTargetTitle = targetTitle,
+                selectedNotionTargetType = targetType
+            )
+        }
+    }
+
+    override suspend fun updateNotionWorkspaceInfo(workspaceName: String?, workspaceIcon: String?) {
+        _settings.update {
+            it.copy(
+                notionWorkspaceName = workspaceName,
+                notionWorkspaceIcon = workspaceIcon
+            )
+        }
     }
 
     override suspend fun applyPortableSettings(portable: com.cayana.backup.snapshot.PortableUserSettings) {

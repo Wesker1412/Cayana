@@ -82,6 +82,19 @@ class TestCayanaServer(unittest.TestCase):
             body = json.loads(e.read().decode("utf-8"))
             return status, body
 
+    def _get_json(self, path: str):
+        url = f"{self.base_url}{path}"
+        req = urllib.request.Request(url)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                status = resp.status
+                body = json.loads(resp.read().decode("utf-8"))
+                return status, body
+        except urllib.error.HTTPError as e:
+            status = e.code
+            body = json.loads(e.read().decode("utf-8"))
+            return status, body
+
     def test_health_check(self):
         url = f"{self.base_url}/health"
         with urllib.request.urlopen(url, timeout=5) as resp:
@@ -652,7 +665,13 @@ class TestCayanaServer(unittest.TestCase):
         status, resp = self._post_json("/v1/ask", payload=payload)
         self.assertEqual(status, 200)
 
-        logs = logger.get_logs()
+        logs = []
+        for _ in range(50):
+            logs = logger.get_logs()
+            if logs:
+                break
+            time.sleep(0.01)
+
         self.assertTrue(len(logs) > 0)
 
         for entry in logs:
@@ -691,6 +710,46 @@ class TestCayanaServer(unittest.TestCase):
             self.assertEqual(resp["error"]["code"], "UPSTREAM_ERROR")
         finally:
             CayanaApiHandler.upstream_client.generate_answer = original_gen
+
+    def test_notion_oauth_initiate_endpoint(self):
+        CayanaApiHandler.config.NOTION_CLIENT_ID = "test-notion-client-id"
+        CayanaApiHandler.config.NOTION_CLIENT_SECRET = "test-notion-secret"
+        status, resp = self._get_json("/v1/oauth/notion/initiate")
+        self.assertEqual(status, 200)
+        self.assertIn("authorize_url", resp)
+        self.assertIn("state", resp)
+        self.assertIn("client_id=test-notion-client-id", resp["authorize_url"])
+
+    def test_notion_oauth_callback_endpoint_redirects_to_cayana_scheme(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port)
+        conn.request("GET", "/v1/oauth/notion/callback?code=temp-code&state=temp-state")
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 302)
+        location = resp.getheader("Location")
+        self.assertTrue(location.startswith("cayana://oauth/notion/callback?"))
+        self.assertIn("code=temp-code", location)
+        self.assertIn("state=temp-state", location)
+        conn.close()
+
+    def test_notion_oauth_exchange_endpoint_invalid_state(self):
+        CayanaApiHandler.config.NOTION_CLIENT_ID = "test-notion-client-id"
+        CayanaApiHandler.config.NOTION_CLIENT_SECRET = "test-notion-secret"
+        status, resp = self._post_json(
+            "/v1/oauth/notion/exchange",
+            payload={"code": "abc", "state": "invalid-state-uuid"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "INVALID_STATE")
+
+    def test_notion_oauth_refresh_endpoint_invalid_input(self):
+        CayanaApiHandler.config.NOTION_CLIENT_ID = "test-notion-client-id"
+        CayanaApiHandler.config.NOTION_CLIENT_SECRET = "test-notion-secret"
+        status, resp = self._post_json(
+            "/v1/oauth/notion/refresh",
+            payload={"refresh_token": ""}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"]["code"], "INVALID_REFRESH_TOKEN")
 
 if __name__ == "__main__":
     unittest.main()

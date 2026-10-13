@@ -64,6 +64,13 @@ class DataStoreSettingsRepository(
         val KEY_SELECTED_TASK_LIST_TITLE = stringPreferencesKey("selected_task_list_title")
         val KEY_AUTO_TASKS_ELIGIBILITY_EPOCH = longPreferencesKey("auto_tasks_eligibility_epoch")
         val KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH = longPreferencesKey("google_tasks_eligibility_epoch")
+        val KEY_NOTION_AUTH_STATUS = stringPreferencesKey("notion_auth_status")
+        val KEY_AUTO_NOTION_ENABLED = booleanPreferencesKey("auto_notion_enabled")
+        val KEY_SELECTED_NOTION_TARGET_ID = stringPreferencesKey("selected_notion_target_id")
+        val KEY_SELECTED_NOTION_TARGET_TITLE = stringPreferencesKey("selected_notion_target_title")
+        val KEY_SELECTED_NOTION_TARGET_TYPE = stringPreferencesKey("selected_notion_target_type")
+        val KEY_NOTION_WORKSPACE_NAME = stringPreferencesKey("notion_workspace_name")
+        val KEY_NOTION_WORKSPACE_ICON = stringPreferencesKey("notion_workspace_icon")
     }
 
     override fun getSettings(): Flow<UserSettings> {
@@ -196,7 +203,17 @@ class DataStoreSettingsRepository(
                     autoTasksEnabled = preferences[KEY_AUTO_TASKS_ENABLED] ?: false,
                     selectedTaskListId = preferences[KEY_SELECTED_TASK_LIST_ID],
                     selectedTaskListTitle = preferences[KEY_SELECTED_TASK_LIST_TITLE],
-                    autoTasksEligibilityEpoch = preferences[KEY_AUTO_TASKS_ELIGIBILITY_EPOCH] ?: preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] ?: 0L
+                    autoTasksEligibilityEpoch = preferences[KEY_AUTO_TASKS_ELIGIBILITY_EPOCH] ?: preferences[KEY_GOOGLE_TASKS_ELIGIBILITY_EPOCH] ?: 0L,
+                    isNotionConnected = (preferences[KEY_NOTION_AUTH_STATUS] == com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED.name),
+                    notionAuthStatus = runCatching {
+                        com.cayana.actions.notion.auth.NotionAuthStatus.valueOf(preferences[KEY_NOTION_AUTH_STATUS] ?: "")
+                    }.getOrDefault(com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED),
+                    autoNotionEnabled = preferences[KEY_AUTO_NOTION_ENABLED] ?: false,
+                    selectedNotionTargetId = preferences[KEY_SELECTED_NOTION_TARGET_ID],
+                    selectedNotionTargetTitle = preferences[KEY_SELECTED_NOTION_TARGET_TITLE],
+                    selectedNotionTargetType = preferences[KEY_SELECTED_NOTION_TARGET_TYPE],
+                    notionWorkspaceName = preferences[KEY_NOTION_WORKSPACE_NAME],
+                    notionWorkspaceIcon = preferences[KEY_NOTION_WORKSPACE_ICON]
                 )
             }
     }
@@ -484,6 +501,56 @@ class DataStoreSettingsRepository(
                 preferences[KEY_SELECTED_TASK_LIST_TITLE] = listTitle
             } else {
                 preferences.remove(KEY_SELECTED_TASK_LIST_TITLE)
+            }
+        }
+    }
+
+    override suspend fun updateNotionAuthStatus(status: com.cayana.actions.notion.auth.NotionAuthStatus) {
+        dataStore.edit { preferences ->
+            preferences[KEY_NOTION_AUTH_STATUS] = status.name
+            if (status != com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED) {
+                preferences[KEY_AUTO_NOTION_ENABLED] = false
+            }
+        }
+    }
+
+    override suspend fun updateAutoNotionEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[KEY_AUTO_NOTION_ENABLED] = enabled
+        }
+    }
+
+    override suspend fun updateSelectedNotionTarget(targetId: String?, targetTitle: String?, targetType: String?) {
+        dataStore.edit { preferences ->
+            if (targetId != null) {
+                preferences[KEY_SELECTED_NOTION_TARGET_ID] = targetId
+            } else {
+                preferences.remove(KEY_SELECTED_NOTION_TARGET_ID)
+            }
+            if (targetTitle != null) {
+                preferences[KEY_SELECTED_NOTION_TARGET_TITLE] = targetTitle
+            } else {
+                preferences.remove(KEY_SELECTED_NOTION_TARGET_TITLE)
+            }
+            if (targetType != null) {
+                preferences[KEY_SELECTED_NOTION_TARGET_TYPE] = targetType
+            } else {
+                preferences.remove(KEY_SELECTED_NOTION_TARGET_TYPE)
+            }
+        }
+    }
+
+    override suspend fun updateNotionWorkspaceInfo(workspaceName: String?, workspaceIcon: String?) {
+        dataStore.edit { preferences ->
+            if (workspaceName != null) {
+                preferences[KEY_NOTION_WORKSPACE_NAME] = workspaceName
+            } else {
+                preferences.remove(KEY_NOTION_WORKSPACE_NAME)
+            }
+            if (workspaceIcon != null) {
+                preferences[KEY_NOTION_WORKSPACE_ICON] = workspaceIcon
+            } else {
+                preferences.remove(KEY_NOTION_WORKSPACE_ICON)
             }
         }
     }

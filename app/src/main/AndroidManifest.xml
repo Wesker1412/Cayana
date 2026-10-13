@@ -58,6 +58,23 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".actions.notion.auth.NotionOAuthCallbackActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="cayana"
+                    android:host="oauth"
+                    android:pathPrefix="/notion/callback" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name="com.cayana.calendar.receiver.UndoCalendarEventReceiver"
             android:exported="false" />
