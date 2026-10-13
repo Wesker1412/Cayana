@@ -131,4 +131,153 @@ class Stage9MigrationTest {
         assertFalse("All 3 cloud tables must be dropped in v9", droppedTablesCursor.moveToFirst())
         droppedTablesCursor.close()
     }
+
+    @Test
+    fun migrateV7ToV8CreatesCloudTables() {
+        var db = helper.createDatabase(TEST_DB, 7).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('mem-v7-1', 'SCREENSHOT', 1000, 1000, 'Test V7', 'Raw V7', 'Raw V7', 'content://media/7', NULL, 1, '{}', '[]', '[]', 'COMPLETED')"
+            )
+            close()
+        }
+
+        db = helper.runMigrationsAndValidate(TEST_DB, 8, true, CayanaDatabase.MIGRATION_7_8)
+
+        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='cloud_sync_state'")
+        assertTrue("cloud_sync_state table must exist in v8", cursor.moveToFirst())
+        cursor.close()
+
+        val memCursor = db.query("SELECT id FROM memories WHERE id='mem-v7-1'")
+        assertTrue("Memory must be preserved across v7->v8 migration", memCursor.moveToFirst())
+        memCursor.close()
+    }
+
+    @Test
+    fun migrateV9ToV10CreatesTaskActionsAndPreservesMemories() {
+        var db = helper.createDatabase(TEST_DB, 9).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('mem-v9-1', 'SCREENSHOT', 1000, 1000, 'Test V9', 'Raw V9', 'Raw V9', 'content://media/9', NULL, 1, '{}', '[]', '[]', 'COMPLETED')"
+            )
+            close()
+        }
+
+        db = helper.runMigrationsAndValidate(TEST_DB, 10, true, CayanaDatabase.MIGRATION_9_10)
+
+        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='task_actions'")
+        assertTrue("task_actions table must exist in v10", cursor.moveToFirst())
+        cursor.close()
+
+        val memCursor = db.query("SELECT id FROM memories WHERE id='mem-v9-1'")
+        assertTrue("Memory must be preserved across v9->v10 migration", memCursor.moveToFirst())
+        memCursor.close()
+
+        db.execSQL(
+            "INSERT INTO task_actions (id, sourceMemoryId, actionType, taskListId, taskListTitle, destinationTaskId, status, title, originalDueAt, googleDue, notes, createdAt, updatedAt, attemptCount, lastError) " +
+            "VALUES ('act-task-1', 'mem-v9-1', 'CREATE_TASK', 'list-1', 'Default List', 'gtask-1', 'CREATED', 'Test Task', 1000, '2026-10-15', 'Notes', 1000, 1000, 1, NULL)"
+        )
+        val taskCursor = db.query("SELECT id, title FROM task_actions WHERE id='act-task-1'")
+        assertTrue("Inserted task_action must exist", taskCursor.moveToFirst())
+        assertEquals("Test Task", taskCursor.getString(1))
+        taskCursor.close()
+    }
+
+    @Test
+    fun migrateV10ToV11CreatesNotionActionsAndPreservesAllData() {
+        var db = helper.createDatabase(TEST_DB, 10).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('mem-v10-1', 'SCREENSHOT', 1000, 1000, 'Test V10', 'Raw V10', 'Raw V10', 'content://media/10', NULL, 1, '{}', '[]', '[]', 'COMPLETED')"
+            )
+            execSQL(
+                "INSERT INTO task_actions (id, sourceMemoryId, actionType, taskListId, taskListTitle, destinationTaskId, status, title, originalDueAt, googleDue, notes, createdAt, updatedAt, attemptCount, lastError) " +
+                "VALUES ('act-task-10', 'mem-v10-1', 'CREATE_TASK', 'list-10', 'List 10', 'gtask-10', 'CREATED', 'Task V10', 1000, '2026-10-15', 'Notes', 1000, 1000, 1, NULL)"
+            )
+            close()
+        }
+
+        db = helper.runMigrationsAndValidate(TEST_DB, 11, true, CayanaDatabase.MIGRATION_10_11)
+
+        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='notion_actions'")
+        assertTrue("notion_actions table must exist in v11", cursor.moveToFirst())
+        cursor.close()
+
+        val memCursor = db.query("SELECT id FROM memories WHERE id='mem-v10-1'")
+        assertTrue("Memory must be preserved across v10->v11 migration", memCursor.moveToFirst())
+        memCursor.close()
+
+        val taskCursor = db.query("SELECT id, title FROM task_actions WHERE id='act-task-10'")
+        assertTrue("TaskAction must be preserved across v10->v11 migration", taskCursor.moveToFirst())
+        assertEquals("Task V10", taskCursor.getString(1))
+        taskCursor.close()
+
+        db.execSQL(
+            "INSERT INTO notion_actions (id, sourceMemoryId, actionType, targetId, targetTitle, targetType, destinationPageId, destinationPageUrl, status, title, content, createdAt, updatedAt, attemptCount, lastError) " +
+            "VALUES ('act-notion-1', 'mem-v10-1', 'CREATE_NOTE', 'target-1', 'Target Title', 'PAGE', 'page-1', 'https://notion.so/page-1', 'CREATED', 'Notion Note', 'Content', 1000, 1000, 1, NULL)"
+        )
+        val notionCursor = db.query("SELECT id, title FROM notion_actions WHERE id='act-notion-1'")
+        assertTrue("Inserted notion_action must exist", notionCursor.moveToFirst())
+        assertEquals("Notion Note", notionCursor.getString(1))
+        notionCursor.close()
+    }
+
+    @Test
+    fun migrateV1ToV11FullSequentialMigrationChainPreservesCanonicalData() {
+        var db = helper.createDatabase(TEST_DB, 1).apply {
+            execSQL(
+                "INSERT INTO memories (id, sourceType, createdAt, capturedAt, title, rawText, normalizedText, sourceUri, sourceUrl, sourceExists, metadataJson, entitiesJson, eventCandidatesJson, processingState) " +
+                "VALUES ('item-v1-initial', 'SCREENSHOT', 1000, 1000, 'Original V1 Memory', 'Sample Raw Text', 'Sample Raw Text', 'content://test/1', NULL, 1, '{\"displayName\":\"sample.png\"}', '[]', '[]', 'COMPLETED')"
+            )
+            close()
+        }
+
+        db = helper.runMigrationsAndValidate(
+            TEST_DB,
+            11,
+            true,
+            CayanaDatabase.MIGRATION_1_2,
+            CayanaDatabase.MIGRATION_2_3,
+            CayanaDatabase.MIGRATION_3_4,
+            CayanaDatabase.MIGRATION_4_5,
+            CayanaDatabase.MIGRATION_5_6,
+            CayanaDatabase.MIGRATION_6_7,
+            CayanaDatabase.MIGRATION_7_8,
+            CayanaDatabase.MIGRATION_8_9,
+            CayanaDatabase.MIGRATION_9_10,
+            CayanaDatabase.MIGRATION_10_11
+        )
+
+        val memCursor = db.query("SELECT id, title, rawText, sourceType FROM memories WHERE id='item-v1-initial'")
+        assertTrue("V1 Memory must survive migration to V11", memCursor.moveToFirst())
+        assertEquals("item-v1-initial", memCursor.getString(0))
+        assertEquals("Original V1 Memory", memCursor.getString(1))
+        assertEquals("Sample Raw Text", memCursor.getString(2))
+        assertEquals("SCREENSHOT", memCursor.getString(3))
+        memCursor.close()
+
+        val tablesCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('memories', 'calendar_actions', 'memories_fts', 'share_receipts', 'search_index_state', 'restored_calendar_action_history', 'task_actions', 'notion_actions')"
+        )
+        val tables = mutableSetOf<String>()
+        while (tablesCursor.moveToNext()) {
+            tables.add(tablesCursor.getString(0))
+        }
+        tablesCursor.close()
+
+        assertTrue(tables.contains("memories"))
+        assertTrue(tables.contains("calendar_actions"))
+        assertTrue(tables.contains("memories_fts"))
+        assertTrue(tables.contains("share_receipts"))
+        assertTrue(tables.contains("search_index_state"))
+        assertTrue(tables.contains("restored_calendar_action_history"))
+        assertTrue(tables.contains("task_actions"))
+        assertTrue(tables.contains("notion_actions"))
+
+        val droppedCloudTables = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('cloud_sync_state', 'cloud_memory_sync_metadata', 'cloud_sync_outbox')"
+        )
+        assertFalse("Cloud tables must be dropped in V11", droppedCloudTables.moveToFirst())
+        droppedCloudTables.close()
+    }
 }
