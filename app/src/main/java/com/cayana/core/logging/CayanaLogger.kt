@@ -59,7 +59,8 @@ class DefaultCayanaLogger(
     override fun w(tag: String, message: String, throwable: Throwable?) {
         val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(message)
         if (throwable != null) {
-            Log.w(tag, guarded, throwable)
+            val safeThrowable = PrivacySanitizer.sanitizeThrowable(throwable)
+            Log.w(tag, guarded, safeThrowable)
         } else {
             Log.w(tag, guarded)
         }
@@ -68,7 +69,8 @@ class DefaultCayanaLogger(
     override fun e(tag: String, message: String, throwable: Throwable?) {
         val guarded = PrivacySanitizer.guardAgainstMemoryLeakage(message)
         if (throwable != null) {
-            Log.e(tag, guarded, throwable)
+            val safeThrowable = PrivacySanitizer.sanitizeThrowable(throwable)
+            Log.e(tag, guarded, safeThrowable)
         } else {
             Log.e(tag, guarded)
         }
