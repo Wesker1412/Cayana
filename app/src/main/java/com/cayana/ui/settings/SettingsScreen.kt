@@ -97,6 +97,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     var showCalendarDialog by remember { mutableStateOf(false) }
     var showTaskListDialog by remember { mutableStateOf(false) }
+    var showNotionTargetDialog by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val driveAuthLauncher = rememberLauncherForActivityResult(
@@ -616,6 +617,170 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ---------------------------------------------------------------
+            // Section 3C: Notion 筆記整合
+            // ---------------------------------------------------------------
+            Text(
+                text = "Notion 筆記整合",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Notion",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Status Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val statusIcon = when (uiState.settings.notionAuthStatus) {
+                            com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED -> Icons.Default.Check
+                            com.cayana.actions.notion.auth.NotionAuthStatus.AUTH_REQUIRED -> Icons.Default.Warning
+                            com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED -> Icons.Default.CloudQueue
+                        }
+                        val statusTint = when (uiState.settings.notionAuthStatus) {
+                            com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED -> MaterialTheme.colorScheme.primary
+                            com.cayana.actions.notion.auth.NotionAuthStatus.AUTH_REQUIRED -> MaterialTheme.colorScheme.error
+                            com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = null,
+                            tint = statusTint,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            val statusText = when (uiState.settings.notionAuthStatus) {
+                                com.cayana.actions.notion.auth.NotionAuthStatus.CONNECTED -> "已連接"
+                                com.cayana.actions.notion.auth.NotionAuthStatus.AUTH_REQUIRED -> "需要重新授權"
+                                com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED -> "未連接"
+                            }
+                            Text(
+                                text = "狀態：$statusText",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            if (!uiState.settings.notionWorkspaceName.isNullOrBlank()) {
+                                Text(
+                                    text = "工作區：${uiState.settings.notionWorkspaceName}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (uiState.notionError != null) {
+                                Text(
+                                    text = uiState.notionError ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (!uiState.settings.isNotionConnected) {
+                        Button(
+                            onClick = {
+                                viewModel.startConnectNotion { uri ->
+                                    val intent = Intent(Intent.ACTION_VIEW, uri)
+                                    context.startActivity(intent)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (uiState.settings.notionAuthStatus == com.cayana.actions.notion.auth.NotionAuthStatus.AUTH_REQUIRED) "重新授權 Notion" else "連接 Notion")
+                        }
+                    } else {
+                        // Connected: Target Selection Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Target Page / Database",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                val targetTitle = uiState.settings.selectedNotionTargetTitle ?: "尚未設定"
+                                val targetTypeBadge = uiState.settings.selectedNotionTargetType?.uppercase()?.let { " [$it]" } ?: ""
+                                Text(
+                                    text = "$targetTitle$targetTypeBadge",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.loadNotionTargets()
+                                    showNotionTargetDialog = true
+                                }
+                            ) {
+                                Text("變更")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Auto-Notion Switch
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "自動儲存至 Notion",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = "截圖偵測到筆記時自動儲存至指定 Notion 目標",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.settings.autoNotionEnabled,
+                                onCheckedChange = { checked ->
+                                    viewModel.toggleAutoNotion(checked)
+                                }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        TextButton(
+                            onClick = { viewModel.disconnectNotion() },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("中斷連接", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ---------------------------------------------------------------
             // Section 4: Backup
             // ---------------------------------------------------------------
             Text(
@@ -965,6 +1130,118 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showTaskListDialog = false }) {
+                    Text("關閉")
+                }
+            }
+        )
+    }
+
+    // Notion Target Selection Dialog
+    if (showNotionTargetDialog) {
+        var searchQuery by remember { mutableStateOf(uiState.notionTargetSearchQuery ?: "") }
+        AlertDialog(
+            onDismissRequest = { showNotionTargetDialog = false },
+            title = { Text("選擇 Notion 目標") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { query ->
+                            searchQuery = query
+                            viewModel.loadNotionTargets(query = query)
+                        },
+                        label = { Text("搜尋頁面或資料庫") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (uiState.isLoadingNotionTargets && uiState.availableNotionTargets.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    } else if (uiState.availableNotionTargets.isEmpty()) {
+                        Text(
+                            text = "尚未發現可用的頁面或資料庫。\n請確認已在 Notion 授權中勾選頁面分享。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        uiState.availableNotionTargets.forEach { target ->
+                            val isSelected = target.id == uiState.settings.selectedNotionTargetId
+                            val typeLabel = when (target.type) {
+                                com.cayana.actions.notion.client.NotionTargetType.PAGE -> "Page"
+                                com.cayana.actions.notion.client.NotionTargetType.DATABASE -> "Database"
+                                com.cayana.actions.notion.client.NotionTargetType.DATA_SOURCE -> "Data Source"
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = target.isSelectable) {
+                                        viewModel.selectNotionTarget(target)
+                                        showNotionTargetDialog = false
+                                    }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    enabled = target.isSelectable,
+                                    onClick = {
+                                        viewModel.selectNotionTarget(target)
+                                        showNotionTargetDialog = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = target.title.ifBlank { "Untitled" },
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    Text(
+                                        text = typeLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+
+                        if (uiState.notionTargetHasMore) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (uiState.isLoadingNotionTargets) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { viewModel.loadNotionTargets(loadMore = true) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("載入更多")
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showNotionTargetDialog = false }) {
                     Text("關閉")
                 }
             }

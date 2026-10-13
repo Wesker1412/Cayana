@@ -11,6 +11,7 @@ import com.cayana.actions.notion.auth.NotionAuthStatus
 import com.cayana.actions.notion.auth.NotionAuthorizationManager
 import com.cayana.actions.notion.client.NotionClient
 import com.cayana.actions.notion.client.NotionCreatedPage
+import com.cayana.actions.notion.client.NotionSearchResponse
 import com.cayana.actions.notion.client.NotionTarget
 import com.cayana.actions.notion.client.NotionTargetType
 import com.cayana.actions.router.DefaultActionRouter
@@ -262,10 +263,15 @@ class FakeNotionClient : NotionClient {
 
     val createdPages = mutableListOf<CreatedPageCall>()
     var createPageFailure: Throwable? = null
-    var searchTargetsResult: List<NotionTarget> = emptyList()
+    var searchTargetsResult: NotionSearchResponse = NotionSearchResponse(emptyList())
     var searchFailure: Throwable? = null
 
-    override suspend fun searchTargets(accessToken: String): Result<List<NotionTarget>> {
+    override suspend fun searchTargets(
+        accessToken: String,
+        query: String?,
+        startCursor: String?,
+        pageSize: Int
+    ): Result<NotionSearchResponse> {
         searchFailure?.let { return Result.Error(it) }
         return Result.Success(searchTargetsResult)
     }

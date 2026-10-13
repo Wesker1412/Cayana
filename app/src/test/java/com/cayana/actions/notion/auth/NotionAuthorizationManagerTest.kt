@@ -62,6 +62,21 @@ class NotionAuthorizationManagerTest {
     }
 
     @Test
+    fun oauthInitiationStorageFailureFailsClosed() = runTest {
+        brokerClient.initiateResponse = NotionOAuthInitiateResponse(
+            authorizeUrl = "https://api.notion.com/v1/oauth/authorize?state=test_state",
+            state = "test_state"
+        )
+        tokenStorage.failSavePendingTransaction = true
+
+        val result = authManager.getAuthorizationUrl()
+
+        assertTrue(result is Result.Error)
+        assertTrue((result as Result.Error).exception is SecurityException)
+        assertNull(tokenStorage.getPendingOAuthState())
+    }
+
+    @Test
     fun callbackWithStateMismatchThrowsSecurityException() = runTest {
         brokerClient.initiateResponse = NotionOAuthInitiateResponse(
             authorizeUrl = "https://api.notion.com/v1/oauth/authorize?state=correct_state",
@@ -384,9 +399,13 @@ class FakeNotionTokenStorage : NotionTokenStorage {
 
     override fun hasTokens(): Boolean = !accessToken.isNullOrBlank() || !refreshToken.isNullOrBlank()
 
-    override fun savePendingOAuthTransaction(state: String, codeVerifier: String) {
+    var failSavePendingTransaction: Boolean = false
+
+    override fun savePendingOAuthTransaction(state: String, codeVerifier: String): Boolean {
+        if (failSavePendingTransaction) return false
         this.pendingState = state
         this.pendingVerifier = codeVerifier
+        return true
     }
 
     override fun getPendingOAuthState(): String? = pendingState

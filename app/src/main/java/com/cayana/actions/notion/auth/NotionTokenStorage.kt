@@ -28,7 +28,7 @@ interface NotionTokenStorage {
     fun clearTokens()
     fun hasTokens(): Boolean
 
-    fun savePendingOAuthTransaction(state: String, codeVerifier: String)
+    fun savePendingOAuthTransaction(state: String, codeVerifier: String): Boolean
     fun getPendingOAuthState(): String?
     fun getPendingCodeVerifier(): String?
     fun clearPendingOAuthTransaction()
@@ -152,16 +152,26 @@ class AndroidKeystoreNotionTokenStorage(
         return !cachedAccessToken.isNullOrBlank() || !prefs.getString(PREF_WRAPPED_ACCESS_TOKEN, null).isNullOrBlank()
     }
 
-    override fun savePendingOAuthTransaction(state: String, codeVerifier: String) {
-        prefs.edit()
-            .putString(PREF_PENDING_STATE, state)
-            .putString(PREF_PENDING_CODE_VERIFIER, codeVerifier)
+    override fun savePendingOAuthTransaction(state: String, codeVerifier: String): Boolean {
+        if (state.isBlank() || codeVerifier.isBlank()) return false
+        val encryptedState = encryptString(state) ?: return false
+        val encryptedVerifier = encryptString(codeVerifier) ?: return false
+
+        return prefs.edit()
+            .putString(PREF_PENDING_STATE, encryptedState)
+            .putString(PREF_PENDING_CODE_VERIFIER, encryptedVerifier)
             .commit()
     }
 
-    override fun getPendingOAuthState(): String? = prefs.getString(PREF_PENDING_STATE, null)
+    override fun getPendingOAuthState(): String? {
+        val encrypted = prefs.getString(PREF_PENDING_STATE, null) ?: return null
+        return decryptString(encrypted)
+    }
 
-    override fun getPendingCodeVerifier(): String? = prefs.getString(PREF_PENDING_CODE_VERIFIER, null)
+    override fun getPendingCodeVerifier(): String? {
+        val encrypted = prefs.getString(PREF_PENDING_CODE_VERIFIER, null) ?: return null
+        return decryptString(encrypted)
+    }
 
     override fun clearPendingOAuthTransaction() {
         prefs.edit()

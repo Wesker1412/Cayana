@@ -28,7 +28,9 @@ val viewModelModule = module {
             driveAuthManager = getOrNull(),
             recoveryKeyStorage = getOrNull(),
             tasksAuthManager = getOrNull(),
-            tasksClient = getOrNull()
+            tasksClient = getOrNull(),
+            notionAuthManager = getOrNull(),
+            notionClient = getOrNull()
         )
     }
 

@@ -6,6 +6,7 @@ import urllib.error
 import json
 import time
 import os
+import collections
 
 from server.config import ServerConfig
 from server.app import CayanaApiHandler
@@ -768,6 +769,31 @@ class TestCayanaServer(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(resp["error"]["code"], "INVALID_REFRESH_TOKEN")
+
+    def test_get_notion_oauth_initiate_rejected(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port)
+        conn.request("GET", "/v1/oauth/notion/initiate")
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 405)
+        conn.close()
+
+    def test_notion_oauth_initiate_endpoint_rate_limited(self):
+        # Configure tight rate limit
+        handler_limiter = CayanaApiHandler.rate_limiter
+        client_ip = "127.0.0.1"
+        target_inst = f"oauth_{client_ip}"
+        
+        # Artificially exhaust rate limit
+        with handler_limiter.lock:
+            for _ in range(handler_limiter.ip_max_requests + 5):
+                handler_limiter.ip_requests.setdefault(client_ip, collections.deque()).append(time.time())
+
+        status, resp = self._post_json(
+            "/v1/oauth/notion/initiate",
+            payload={"code_challenge": "test_challenge"}
+        )
+        self.assertEqual(status, 429)
+        self.assertEqual(resp["error"]["code"], "RATE_LIMITED")
 
 if __name__ == "__main__":
     unittest.main()

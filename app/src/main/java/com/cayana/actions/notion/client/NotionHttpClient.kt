@@ -15,7 +15,7 @@ import java.net.URL
 
 class NotionHttpClient(
     private val apiBaseUrl: String = "https://api.notion.com/v1",
-    private val notionVersion: String = "2022-06-28",
+    private val notionVersion: String = "2026-03-11",
     private val logger: CayanaLogger
 ) : NotionClient {
 
@@ -25,7 +25,12 @@ class NotionHttpClient(
         private const val READ_TIMEOUT_MS = 15_000
     }
 
-    override suspend fun searchTargets(accessToken: String): Result<List<NotionTarget>> = withContext(Dispatchers.IO) {
+    override suspend fun searchTargets(
+        accessToken: String,
+        query: String?,
+        startCursor: String?,
+        pageSize: Int
+    ): Result<NotionSearchResponse> = withContext(Dispatchers.IO) {
         try {
             val url = URL("${apiBaseUrl.trimEnd('/')}/search")
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -40,7 +45,13 @@ class NotionHttpClient(
             }
 
             val body = JSONObject().apply {
-                put("page_size", 100)
+                put("page_size", pageSize.coerceIn(1, 100))
+                if (!query.isNullOrBlank()) {
+                    put("query", query.trim())
+                }
+                if (!startCursor.isNullOrBlank()) {
+                    put("start_cursor", startCursor.trim())
+                }
             }
 
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
@@ -53,11 +64,17 @@ class NotionHttpClient(
                 logger.w(TAG, "Notion search returned 401 Unauthorized")
                 return@withContext Result.Error(NotionAuthRequiredException("Notion API 401 Unauthorized"))
             }
+            if (status == 403) {
+                logger.w(TAG, "Notion search returned 403 Forbidden")
+                return@withContext Result.Error(SecurityException("Notion 權限不足，請確認整合授權已包含目標頁面"))
+            }
 
             if (status in 200..299) {
                 val responseText = readStream(conn.inputStream)
                 val json = JSONObject(responseText)
                 val resultsArray = json.optJSONArray("results") ?: JSONArray()
+                val nextCursor = json.optString("next_cursor").takeIf { it.isNotBlank() }
+                val hasMore = json.optBoolean("has_more", false)
                 val targets = mutableListOf<NotionTarget>()
 
                 for (i in 0 until resultsArray.length()) {
@@ -67,6 +84,7 @@ class NotionHttpClient(
                     if (id.isBlank()) continue
 
                     val targetType = when (objType) {
+                        "data_source" -> NotionTargetType.DATA_SOURCE
                         "database" -> NotionTargetType.DATABASE
                         "page" -> NotionTargetType.PAGE
                         else -> continue
@@ -76,23 +94,30 @@ class NotionHttpClient(
                     val urlStr = item.optString("url").takeIf { it.isNotBlank() }
                     val icon = parseIcon(item.optJSONObject("icon"))
 
+                    // DATA_SOURCE, PAGE, and DATABASE are valid identifiable targets
+                    val isSelectable = targetType == NotionTargetType.DATA_SOURCE ||
+                            targetType == NotionTargetType.PAGE ||
+                            targetType == NotionTargetType.DATABASE
+
                     targets.add(
                         NotionTarget(
                             id = id,
                             title = title,
                             type = targetType,
                             icon = icon,
-                            url = urlStr
+                            url = urlStr,
+                            isSelectable = isSelectable
                         )
                     )
                 }
 
-                logger.i(TAG, "Successfully searched Notion targets, found ${targets.size} accessible destinations")
-                Result.Success(targets)
+                logger.i(TAG, "Successfully searched Notion targets, found ${targets.size} items (hasMore=$hasMore)")
+                Result.Success(NotionSearchResponse(targets = targets, nextCursor = nextCursor, hasMore = hasMore))
             } else {
                 val errText = readStream(conn.errorStream)
-                logger.w(TAG, "searchTargets failed with HTTP $status: $errText")
-                Result.Error(RuntimeException("Failed searching Notion targets: HTTP $status"))
+                val errCode = extractErrorCode(errText) ?: "HTTP_$status"
+                logger.w(TAG, "searchTargets failed with status $status, errorCode=$errCode")
+                Result.Error(RuntimeException("Failed searching Notion targets: $errCode"))
             }
         } catch (e: Exception) {
             logger.w(TAG, "searchTargets exception: ${e.javaClass.simpleName}")
@@ -123,9 +148,13 @@ class NotionHttpClient(
 
             val body = JSONObject()
 
-            // Parent specification
+            // Parent specification in Notion 2026-03-11:
+            // DATA_SOURCE -> data_source_id
+            // DATABASE -> database_id
+            // PAGE -> page_id
             val parent = JSONObject()
             when (targetType) {
+                NotionTargetType.DATA_SOURCE -> parent.put("data_source_id", targetId)
                 NotionTargetType.DATABASE -> parent.put("database_id", targetId)
                 NotionTargetType.PAGE -> parent.put("page_id", targetId)
             }
@@ -147,7 +176,7 @@ class NotionHttpClient(
             }
             body.put("properties", properties)
 
-            // Children blocks (structured body & memory reference)
+            // Children blocks
             val childrenArray = JSONArray()
             if (!content.isNullOrBlank()) {
                 val contentBlock = JSONObject().apply {
@@ -218,8 +247,9 @@ class NotionHttpClient(
                 Result.Success(NotionCreatedPage(id = pageId, url = pageUrl, title = title))
             } else {
                 val errText = readStream(conn.errorStream)
-                logger.w(TAG, "createPage failed with HTTP $status: $errText")
-                Result.Error(RuntimeException("Failed creating Notion page: HTTP $status"))
+                val errCode = extractErrorCode(errText) ?: "HTTP_$status"
+                logger.w(TAG, "createPage failed with status $status, errorCode=$errCode")
+                Result.Error(RuntimeException("Failed creating Notion page: $errCode"))
             }
         } catch (e: Exception) {
             logger.w(TAG, "createPage exception: ${e.javaClass.simpleName}")
@@ -229,25 +259,36 @@ class NotionHttpClient(
 
     private fun parseTargetTitle(item: JSONObject, targetType: NotionTargetType): String {
         return try {
-            if (targetType == NotionTargetType.DATABASE) {
-                val titleArray = item.optJSONArray("title") ?: JSONArray()
-                if (titleArray.length() > 0) {
-                    titleArray.getJSONObject(0).optString("plain_text", "Untitled Database")
-                } else {
-                    "Untitled Database"
-                }
-            } else {
-                val props = item.optJSONObject("properties") ?: return "Untitled Page"
-                for (key in props.keys()) {
-                    val prop = props.optJSONObject(key) ?: continue
-                    if (prop.optString("type") == "title") {
-                        val titleArray = prop.optJSONArray("title") ?: continue
-                        if (titleArray.length() > 0) {
-                            return titleArray.getJSONObject(0).optString("plain_text", "Untitled Page")
-                        }
+            when (targetType) {
+                NotionTargetType.DATA_SOURCE -> {
+                    val titleArray = item.optJSONArray("title")
+                    if (titleArray != null && titleArray.length() > 0) {
+                        titleArray.getJSONObject(0).optString("plain_text", "Untitled Data Source")
+                    } else {
+                        item.optString("name").takeIf { it.isNotBlank() } ?: "Untitled Data Source"
                     }
                 }
-                "Untitled Page"
+                NotionTargetType.DATABASE -> {
+                    val titleArray = item.optJSONArray("title") ?: JSONArray()
+                    if (titleArray.length() > 0) {
+                        titleArray.getJSONObject(0).optString("plain_text", "Untitled Database")
+                    } else {
+                        "Untitled Database"
+                    }
+                }
+                NotionTargetType.PAGE -> {
+                    val props = item.optJSONObject("properties") ?: return "Untitled Page"
+                    for (key in props.keys()) {
+                        val prop = props.optJSONObject(key) ?: continue
+                        if (prop.optString("type") == "title") {
+                            val titleArray = prop.optJSONArray("title") ?: continue
+                            if (titleArray.length() > 0) {
+                                return titleArray.getJSONObject(0).optString("plain_text", "Untitled Page")
+                            }
+                        }
+                    }
+                    "Untitled Page"
+                }
             }
         } catch (_: Exception) {
             "Untitled"
@@ -261,6 +302,16 @@ class NotionHttpClient(
             "external" -> iconObj.optJSONObject("external")?.optString("url")
             "file" -> iconObj.optJSONObject("file")?.optString("url")
             else -> null
+        }
+    }
+
+    private fun extractErrorCode(errJson: String): String? {
+        return try {
+            val json = JSONObject(errJson)
+            json.optJSONObject("error")?.optString("code")?.takeIf { it.isNotBlank() }
+                ?: json.optString("code").takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
         }
     }
 

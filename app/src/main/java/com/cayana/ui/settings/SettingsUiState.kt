@@ -42,5 +42,11 @@ data class SettingsUiState(
     val isFetchingBackups: Boolean = false,
     val availableTaskLists: List<com.cayana.actions.tasks.client.GoogleTaskList> = emptyList(),
     val isLoadingTaskLists: Boolean = false,
-    val tasksError: String? = null
+    val tasksError: String? = null,
+    val availableNotionTargets: List<com.cayana.actions.notion.client.NotionTarget> = emptyList(),
+    val isLoadingNotionTargets: Boolean = false,
+    val notionError: String? = null,
+    val notionTargetSearchQuery: String = "",
+    val notionTargetHasMore: Boolean = false,
+    val notionTargetNextCursor: String? = null
 )

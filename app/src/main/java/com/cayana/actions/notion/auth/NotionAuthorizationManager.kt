@@ -94,9 +94,16 @@ class DefaultNotionAuthorizationManager(
         return when (val initResult = brokerClient.initiateOAuth(challenge, redirectUri)) {
             is Result.Success -> {
                 val state = initResult.data.state
+                val saved = tokenStorage.savePendingOAuthTransaction(state, verifier)
+                if (!saved) {
+                    logger.e(TAG, "Failed to securely encrypt/persist pending OAuth transaction; failing closed")
+                    pendingState = null
+                    pendingCodeVerifier = null
+                    tokenStorage.clearPendingOAuthTransaction()
+                    return Result.Error(SecurityException("Failed to securely encrypt and store pending OAuth transaction"))
+                }
                 pendingState = state
                 pendingCodeVerifier = verifier
-                tokenStorage.savePendingOAuthTransaction(state, verifier)
                 Result.Success(initResult.data.authorizeUrl)
             }
             is Result.Error -> {

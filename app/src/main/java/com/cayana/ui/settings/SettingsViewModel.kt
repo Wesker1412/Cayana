@@ -35,7 +35,9 @@ class SettingsViewModel(
     private val driveAuthManager: com.cayana.backup.drive.DriveAuthorizationManager? = null,
     private val recoveryKeyStorage: com.cayana.backup.crypto.RecoveryKeyStorage? = null,
     private val tasksAuthManager: com.cayana.actions.tasks.auth.TasksAuthorizationManager? = null,
-    private val tasksClient: com.cayana.actions.tasks.client.GoogleTasksClient? = null
+    private val tasksClient: com.cayana.actions.tasks.client.GoogleTasksClient? = null,
+    private val notionAuthManager: com.cayana.actions.notion.auth.NotionAuthorizationManager? = null,
+    private val notionClient: com.cayana.actions.notion.client.NotionClient? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -92,6 +94,7 @@ class SettingsViewModel(
         checkCalendarPermission()
         checkModelStatus()
         checkGoogleTasksAuthStatus()
+        checkNotionAuthStatus()
     }
 
     private fun createSourceItem(
@@ -644,6 +647,150 @@ class SettingsViewModel(
                     )
                 }
             }
+        }
+    }
+
+    fun checkNotionAuthStatus() {
+        val authManager = notionAuthManager ?: return
+        viewModelScope.launch {
+            val settings = settingsRepository.getSettings().first()
+            if (settings.isNotionConnected || settings.notionAuthStatus != com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED) {
+                val status = authManager.refreshAuthStatus()
+                if (status != settings.notionAuthStatus) {
+                    settingsRepository.updateNotionAuthStatus(status)
+                }
+            }
+        }
+    }
+
+    fun startConnectNotion(openBrowser: (android.net.Uri) -> Unit) {
+        val authManager = notionAuthManager ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(notionError = null) }
+            when (val urlResult = authManager.getAuthorizationUrl()) {
+                is com.cayana.core.common.Result.Success -> {
+                    openBrowser(android.net.Uri.parse(urlResult.data))
+                }
+                is com.cayana.core.common.Result.Error -> {
+                    _uiState.update { it.copy(notionError = "無法取得 Notion 授權網址，請稍後再試。") }
+                }
+                com.cayana.core.common.Result.Loading -> Unit
+            }
+        }
+    }
+
+    fun loadNotionTargets(query: String? = null, loadMore: Boolean = false) {
+        val client = notionClient ?: return
+        val authManager = notionAuthManager ?: return
+        viewModelScope.launch {
+            val currentQuery = query ?: _uiState.value.notionTargetSearchQuery
+            val startCursor = if (loadMore) _uiState.value.notionTargetNextCursor else null
+
+            _uiState.update {
+                it.copy(
+                    isLoadingNotionTargets = true,
+                    notionError = null,
+                    notionTargetSearchQuery = currentQuery
+                )
+            }
+
+            when (val tokenRes = authManager.getAccessToken()) {
+                is com.cayana.core.common.Result.Success -> {
+                    when (val searchRes = client.searchTargets(
+                        accessToken = tokenRes.data,
+                        query = currentQuery.takeIf { it.isNotBlank() },
+                        startCursor = startCursor
+                    )) {
+                        is com.cayana.core.common.Result.Success -> {
+                            val resp = searchRes.data
+                            val merged = if (loadMore) {
+                                _uiState.value.availableNotionTargets + resp.targets
+                            } else {
+                                resp.targets
+                            }
+                            _uiState.update {
+                                it.copy(
+                                    availableNotionTargets = merged,
+                                    isLoadingNotionTargets = false,
+                                    notionTargetHasMore = resp.hasMore,
+                                    notionTargetNextCursor = resp.nextCursor
+                                )
+                            }
+                            val currentSettings = settingsRepository.getSettings().first()
+                            if (currentSettings.selectedNotionTargetId.isNullOrBlank() && resp.targets.isNotEmpty()) {
+                                val firstSelectable = resp.targets.firstOrNull { it.isSelectable } ?: resp.targets.first()
+                                settingsRepository.updateSelectedNotionTarget(
+                                    firstSelectable.id,
+                                    firstSelectable.title,
+                                    firstSelectable.type.name.lowercase()
+                                )
+                            }
+                        }
+                        is com.cayana.core.common.Result.Error -> {
+                            val err = searchRes.exception
+                            val errMsg = if (err is com.cayana.actions.notion.auth.NotionAuthRequiredException) {
+                                settingsRepository.updateNotionAuthStatus(com.cayana.actions.notion.auth.NotionAuthStatus.AUTH_REQUIRED)
+                                "Notion 授權已失效，請重新授權。"
+                            } else if (err is SecurityException) {
+                                "Notion 權限不足，請確認整合授權包含目標頁面。"
+                            } else {
+                                "讀取 Notion 目標頁面失敗。"
+                            }
+                            _uiState.update {
+                                it.copy(
+                                    isLoadingNotionTargets = false,
+                                    notionError = errMsg
+                                )
+                            }
+                        }
+                        com.cayana.core.common.Result.Loading -> Unit
+                    }
+                }
+                is com.cayana.core.common.Result.Error -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoadingNotionTargets = false,
+                            notionError = "授權已失效，請重新連線。"
+                        )
+                    }
+                    settingsRepository.updateNotionAuthStatus(com.cayana.actions.notion.auth.NotionAuthStatus.AUTH_REQUIRED)
+                }
+                com.cayana.core.common.Result.Loading -> Unit
+            }
+        }
+    }
+
+    fun selectNotionTarget(target: com.cayana.actions.notion.client.NotionTarget) {
+        viewModelScope.launch {
+            settingsRepository.updateSelectedNotionTarget(
+                targetId = target.id,
+                targetTitle = target.title,
+                targetType = target.type.name.lowercase()
+            )
+        }
+    }
+
+    fun toggleAutoNotion(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateAutoNotionEnabled(enabled)
+        }
+    }
+
+    fun disconnectNotion() {
+        val authManager = notionAuthManager ?: return
+        viewModelScope.launch {
+            settingsRepository.updateAutoNotionEnabled(false)
+            settingsRepository.updateSelectedNotionTarget(null, null, null)
+            settingsRepository.updateNotionAuthStatus(com.cayana.actions.notion.auth.NotionAuthStatus.DISCONNECTED)
+            _uiState.update {
+                it.copy(
+                    availableNotionTargets = emptyList(),
+                    notionError = null,
+                    notionTargetHasMore = false,
+                    notionTargetNextCursor = null
+                )
+            }
+            authManager.disconnect()
         }
     }
 }

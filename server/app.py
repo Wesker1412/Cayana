@@ -80,34 +80,30 @@ class CayanaApiHandler(http.server.BaseHTTPRequestHandler):
                 duration_ms = int((time.time() - start_time) * 1000)
                 logger.log_request("health", "", duration_ms, 200)
             elif path == "/v1/oauth/notion/initiate":
-                query_params = urllib.parse.parse_qs(query)
-                code_challenge = query_params.get("code_challenge", [None])[0]
-                if not code_challenge:
-                    self._send_json(400, {
-                        "error": {"code": "MISSING_CODE_CHALLENGE", "message": "code_challenge query parameter is required"}
-                    })
-                    return
-                redirect_uri = query_params.get("redirect_uri", [None])[0]
-                try:
-                    auth_url, state = self.notion_broker.create_authorization_url(code_challenge, redirect_uri)
-                    self._send_json(200, {
-                        "authorize_url": auth_url,
-                        "state": state
-                    })
-                except NotionOAuthConfigError as e:
-                    self._send_json(503, {
-                        "error": {"code": "NOTION_OAUTH_NOT_CONFIGURED", "message": str(e)}
-                    })
-                except ValueError as e:
-                    self._send_json(400, {
-                        "error": {"code": "INVALID_REQUEST", "message": str(e)}
-                    })
+                self._send_json(405, {
+                    "error": {"code": "METHOD_NOT_ALLOWED", "message": "GET /v1/oauth/notion/initiate is not allowed. Use POST."}
+                })
+                return
             elif path == "/v1/oauth/notion/callback":
+                client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                allowed, rejection_reason = self.rate_limiter.check_allowed(
+                    installation_id=f"oauth_cb_{client_ip}",
+                    client_ip=client_ip
+                )
+                if not allowed:
+                    self._send_json(429, {
+                        "error": {"code": "RATE_LIMITED", "message": f"Too many requests ({rejection_reason}). Please try again later."}
+                    }, error_code="RATE_LIMITED")
+                    return
+
                 query_params = urllib.parse.parse_qs(query)
                 error = query_params.get("error", [None])[0]
                 if error:
                     state = query_params.get("state", [""])[0]
-                    redirect_target = f"cayana://oauth/notion/callback?error={urllib.parse.quote(error)}&state={urllib.parse.quote(state)}"
+                    # Sanitize error to prevent injection
+                    safe_error = re.sub(r"[^a-zA-Z0-9_-]", "", error)[:64]
+                    safe_state = re.sub(r"[^a-zA-Z0-9_-]", "", state)[:128]
+                    redirect_target = f"cayana://oauth/notion/callback?error={urllib.parse.quote(safe_error)}&state={urllib.parse.quote(safe_state)}"
                     self.send_response(302)
                     self.send_header("Location", redirect_target)
                     self.end_headers()

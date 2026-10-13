@@ -237,10 +237,10 @@ class NotionOAuthBroker:
             except Exception:
                 err_code = "UPSTREAM_ERROR"
             return e.code, {"error": {"code": err_code, "message": "Notion upstream token exchange failed"}}
-        except urllib.error.URLError as e:
-            return 502, {"error": {"code": "UPSTREAM_UNAVAILABLE", "message": f"Failed reaching Notion token endpoint: {e.reason}"}}
-        except Exception as e:
-            return 500, {"error": {"code": "INTERNAL_ERROR", "message": f"Unexpected broker error: {type(e).__name__}"}}
+        except urllib.error.URLError:
+            return 502, {"error": {"code": "UPSTREAM_UNAVAILABLE", "message": "Failed reaching Notion token endpoint"}}
+        except Exception:
+            return 500, {"error": {"code": "INTERNAL_ERROR", "message": "An internal broker error occurred"}}
 
     def refresh_token(self, refresh_token: str) -> Tuple[int, dict]:
         if not refresh_token or not isinstance(refresh_token, str) or len(refresh_token) > 1024:
@@ -284,7 +284,7 @@ class NotionOAuthBroker:
             except Exception:
                 err_code = "UPSTREAM_ERROR"
             return e.code, {"error": {"code": err_code, "message": "Notion upstream token refresh failed"}}
-        except urllib.error.URLError as e:
-            return 502, {"error": {"code": "UPSTREAM_UNAVAILABLE", "message": f"Failed reaching Notion token endpoint: {e.reason}"}}
-        except Exception as e:
-            return 500, {"error": {"code": "INTERNAL_ERROR", "message": f"Unexpected broker error: {type(e).__name__}"}}
+        except urllib.error.URLError:
+            return 502, {"error": {"code": "UPSTREAM_UNAVAILABLE", "message": "Failed reaching Notion token endpoint"}}
+        except Exception:
+            return 500, {"error": {"code": "INTERNAL_ERROR", "message": "An internal broker error occurred"}}
